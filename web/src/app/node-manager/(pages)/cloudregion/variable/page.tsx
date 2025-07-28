@@ -1,111 +1,116 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, message } from 'antd';
-import CustomTable from '@/components/custom-table/index';
+import CustomTable from '@/components/custom-table';
 import { useTranslation } from '@/utils/i18n';
 import VariableModal from './variableModal';
-import { ModalRef } from '@/app/node-manager/types/index';
+import { ModalRef, TableDataItem, Pagination } from '@/app/node-manager/types';
 import { useVarColumns } from '@/app/node-manager/hooks/variable';
 import type { GetProps } from 'antd';
-import type { TableDataItem } from '@/app/node-manager/types/index';
-import Mainlayout from '../mainlayout/layout';
+import MainLayout from '../mainlayout/layout';
 import { PlusOutlined } from '@ant-design/icons';
-import useApiCloudRegion from '@/app/node-manager/api/cloudregion';
+import useApiCloudRegion from '@/app/node-manager/api/cloudRegion';
 import useApiClient from '@/utils/request';
-import useCloudId from '@/app/node-manager/hooks/useCloudid';
+import useCloudId from '@/app/node-manager/hooks/useCloudRegionId';
 import variableStyle from './index.module.scss';
+import PermissionWrapper from '@/components/permission';
 type SearchProps = GetProps<typeof Input.Search>;
 const { Search } = Input;
 
 const Variable = () => {
-  const { getvariablelist, deletevariable } = useApiCloudRegion();
-  const { isLoading } = useApiClient();
-  const variableRef = useRef<ModalRef>(null);
+  const cloudId = useCloudId();
   const { t } = useTranslation();
-  const cloudid = useCloudId();
+  const { isLoading } = useApiClient();
+  const { getVariableList, deleteVariable } = useApiCloudRegion();
+  const variableRef = useRef<ModalRef>(null);
   const [data, setData] = useState<TableDataItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [searchText, setSearchText] = useState<string>('');
+  const [pagination, setPagination] = useState<Pagination>({
+    current: 1,
+    total: 0,
+    pageSize: 20,
+  });
 
   useEffect(() => {
     if (!isLoading) {
-      getVariablelist();
+      getTablelist();
     }
   }, [isLoading]);
 
-  //根据传入的值打开对应的用户弹窗（添加用户弹窗和编辑用户的弹窗）
+  useEffect(() => {
+    if (!isLoading) getTablelist(searchText);
+  }, [pagination.current, pagination.pageSize]);
+
   const openUerModal = (type: string, form: TableDataItem) => {
     variableRef.current?.showModal({
       type,
       form,
     });
   };
+
   //遍历数据，取出要回显的数据
   const getFormDataById = (key: string) => {
-    const formData = data.find((item) => item.key === key);
-    if (!formData) {
-      throw new Error(`Form data not found for key: ${key}`);
-    }
-    return formData;
+    return data.find((item) => item.key === key) || {};
   };
-  //删除的确定的弹窗
-  const delconfirm = (key: string) => {
-    deletevariable(key)
+
+  const delConfirm = (key: string) => {
+    setLoading(true);
+    deleteVariable(key)
       .then(() => {
         message.success(t('common.delSuccess'));
+        getTablelist();
       })
-      .finally(() => {
-        getVariablelist();
+      .catch(() => {
+        setLoading(false);
       });
   };
 
   const columns = useVarColumns({
     openUerModal,
     getFormDataById,
-    delconfirm,
+    delConfirm,
   });
 
-  //添加和编辑成功后，重新获取表格数据
-  const onsuccessvariablemodal = () => {
-    getVariablelist();
-  };
-
-  //搜索框的事件
   const onSearch: SearchProps['onSearch'] = (value) => {
-    getvariablelist(Number(cloudid), value).then((res) => {
-      const tempdata = res.map((item: any) => {
-        return {
-          key: item.id,
-          name: item.key,
-          value: item.value,
-          description: item.description,
-        };
-      });
-      setData(tempdata);
-    });
+    setSearchText(value);
+    getTablelist(value);
   };
 
   //获取表格数据
-  const getVariablelist = () => {
-    getvariablelist(Number(cloudid))
-      .then((res) => {
-        setLoading(true);
-        const tempdata = res.map((item: any) => {
-          return {
-            key: item.id,
-            name: item.key,
-            value: item.value,
-            description: item.description,
-          };
-        });
-        setData(tempdata);
-      })
-      .finally(() => {
-        setLoading(false);
+  const getTablelist = async (search = searchText) => {
+    setLoading(true);
+    try {
+      const param = {
+        cloud_region_id: cloudId,
+        search,
+        page: pagination.current,
+        page_size: pagination.pageSize,
+      };
+      const res = await getVariableList(param);
+      const tempdata = res.items.map((item: any) => {
+        return {
+          ...item,
+          key: item.id,
+          name: item.key,
+        };
       });
+      setPagination((prev: Pagination) => ({
+        ...prev,
+        total: res?.count || 0,
+      }));
+      setData(tempdata);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTableChange = (pagination: any) => {
+    setPagination(pagination);
   };
 
   return (
-    <Mainlayout>
+    <MainLayout>
       <div className={`${variableStyle.variable} w-full h-full`}>
         <div className="flex justify-end mb-4">
           <Search
@@ -114,35 +119,40 @@ const Variable = () => {
             enterButton
             onSearch={onSearch}
           />
-          <Button
-            type="primary"
-            onClick={() => {
-              openUerModal('add', {
-                name: '',
-                key: '',
-                value: '',
-                description: '',
-              });
-            }}
-          >
-            <PlusOutlined />
-            {t('common.add')}
-          </Button>
+          <PermissionWrapper requiredPermissions={['Add']}>
+            <Button
+              type="primary"
+              onClick={() => {
+                openUerModal('add', {
+                  name: '',
+                  key: '',
+                  value: '',
+                  type: 'str',
+                  description: '',
+                });
+              }}
+            >
+              <PlusOutlined />
+              {t('common.add')}
+            </Button>
+          </PermissionWrapper>
         </div>
         <div className="tablewidth">
           <CustomTable
-            scroll={{ y: 'calc(100vh - 400px)', x: 'calc(100vw - 300px)' }}
+            scroll={{ y: 'calc(100vh - 376px)', x: 'calc(100vw - 300px)' }}
             loading={loading}
             columns={columns}
             dataSource={data}
+            pagination={pagination}
+            onChange={handleTableChange}
           />
         </div>
         <VariableModal
           ref={variableRef}
-          onSuccess={onsuccessvariablemodal}
+          onSuccess={() => getTablelist()}
         ></VariableModal>
       </div>
-    </Mainlayout>
+    </MainLayout>
   );
 };
 export default Variable;

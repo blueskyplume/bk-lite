@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "init_realm_resource",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "init_realm_resource",
+            ],
+            "django": true,
+            "autoStartBrowser": false,
+            "program": "${workspaceFolder}/manage.py"
+        },
+        {
+            "name": "Django",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "runserver",
+                "0.0.0.0:8001",
+            ],
+            "django": true,
+            "autoStartBrowser": false,
+            "program": "${workspaceFolder}/manage.py"
+        }
+    ]
+}

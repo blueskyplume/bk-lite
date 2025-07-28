@@ -1,42 +1,57 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Button, Form, Select, message } from 'antd';
+import { Button, Form, Select, message, Spin, Input } from 'antd';
 import { TableDataItem } from '@/app/node-manager/types';
 import { useTranslation } from '@/utils/i18n';
 import CodeEditor from '@/app/node-manager/components/codeEditor';
 import { DownloadOutlined } from '@ant-design/icons';
 import { useAuth } from '@/context/auth';
 import controllerInstallSyle from './index.module.scss';
+import useApiCloudRegion from '@/app/node-manager/api/cloudRegion';
+import useCloudId from '@/app/node-manager/hooks/useCloudRegionId';
+import { useUserInfoContext } from '@/context/userInfo';
 import axios from 'axios';
 const { Option } = Select;
 
 const ManualInstall: React.FC<{ config: any }> = ({ config }) => {
   const { t } = useTranslation();
+  const { getInstallCommand } = useApiCloudRegion();
+  const commonContext = useUserInfoContext();
+  const [form] = Form.useForm();
   const authContext = useAuth();
   const token = authContext?.token || null;
   const tokenRef = useRef(token);
+  const cloudId = useCloudId();
   const [sidecarPackageLoading, setSidecarPackageLoading] =
     useState<boolean>(false);
-  const [sidecarTemplateLoading, setSidecarTemplateLoading] =
-    useState<boolean>(false);
+  const [loadingCommand, setLoadingCommand] = useState<boolean>(false);
   const [sidecar, setSidecar] = useState<string | null>(null);
-  const [script, setScript] = useState<string>('--');
+  const [nodeName, setNodeName] = useState<string>('');
+  const [groups, setGroups] = useState<any[] | null>([
+    commonContext.selectedGroup?.id,
+  ]);
+  const [script, setScript] = useState<string>('');
+
+  const groupList = (commonContext?.groups || []).map((item) => ({
+    label: item.name,
+    value: item.id,
+  }));
 
   useEffect(() => {
-    setScript('script');
-  }, []);
+    if (form) {
+      form.setFieldsValue({
+        organizations: groups,
+      });
+    }
+  }, [form]);
 
-  const download = async (field: string) => {
-    const setLoading =
-      field === 'sidecarTemplate'
-        ? setSidecarTemplateLoading
-        : setSidecarPackageLoading;
+  const download = async () => {
     try {
       const name = config.sidecarVersionList.find(
         (item: TableDataItem) => item.id === sidecar
       )?.name;
-      setLoading(true);
+      setSidecarPackageLoading(true);
       // 发起请求，获取文件流
       const response = await axios({
         url: `/api/proxy/node_mgmt/api/package/download/${sidecar}/`,
@@ -72,13 +87,36 @@ const ManualInstall: React.FC<{ config: any }> = ({ config }) => {
     } catch (error: any) {
       message.error(error + '');
     } finally {
-      setLoading(false);
+      setSidecarPackageLoading(false);
+    }
+  };
+
+  const handleSidecarChange = async (value: string) => {
+    setScript('');
+    setSidecar(value);
+    if (value) {
+      setLoadingCommand(true);
+      try {
+        const params = {
+          os: config.os,
+          package_name: config.sidecarVersionList.find(
+            (item: TableDataItem) => item.id === value
+          )?.name,
+          cloud_region_id: cloudId,
+          organizations: groups,
+          node_name: nodeName,
+        };
+        const data = await getInstallCommand(params);
+        setScript(data);
+      } finally {
+        setLoadingCommand(false);
+      }
     }
   };
 
   return (
     <div>
-      <Form component={false}>
+      <Form component={false} form={form}>
         <Form.Item
           label={t('node-manager.cloudregion.node.installationGuide')}
           className="mb-0"
@@ -89,25 +127,58 @@ const ManualInstall: React.FC<{ config: any }> = ({ config }) => {
           <div className="pl-[20px]">
             <Form.Item
               required
+              label={t('node-manager.cloudregion.node.nodeName')}
+              name="node_name"
+            >
+              <Input
+                className="w-[500px]"
+                value={nodeName}
+                onChange={(e) => setNodeName(e.target.value)}
+              />
+            </Form.Item>
+            <Form.Item
+              required
+              label={t('node-manager.cloudregion.node.group')}
+              name="organizations"
+            >
+              <Select
+                mode="multiple"
+                maxTagCount="responsive"
+                allowClear
+                showSearch
+                style={{ width: 500 }}
+                value={groups}
+                onChange={(val) => setGroups(val)}
+              >
+                {groupList.map((item) => (
+                  <Option value={item.value} key={item.value}>
+                    {item.label}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+            <Form.Item
+              required
               label={t('node-manager.cloudregion.node.sidecarVersion')}
             >
               <Form.Item name="sidecar" noStyle>
                 <Select
                   style={{
-                    width: 400,
+                    width: 500,
                   }}
                   showSearch
                   allowClear
                   placeholder={t('common.pleaseSelect')}
                   value={sidecar}
+                  disabled={!nodeName || !groups?.length}
                   onChange={(value: string) => {
-                    setSidecar(value);
+                    handleSidecarChange(value);
                   }}
                 >
                   {(config.sidecarVersionList || []).map(
                     (item: TableDataItem) => (
                       <Option value={item.id} key={item.id}>
-                        {item.name}
+                        {item.version}
                       </Option>
                     )
                   )}
@@ -117,18 +188,9 @@ const ManualInstall: React.FC<{ config: any }> = ({ config }) => {
                   icon={<DownloadOutlined />}
                   disabled={!sidecar}
                   loading={sidecarPackageLoading}
-                  onClick={() => download('sidecarPackage')}
+                  onClick={download}
                 >
                   {t('node-manager.cloudregion.node.downloadPackage')}
-                </Button>
-                <Button
-                  type="link"
-                  disabled={true}
-                  icon={<DownloadOutlined />}
-                  loading={sidecarTemplateLoading}
-                  onClick={() => download('sidecarTemplate')}
-                >
-                  {t('node-manager.cloudregion.node.downloadTemplate')}
                 </Button>
               </Form.Item>
             </Form.Item>
@@ -138,17 +200,19 @@ const ManualInstall: React.FC<{ config: any }> = ({ config }) => {
       <div className={`${controllerInstallSyle.description} mb-[16px]`}>
         {t('node-manager.cloudregion.node.scriptTips')}
       </div>
-      <CodeEditor
-        readOnly
-        showCopy
-        value={script}
-        className="ml-[20px] mb-[16px]"
-        width="100%"
-        height={200}
-        mode="python"
-        theme="monokai"
-        name="editor"
-      />
+      <Spin className="w-full" spinning={loadingCommand}>
+        <CodeEditor
+          readOnly
+          showCopy
+          value={script}
+          className="ml-[20px] mb-[16px]"
+          width="100%"
+          height={200}
+          mode="python"
+          theme="monokai"
+          name="editor"
+        />
+      </Spin>
       <div className={`${controllerInstallSyle.description}`}>
         {t('node-manager.cloudregion.node.finishTips')}
       </div>

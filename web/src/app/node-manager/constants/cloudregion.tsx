@@ -1,6 +1,7 @@
 import { useTranslation } from '@/utils/i18n';
 import { useMemo } from 'react';
 import { SegmentedItem } from '@/app/node-manager/types';
+import PermissionWrapper from '@/components/permission';
 import type { MenuProps } from 'antd';
 
 const useTelegrafMap = (): Record<string, Record<string, string>> => {
@@ -8,16 +9,42 @@ const useTelegrafMap = (): Record<string, Record<string, string>> => {
   return useMemo(
     () => ({
       1: {
+        tagColor: 'default',
         color: '#b2b5bd',
-        text: t('node-manager.cloudregion.node.notInstalled'),
+        text: t('node-manager.cloudregion.node.unknown'),
       },
       0: {
-        color: '#2dcb56',
+        tagColor: 'success',
+        color: '#52c41a',
         text: t('node-manager.cloudregion.node.running'),
       },
       2: {
-        color: '#ea3636',
+        tagColor: 'error',
+        color: '#ff4d4f',
         text: t('node-manager.cloudregion.node.error'),
+      },
+      4: {
+        tagColor: 'default',
+        color: '#b2b5bd',
+        text: t('node-manager.cloudregion.node.stop'),
+      },
+      10: {
+        tagColor: 'processing',
+        color: '#1677ff',
+        text: t('node-manager.cloudregion.node.installing'),
+        engText: 'Installing',
+      },
+      11: {
+        tagColor: 'success',
+        color: '#52c41a',
+        text: t('node-manager.cloudregion.node.successInstall'),
+        engText: 'Installed successfully',
+      },
+      12: {
+        tagColor: 'error',
+        color: '#ff4d4f',
+        text: t('node-manager.cloudregion.node.failInstall'),
+        engText: 'Installation failed',
       },
     }),
     [t]
@@ -32,17 +59,25 @@ const useInstallMap = (): Record<string, Record<string, string>> => {
         color: 'var(--color-primary)',
         text: t('node-manager.cloudregion.node.installing'),
       },
-      running: {
-        color: 'var(--color-text-2)',
-        text: t('node-manager.cloudregion.node.running'),
+      waitingUninstall: {
+        color: 'var(--color-primary)',
+        text: t('node-manager.cloudregion.node.uninstalling'),
       },
-      finished: {
-        color: '#2dcb56',
+      success: {
+        color: '#52c41a',
         text: t('node-manager.cloudregion.node.successInstall'),
       },
-      failed: {
-        color: '#ea3636',
+      successUninstall: {
+        color: '#52c41a',
+        text: t('node-manager.cloudregion.node.successInstall'),
+      },
+      error: {
+        color: '#ff4d4f',
         text: t('node-manager.cloudregion.node.failInstall'),
+      },
+      errorUninstall: {
+        color: '#ff4d4f',
+        text: t('node-manager.cloudregion.node.failUninstall'),
       },
     }),
     [t]
@@ -66,21 +101,53 @@ const useInstallWays = (): SegmentedItem[] => {
   );
 };
 
-const useCollectoritems = (): MenuProps['items'] => {
+const useCollectorItems = (): MenuProps['items'] => {
   const { t } = useTranslation();
   return useMemo(
     () => [
       {
-        label: t('node-manager.cloudregion.node.installCollector'),
+        label: (
+          <PermissionWrapper
+            className="customMenuItem"
+            requiredPermissions={['OperateCollector']}
+          >
+            {t('node-manager.cloudregion.node.installCollector')}
+          </PermissionWrapper>
+        ),
         key: 'installCollector',
       },
       {
-        label: t('node-manager.cloudregion.node.startCollector'),
+        label: (
+          <PermissionWrapper
+            className="customMenuItem"
+            requiredPermissions={['OperateCollector']}
+          >
+            {t('node-manager.cloudregion.node.startCollector')}
+          </PermissionWrapper>
+        ),
         key: 'startCollector',
       },
       {
-        label: t('node-manager.cloudregion.node.restartCollector'),
+        label: (
+          <PermissionWrapper
+            className="customMenuItem"
+            requiredPermissions={['OperateCollector']}
+          >
+            {t('node-manager.cloudregion.node.restartCollector')}
+          </PermissionWrapper>
+        ),
         key: 'restartCollector',
+      },
+      {
+        label: (
+          <PermissionWrapper
+            className="customMenuItem"
+            requiredPermissions={['OperateCollector']}
+          >
+            {t('node-manager.cloudregion.node.stopCollector')}
+          </PermissionWrapper>
+        ),
+        key: 'stopCollector',
       },
       //   {
       //     label: t('node-manager.cloudregion.node.uninstallCollector'),
@@ -91,7 +158,7 @@ const useCollectoritems = (): MenuProps['items'] => {
   );
 };
 
-const useSidecaritems = (): MenuProps['items'] => {
+const useSidecarItems = (): MenuProps['items'] => {
   const { t } = useTranslation();
   return useMemo(
     () => [
@@ -105,9 +172,12 @@ const useSidecaritems = (): MenuProps['items'] => {
       //   },
       {
         label: (
-          <div style={{ whiteSpace: 'nowrap' }}>
+          <PermissionWrapper
+            className="customMenuItem"
+            requiredPermissions={['UninstallController']}
+          >
             {t('node-manager.cloudregion.node.uninstallSidecar')}
-          </div>
+          </PermissionWrapper>
         ),
         key: 'uninstallSidecar',
       },
@@ -135,12 +205,40 @@ const BATCH_FIELD_MAPS: Record<string, string> = {
   password: 'loginPassword',
 };
 
+const useMenuItem = () => {
+  const { t } = useTranslation();
+  return useMemo(
+    () => [
+      {
+        key: 'edit',
+        role: 'Edit',
+        title: 'edit',
+        config: {
+          title: 'editform',
+          type: 'edit',
+        },
+      },
+      {
+        key: 'delete',
+        role: 'Delete',
+        title: 'delete',
+        config: {
+          title: 'deleteform',
+          type: 'delete',
+        },
+      },
+    ],
+    [t]
+  );
+};
+
 export {
   useTelegrafMap,
   useInstallWays,
   useInstallMap,
-  useSidecaritems,
-  useCollectoritems,
+  useSidecarItems,
+  useCollectorItems,
+  useMenuItem,
   OPERATE_SYSTEMS,
   BATCH_FIELD_MAPS,
 };

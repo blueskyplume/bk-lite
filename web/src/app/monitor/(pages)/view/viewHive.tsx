@@ -7,6 +7,7 @@ import React, {
   useCallback,
 } from 'react';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import { useTranslation } from '@/utils/i18n';
 import {
   MetricItem,
@@ -30,7 +31,7 @@ import {
   getEnumValueUnit,
   isStringArray,
 } from '@/app/monitor/utils/common';
-import { INDEX_CONFIG } from '@/app/monitor/constants/monitor';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
 import { Select, Spin } from 'antd';
 import { ListItem } from '@/types';
 const { Option } = Select;
@@ -38,8 +39,11 @@ const { Option } = Select;
 const HEXAGON_AREA = 6400; // 格子的面积
 
 const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
-  const { get, post, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const { getInstanceSearch, getInstanceQueryParams, getMonitorMetrics } =
+    useMonitorApi();
   const { t } = useTranslation();
+  const { getTableDiaplay } = useObjectConfigInfo();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const modalRef = useRef<ModalRef>(null);
   const hexGridRef = useRef<HTMLDivElement>(null);
@@ -96,11 +100,9 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
     if (objectId && objects?.length && mertics?.length) {
       const objName = objects.find((item) => item.id === objectId)?.name;
       if (objName) {
-        const filterMetrics =
-          INDEX_CONFIG.find((item) => item.name === objName)?.tableDiaplay ||
-          [];
+        const filterMetrics = getTableDiaplay(objName);
         return mertics.filter((metric) =>
-          filterMetrics.find((item) => item.key === metric.name)
+          filterMetrics.find((item: TableDataItem) => item.key === metric.name)
         );
       }
     }
@@ -280,21 +282,11 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
     const objParams = {
       monitor_object_id: objectId,
     };
-    const getInstList = post(
-      `/monitor/api/monitor_instance/${objectId}/search/`,
-      params
-    );
-    const getQueryParams = get(
-      `/monitor/api/monitor_instance/query_params_enum/${name}/`,
-      {
-        params: objParams,
-      }
-    );
+    const getInstList = await getInstanceSearch(objectId, params);
+    const getQueryParams = await getInstanceQueryParams(name, objParams);
     setTableLoading(true);
     try {
-      const metricsData = await get('/monitor/api/metrics/', {
-        params: objParams,
-      });
+      const metricsData = await getMonitorMetrics(objParams);
       setMertics(metricsData || []);
       const tagetMerticItem = metricsData.find(
         (item: MetricItem) =>
@@ -353,7 +345,10 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
           description: (
             <>
               <div>{item.instance_name}</div>
-              {`${tagetMerticItem.display_name}: ${getEnumValueUnit(tagetMerticItem, item[metricName])}`}
+              {`${tagetMerticItem.display_name}: ${getEnumValueUnit(
+                tagetMerticItem,
+                item[metricName]
+              )}`}
             </>
           ),
           fill: queryMetric
@@ -409,10 +404,7 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
     }
     try {
       setTableLoading(type !== 'timer');
-      const data = await post(
-        `/monitor/api/monitor_instance/${objectId}/search/`,
-        params
-      );
+      const data = await getInstanceSearch(objectId, params);
       const chartConfig = {
         data: data.results || [],
         metricsData: metricList,
@@ -484,6 +476,7 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
           <Select
             value={colony}
             allowClear
+            showSearch
             style={{ width: 120 }}
             placeholder={t('monitor.views.colony')}
             onChange={handleColonyChange}
@@ -499,6 +492,7 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
               <Select
                 value={namespace}
                 allowClear
+                showSearch
                 className="mx-[10px]"
                 style={{ width: 120 }}
                 placeholder={t('monitor.views.namespace')}
@@ -513,6 +507,7 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
               <Select
                 value={workload}
                 allowClear
+                showSearch
                 className="mr-[10px]"
                 style={{ width: 120 }}
                 placeholder={t('monitor.views.workload')}
@@ -527,6 +522,7 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
               <Select
                 value={node}
                 allowClear
+                showSearch
                 style={{ width: 120 }}
                 placeholder={t('monitor.views.node')}
                 onChange={handleNodeChange}
@@ -548,6 +544,7 @@ const ViewHive: React.FC<ViewListProps> = ({ objects, objectId }) => {
             <Select
               className="text-center"
               disabled
+              showSearch
               value={queryMetric}
               style={{ width: 120 }}
               suffixIcon={null}

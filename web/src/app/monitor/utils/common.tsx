@@ -7,6 +7,8 @@ import {
   ViewQueryKeyValuePairs,
   ChartData,
   TreeItem,
+  TableDataItem,
+  TimeValuesProps,
 } from '@/app/monitor/types';
 import { Group } from '@/types';
 import {
@@ -14,11 +16,17 @@ import {
   ChartDataItem,
   ChartProps,
   NodeWorkload,
+  ObjectItem,
 } from '@/app/monitor/types/monitor';
-import { UNIT_LIST, APPOINT_METRIC_IDS } from '@/app/monitor/constants/monitor';
+import {
+  UNIT_LIST,
+  APPOINT_METRIC_IDS,
+  DERIVATIVE_OBJECTS,
+  OBJECT_DEFAULT_ICON,
+} from '@/app/monitor/constants/monitor';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
-import { message } from 'antd';
-import { useTranslation } from '@/utils/i18n';
+import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
+import dayjs from 'dayjs';
 
 // 深克隆
 export const deepClone = (obj: any, hash = new WeakMap()) => {
@@ -195,9 +203,9 @@ export const showGroupName = (
   if (!groupIds?.length) return '--';
   const groupNames: any[] = [];
   groupIds.forEach((el) => {
-    groupNames.push(findGroupNameById(organizationList, el));
+    groupNames.push(findGroupNameById(organizationList, Number(el)));
   });
-  return groupNames.filter((item) => !!item).join(',');
+  return groupNames.filter((item) => !!item).join(',') || '--';
 };
 
 // 图标中x轴的时间回显处理
@@ -246,7 +254,7 @@ export const findUnitNameById = (
   return '';
 };
 
-// 柱形图或者折线图单条线时，获取其最大值、最小值、平均值和最新值、和
+// 柱形图或者折线图单条线时，获取其最大值、最小值、平均值和最新值
 export const calculateMetrics = (data: any[], key = 'value1') => {
   if (!data || data.length === 0) return {};
   const values = data.map((item) => item[key]);
@@ -382,30 +390,28 @@ export const renderChart = (
   data.forEach((item, index) => {
     item.values.forEach(([timestamp, value]) => {
       const existing = result.find((entry) => entry.time === timestamp);
-      let detailValue = Object.entries(item.metric)
+      const detailValue = Object.entries(item.metric)
         .map(([key, dimenValue]) => ({
           name: key,
           label: target.find((sec) => sec.name === key)?.description || key,
           value: dimenValue,
         }))
         .filter((item) => target.find((tex) => tex.name === item.name));
-      if ((!target.length || !detailValue.length) && config[0]?.showInstName) {
-        detailValue = [
-          {
-            name: 'instance_name',
-            label: 'Instance',
-            value:
-              config.find(
-                (detail) =>
-                  JSON.stringify(detail.instance_id_values) ===
-                  JSON.stringify(
-                    detail.instance_id_keys.reduce((pre, cur) => {
-                      return pre.concat(item.metric[cur] as any);
-                    }, [])
-                  )
-              )?.instance_name || '',
-          },
-        ];
+      if (config[0]?.showInstName) {
+        detailValue.unshift({
+          name: 'instance_name',
+          label: 'Instance',
+          value:
+            config.find(
+              (detail) =>
+                JSON.stringify(detail.instance_id_values) ===
+                JSON.stringify(
+                  detail.instance_id_keys.reduce((pre, cur) => {
+                    return pre.concat(item.metric[cur] as any);
+                  }, [])
+                )
+            )?.instance_name || '--',
+        });
       }
       if (existing) {
         existing[`value${index + 1}`] = parseFloat(value);
@@ -427,30 +433,6 @@ export const renderChart = (
     });
   });
   return result;
-};
-
-export const useHandleCopy = (value: string) => {
-  const { t } = useTranslation();
-  const handleCopy = () => {
-    try {
-      if (navigator?.clipboard?.writeText) {
-        navigator.clipboard.writeText(value);
-      } else {
-        const textArea = document.createElement('textarea');
-        textArea.value = value;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
-      message.success(t('common.successfulCopied'));
-    } catch (error: any) {
-      message.error(error + '');
-    }
-  };
-  return {
-    handleCopy,
-  };
 };
 
 export const findTreeParentKey = (
@@ -501,4 +483,72 @@ export const getK8SData = (
     return [];
   }
   return result;
+};
+
+// 监控实例名称处理
+export const getBaseInstanceColumn = (config: {
+  row: TableDataItem;
+  objects: ObjectItem[];
+  t: any;
+}) => {
+  const baseTarget = config.objects
+    .filter((item) => item.type === config.row?.type)
+    .find((item) => item.level === 'base');
+  const title = baseTarget?.display_name || config.t('monitor.source');
+  const isDerivative = DERIVATIVE_OBJECTS.includes(config.row?.name);
+  const columnItems: any = [
+    {
+      title: config.t('common.name'),
+      dataIndex: 'instance_name',
+      width: 300,
+      key: 'instance_name',
+      render: (_: unknown, record: TableDataItem) => {
+        const instanceName =
+          (isDerivative
+            ? record.instance_id_values?.[1]
+            : record.instance_name) || '--';
+        return (
+          <EllipsisWithTooltip
+            text={instanceName}
+            className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
+          ></EllipsisWithTooltip>
+        );
+      },
+    },
+  ];
+  if (isDerivative) {
+    columnItems.unshift({
+      title: title,
+      dataIndex: 'base_instance_name',
+      width: 300,
+      key: 'base_instance_name',
+      render: (_: unknown, record: TableDataItem) => {
+        return (
+          <EllipsisWithTooltip
+            text={record.instance_id_values?.[0] || '--'}
+            className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
+          ></EllipsisWithTooltip>
+        );
+      },
+    });
+  }
+  return columnItems;
+};
+
+export const getIconByObjectName = (objectName = '', objects: ObjectItem[]) => {
+  return (
+    (objects.find((item) => item.name === objectName)?.icon as string) ||
+    OBJECT_DEFAULT_ICON
+  );
+};
+
+export const getRecentTimeRange = (timeValues: TimeValuesProps) => {
+  if (timeValues.originValue) {
+    const beginTime: number = dayjs()
+      .subtract(timeValues.originValue, 'minute')
+      .valueOf();
+    const lastTime: number = dayjs().valueOf();
+    return [beginTime, lastTime];
+  }
+  return timeValues.timeRange;
 };

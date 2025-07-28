@@ -19,7 +19,7 @@ const LayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const objIcon: string = searchParams.get('icn') || '';
   const modelName: string = searchParams.get('model_name') || '';
   const modelId: string = searchParams.get('model_id') || '';
-  const instName: string = searchParams.get('inst_name') || '--';
+  const instName: string = searchParams.get('inst_name') || searchParams.get('ip_addr') || '--';
   const { t } = useTranslation();
 
   const handleBackButtonClick = () => {
@@ -44,9 +44,9 @@ const LayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
   const layoutProps: WithSideMenuLayoutProps = {
     children,
+    intro,
     showBackButton: true,
     onBackButtonClick: handleBackButtonClick,
-    intro,
   };
 
   return (

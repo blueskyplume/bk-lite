@@ -82,6 +82,22 @@ class CollectModels(MaintainerInfo, TimeInfo):
     def is_network_topo(self):
         return self.model_id == "network_topo"
 
+    @property
+    def is_cloud(self):
+        return self.task_type == CollectPluginTypes.CLOUD
+
+    @property
+    def is_job(self):
+        return self.driver_type == CollectDriverTypes.JOB
+
+    @property
+    def is_host(self):
+        return self.task_type == CollectPluginTypes.HOST
+
+    @property
+    def is_db(self):
+        return self.task_type == CollectPluginTypes.DB
+
 
 class OidMapping(MaintainerInfo, TimeInfo):
     """

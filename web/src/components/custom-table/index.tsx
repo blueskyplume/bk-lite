@@ -7,6 +7,7 @@ import { ColumnItem, GroupFieldItem } from '@/types/index';
 import { TableCurrentDataSource, FilterValue, SorterResult } from 'antd/es/table/interface';
 import { cloneDeep } from 'lodash';
 import EllipsisWithTooltip from '../ellipsis-with-tooltip';
+import { useTranslation } from '@/utils/i18n';
 
 interface CustomTableProps<T>
   extends Omit<TableProps<T>, 'bordered' | 'fieldSetting' | 'onSelectFields'> {
@@ -46,8 +47,10 @@ const CustomTable = <T extends object>({
   onChange,
   rowDraggable = false,
   onRowDragEnd,
+  rowSelection,
   ...TableProps
 }: CustomTableProps<T>) => {
+  const { t } = useTranslation();
   const fieldRef = useRef<FieldRef>(null);
   const [tableHeight, setTableHeight] = useState<number | undefined>(undefined);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -81,7 +84,7 @@ const CustomTable = <T extends object>({
     return {
       ...column,
       render: (text: any) => {
-        if (text === null || text === undefined) return null;
+        if ([null, undefined, ''].includes(text)) return '--';
         if (typeof text === 'string') {
           return (
             <EllipsisWithTooltip
@@ -123,7 +126,7 @@ const CustomTable = <T extends object>({
     const vh = window.innerHeight;
     let total = 0;
 
-    // 分析表达式的正则表达式以捕获运算符、数字和单位
+    // Regex to parse expressions and capture operators, numbers, and units
     const calcRegex = /([-+]?)\s*(\d*\.?\d+)(vh|px)/g;
     let match: RegExpExecArray | null;
 
@@ -245,6 +248,7 @@ const CustomTable = <T extends object>({
         onRow={(record, index) => renderRow(index!)}
         {...TableProps}
         columns={columns}
+        rowSelection={rowSelection}
         onChange={(pageConfig, filters, sorter, extra) =>
           handleTableChange(filters, sorter, extra)
         }
@@ -256,6 +260,16 @@ const CustomTable = <T extends object>({
           current={pagination?.current}
           pageSize={pagination?.pageSize}
           onChange={handlePageChange}
+          showTotal={(total) => (
+            <div className="flex items-center">
+              <span>{`${t('common.total')} ${total} ${t('common.items')}`}</span>
+              {rowSelection ? (
+                <div className="text-sm h-[32px] flex items-center px-4">
+                  {`${t('common.checked')} ${rowSelection?.selectedRowKeys?.length} ${t('common.items')}`}
+                </div>
+              ) : null}
+            </div>
+          )}
         />
       </div>)}
       {fieldSetting.showSetting ? (

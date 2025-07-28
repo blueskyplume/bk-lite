@@ -9,7 +9,11 @@ import { Tag } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { CONSTRAINT_List } from '@/app/cmdb/constants/asset';
 import useApiClient from '@/utils/request';
-import { ModelItem, AssoTypeItem, GroupItem } from '@/app/cmdb/types/assetManage';
+import {
+  ModelItem,
+  AssoTypeItem,
+  GroupItem,
+} from '@/app/cmdb/types/assetManage';
 import { useSearchParams } from 'next/navigation';
 import { useTranslation } from '@/utils/i18n';
 import { deepClone } from '@/app/cmdb/utils/common';
@@ -110,13 +114,18 @@ const Associations = () => {
       key: 'action',
       render: (_, record) => (
         <>
-          <Button
-            type="link"
-            disabled={!isAdmin && record.is_pre}
-            onClick={() => showDeleteConfirm(record.model_asst_id)}
+          <PermissionWrapper
+            requiredPermissions={['Delete']}
+            instPermissions={record.permission}
           >
-            {t('delete')}
-          </Button>
+            <Button
+              type="link"
+              disabled={!isAdmin && record.is_pre}
+              onClick={() => showDeleteConfirm(record.model_asst_id)}
+            >
+              {t('delete')}
+            </Button>
+          </PermissionWrapper>
         </>
       ),
     },
@@ -186,7 +195,6 @@ const Associations = () => {
     setPagination(pagination);
   };
 
-
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -253,7 +261,7 @@ const Associations = () => {
             />
           </div>
           <div className="right-side">
-            <PermissionWrapper requiredPermissions={['Add']}>
+            <PermissionWrapper requiredPermissions={['Edit Model']}>
               <Button
                 type="primary"
                 className="mr-[8px]"

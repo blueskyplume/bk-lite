@@ -2,17 +2,20 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Input, Button, Progress, Select } from 'antd';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import { useTranslation } from '@/utils/i18n';
 import {
   deepClone,
   getEnumValueUnit,
   getEnumColor,
   getK8SData,
+  getBaseInstanceColumn,
 } from '@/app/monitor/utils/common';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
 import { useRouter } from 'next/navigation';
 import {
   IntergrationItem,
-  ObectItem,
+  ObjectItem,
   MetricItem,
   ViewListProps,
 } from '@/app/monitor/types/monitor';
@@ -23,20 +26,35 @@ import {
   Pagination,
   TableDataItem,
 } from '@/app/monitor/types';
-import { COLLECT_TYPE_MAP } from '@/app/monitor/constants/monitor';
 import CustomTable from '@/components/custom-table';
 import TimeSelector from '@/components/time-selector';
-import { INDEX_CONFIG } from '@/app/monitor/constants/monitor';
+import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
-import Permission from '@/components/permission';
 import { ListItem } from '@/types';
+import {
+  OBJECT_DEFAULT_ICON,
+  DERIVATIVE_OBJECTS,
+} from '@/app/monitor/constants/monitor';
 const { Option } = Select;
 
-const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
-  const { get, isLoading } = useApiClient();
+const ViewList: React.FC<ViewListProps> = ({
+  objects,
+  objectId,
+  showTab,
+  updateTree,
+}) => {
+  const { isLoading } = useApiClient();
+  const {
+    getMonitorMetrics,
+    getInstanceList,
+    getInstanceSearch,
+    getInstanceQueryParams,
+    getMonitorPlugin,
+  } = useMonitorApi();
   const { t } = useTranslation();
   const router = useRouter();
   const { convertToLocalizedTime } = useLocalizedTime();
+  const { getCollectType, getTableDiaplay } = useObjectConfigInfo();
   const viewRef = useRef<ModalRef>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [searchText, setSearchText] = useState<string>('');
@@ -50,13 +68,6 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
   const [frequence, setFrequence] = useState<number>(0);
   const [plugins, setPlugins] = useState<IntergrationItem[]>([]);
   const columns: ColumnItem[] = [
-    {
-      title: t('common.name'),
-      dataIndex: 'instance_name',
-      width: 140,
-      ellipsis: true,
-      key: 'instance_name',
-    },
     {
       title: t('monitor.views.reportTime'),
       dataIndex: 'time',
@@ -72,7 +83,6 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
       dataIndex: 'status',
       key: 'status',
       width: 160,
-      // filters: [],
       render: (_, record) => (
         <>
           {record?.status ? t(`monitor.intergrations.${record.status}`) : '--'}
@@ -94,11 +104,9 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
           >
             {t('common.detail')}
           </Button>
-          <Permission requiredPermissions={['Detail']}>
-            <Button type="link" onClick={() => linkToDetial(record)}>
-              {t('monitor.views.overview')}
-            </Button>
-          </Permission>
+          <Button type="link" onClick={() => linkToDetial(record)}>
+            {t('monitor.views.dashboard')}
+          </Button>
         </>
       ),
     },
@@ -110,6 +118,15 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
   const [node, setNode] = useState<string | null>(null);
   const [colony, setColony] = useState<string | null>(null);
   const [queryData, setQueryData] = useState<any[]>([]);
+
+  const instNamePlaceholder = useMemo(() => {
+    const type = objects.find((item) => item.id === objectId)?.type || '';
+    const baseTarget = objects
+      .filter((item) => item.type === type)
+      .find((item) => item.level === 'base');
+    const title: string = baseTarget?.display_name || t('monitor.source');
+    return title;
+  }, [objects, objectId]);
 
   const isPod = useMemo(() => {
     return objects.find((item) => item.id === objectId)?.name === 'Pod';
@@ -145,6 +162,16 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
     }
     return [];
   }, [namespaceList, namespace]);
+
+  const showMultipleConditions = useMemo(() => {
+    const objectNames = DERIVATIVE_OBJECTS.filter(
+      (item) => !['Pod', 'Node'].includes(item)
+    );
+    const currentObjectName = objects.find(
+      (item) => item.id === objectId
+    )?.name;
+    return objectNames.includes(currentObjectName as string) || showTab;
+  }, [objects, objectId]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -190,6 +217,11 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
     }
   }, [colony, namespace, workload, node]);
 
+  const updatePage = () => {
+    onRefresh();
+    updateTree?.();
+  };
+
   const getParams = () => {
     return {
       page: pagination.current,
@@ -210,58 +242,36 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
   };
 
   const getColoumnAndData = async () => {
-    const params = getParams();
     const objParams = {
       monitor_object_id: objectId,
     };
-    const objName = objects.find((item) => item.id === objectId)?.name;
-
-    const getInstList = get(`/monitor/api/monitor_instance/${objectId}/list/`, {
-      params,
-    });
-    const getQueryParams = get(
-      `/monitor/api/monitor_instance/query_params_enum/${objName}/`,
-      {
-        params: objParams,
-      }
-    );
-    const getMetrics = get('/monitor/api/metrics/', {
-      params: objParams,
-    });
-    const getPlugins = get('/monitor/api/monitor_plugin/', {
-      params: objParams,
-    });
+    const targetObject = objects.find((item) => item.id === objectId);
+    const objName = targetObject?.name;
+    const getMetrics = getMonitorMetrics(objParams);
+    const getPlugins = getMonitorPlugin(objParams);
     setTableLoading(true);
     try {
       const res = await Promise.all([
-        getInstList,
         getMetrics,
         getPlugins,
-        getQueryParams,
+        showMultipleConditions &&
+          getInstanceQueryParams(objName as string, objParams),
       ]);
-      const k8sQuery = res[3];
+      const k8sQuery = res[2];
       const queryForm = isPod
         ? getK8SData(k8sQuery || {})
         : (k8sQuery || []).map((item: string) => ({ id: item, child: [] }));
       setQueryData(queryForm);
-      const _plugins = res[2].map((item: IntergrationItem) => ({
-        label: COLLECT_TYPE_MAP[item.name || ''],
+      const _plugins = res[1].map((item: IntergrationItem) => ({
+        label: getCollectType(objName as string, item.name as string),
         value: item.id,
       }));
       setPlugins(_plugins);
-      setTableData(res[0]?.results || []);
-      setPagination((prev: Pagination) => ({
-        ...prev,
-        total: res[0]?.count || 0,
-      }));
-      setMetrics(res[1] || []);
-      const _objectName = objects.find((item) => item.id === objectId)?.name;
-      if (_objectName) {
-        const filterMetrics =
-          INDEX_CONFIG.find((item) => item.name === _objectName)
-            ?.tableDiaplay || [];
+      setMetrics(res[0] || []);
+      if (objName) {
+        const filterMetrics = getTableDiaplay(objName);
         const _columns = filterMetrics.map((item: any) => {
-          const target = (res[1] || []).find(
+          const target = (res[0] || []).find(
             (tex: MetricItem) => tex.name === item.key
           );
           if (item.type === 'progress') {
@@ -293,29 +303,44 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
             dataIndex: item.key,
             key: item.key,
             width: 200,
-            ...(item.type === 'value' ? {
-              sorter: (a: any, b: any) => a[item.key] - b[item.key],
-            } : {}),
+            ...(item.type === 'value'
+              ? {
+                sorter: (a: any, b: any) => a[item.key] - b[item.key],
+              }
+              : {}),
             render: (_: unknown, record: TableDataItem) => {
               const color = getEnumColor(target, record[item.key]);
               return (
                 <>
                   <span style={{ color }}>
-                    {getEnumValueUnit(target, record[item.key])}
+                    <EllipsisWithTooltip
+                      text={getEnumValueUnit(target, record[item.key])}
+                      className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
+                    ></EllipsisWithTooltip>
                   </span>
                 </>
               );
             },
           };
         });
-        const originColumns = deepClone(columns);
+        const originColumns = deepClone([
+          ...getBaseInstanceColumn({
+            objects,
+            row: targetObject,
+            t,
+          }),
+          ...columns,
+        ]);
         const indexToInsert = originColumns.length - 1;
         originColumns.splice(indexToInsert, 0, ..._columns);
         setTableColumn(originColumns);
+        if (!colony) {
+          onRefresh();
+        } else {
+          setColony(null);
+        }
       }
-    } catch (error) {
-      console.log(error);
-    } finally {
+    } catch {
       setTableLoading(false);
     }
   };
@@ -339,12 +364,10 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
     }
     try {
       setTableLoading(type !== 'timer');
-      const data = await get(
-        `/monitor/api/monitor_instance/${objectId}/list/`,
-        {
-          params,
-        }
-      );
+      const request = showMultipleConditions
+        ? getInstanceSearch
+        : getInstanceList;
+      const data = await request(objectId, params);
       setTableData(data.results || []);
       setPagination((prev: Pagination) => ({
         ...prev,
@@ -356,11 +379,14 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
   };
 
   const linkToDetial = (app: TableDataItem) => {
-    const monitorItem = objects.find((item: ObectItem) => item.id === objectId);
+    const monitorItem = objects.find(
+      (item: ObjectItem) => item.id === objectId
+    );
     const row: any = {
       monitorObjId: objectId || '',
       name: monitorItem?.name || '',
       monitorObjDisplayName: monitorItem?.display_name || '',
+      icon: monitorItem?.icon || OBJECT_DEFAULT_ICON,
       instance_id: app.instance_id,
       instance_name: app.instance_name,
       instance_id_values: app.instance_id_values,
@@ -440,7 +466,7 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
     <div className="w-full">
       <div className="flex justify-between mb-[10px]">
         <div className="flex items-center">
-          {showTab && (
+          {showMultipleConditions && (
             <div>
               <span className="text-[14px] mr-[10px]">
                 {t('monitor.views.filterOptions')}
@@ -448,8 +474,9 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
               <Select
                 value={colony}
                 allowClear
-                style={{ width: 120 }}
-                placeholder={t('monitor.views.colony')}
+                showSearch
+                style={{ width: isPod ? 120 : 240 }}
+                placeholder={instNamePlaceholder}
                 onChange={handleColonyChange}
               >
                 {queryData.map((item) => (
@@ -458,11 +485,12 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
                   </Option>
                 ))}
               </Select>
-              {isPod && (
+              {showTab && isPod && (
                 <>
                   <Select
                     value={namespace}
                     allowClear
+                    showSearch
                     className="mx-[10px]"
                     style={{ width: 120 }}
                     placeholder={t('monitor.views.namespace')}
@@ -477,6 +505,7 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
                   <Select
                     value={workload}
                     allowClear
+                    showSearch
                     className="mr-[10px]"
                     style={{ width: 120 }}
                     placeholder={t('monitor.views.workload')}
@@ -491,6 +520,7 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
                   <Select
                     value={node}
                     allowClear
+                    showSearch
                     style={{ width: 120 }}
                     placeholder={t('monitor.views.node')}
                     onChange={handleNodeChange}
@@ -507,7 +537,7 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
           )}
           <Input
             allowClear
-            className="w-[240px] ml-[8px]"
+            className="w-[240px] ml-[10px]"
             placeholder={t('common.searchPlaceHolder')}
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
@@ -518,7 +548,7 @@ const ViewList: React.FC<ViewListProps> = ({ objects, objectId, showTab }) => {
         <TimeSelector
           onlyRefresh
           onFrequenceChange={onFrequenceChange}
-          onRefresh={onRefresh}
+          onRefresh={updatePage}
         />
       </div>
       <CustomTable

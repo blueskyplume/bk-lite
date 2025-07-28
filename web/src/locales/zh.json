@@ -2,6 +2,7 @@
   "common": {
     "edit": "编辑",
     "delete": "删除",
+    "detail": "详情",
     "add": "添加",
     "set": "设置",
     "search": "搜索",
@@ -19,6 +20,8 @@
     "batchDelete": "批量删除",
     "cancel": "取消",
     "confirm": "确认",
+    "retry": "重试",
+    "initializeFailed": "图谱初始化失败",
     "uploadText": "点击或拖动文件到此处上传",
     "supports": "支持",
     "logout": "登出",
@@ -80,6 +83,9 @@
     "preview": "预览",
     "download": "下载",
     "officialDocument": "官方文档",
+    "total": "共",
+    "item": "条",
+    "checked": "已选",
     "timeSelector": {
       "15Minutes": "最近15分钟",
       "30Minutes": "最近30分钟",
@@ -91,6 +97,8 @@
       "30Days": "最近30天",
       "custom": "自定义",
       "off": "关闭"
-    }
+    },
+    "copySuccess": "复制成功",
+    "copyFailed": "复制失败"
   }
 }

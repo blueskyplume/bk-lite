@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import mixins
 from rest_framework.decorators import action
@@ -17,7 +18,7 @@ from drf_yasg import openapi
 class NodeViewSet(mixins.DestroyModelMixin,
                   mixins.ListModelMixin,
                   GenericViewSet):
-    queryset = Node.objects.all().order_by("-created_at")
+    queryset = Node.objects.all().prefetch_related('nodeorganization_set').order_by("-created_at")
     filterset_class = NodeFilter
     pagination_class = CustomPageNumberPagination
     serializer_class = NodeSerializer
@@ -88,6 +89,11 @@ class NodeViewSet(mixins.DestroyModelMixin,
         node_ids = serializer.validated_data["node_ids"]
         collector_configuration_id = serializer.validated_data["collector_configuration_id"]
         result, message = NodeService.batch_binding_node_configuration(node_ids, collector_configuration_id)
+
+        # 清除cache中的etag
+        for node_id in node_ids:
+            cache.delete(f"node_etag_{node_id}")
+
         if result:
             return WebUtils.response_success(message)
         else:
@@ -107,4 +113,49 @@ class NodeViewSet(mixins.DestroyModelMixin,
         collector_id = serializer.validated_data["collector_id"]
         operation = serializer.validated_data["operation"]
         NodeService.batch_operate_node_collector(node_ids, collector_id, operation)
+
+        # 清除cache中的etag
+        for node_id in node_ids:
+            cache.delete(f"node_etag_{node_id}")
+
         return WebUtils.response_success()
+
+    @swagger_auto_schema(
+        operation_summary="查询节点信息以及关联的配置",
+        operation_id="node_config_asso",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "cloud_region_id": openapi.Schema(type=openapi.TYPE_INTEGER, description="云区域ID"),
+                "ids": openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING,description="节点id")),
+            },
+            required=["cloud_region_id"]
+        ),
+    )
+    @action(detail=False, methods=["post"], url_path="node_config_asso")
+    def get_node_config_asso(self, request):
+        nodes = Node.objects.prefetch_related("collectorconfiguration_set").filter(cloud_region_id=request.data["cloud_region_id"])
+        if request.data.get("ids"):
+            nodes = nodes.filter(id__in=request.data["ids"])
+
+        result = [
+            {
+                "id": node.id,
+                "name": node.name,
+                "ip": node.ip,
+                "operating_system": node.operating_system,
+                "cloud_region_id": node.cloud_region_id,
+                "configs": [
+                    {
+                        "id": cfg.id,
+                        "name": cfg.name,
+                        "collector_id": cfg.collector_id,
+                        "is_pre": cfg.is_pre,
+                    }
+                    for cfg in node.collectorconfiguration_set.all()
+                ],
+            }
+            for node in nodes
+        ]
+
+        return WebUtils.response_success(result)

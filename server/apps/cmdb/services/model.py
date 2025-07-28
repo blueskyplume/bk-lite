@@ -11,10 +11,13 @@ from apps.cmdb.constants import (
     SUBORDINATE_MODEL,
     UPDATE_MODEL_CHECK_ATTR_MAP,
     USER,
+    OPERATOR_MODEL,
 )
 from apps.cmdb.graph.neo4j import Neo4jClient
 from apps.cmdb.language.service import SettingLanguage
+from apps.cmdb.models import UPDATE_INST, DELETE_INST, CREATE_INST
 from apps.cmdb.services.classification import ClassificationManage
+from apps.cmdb.utils.change_record import create_change_record
 from apps.core.exceptions.base_app_exception import BaseAppException
 from apps.core.services.user_group import UserGroup
 from apps.rpc.system_mgmt import SystemMgmt
@@ -22,7 +25,7 @@ from apps.rpc.system_mgmt import SystemMgmt
 
 class ModelManage(object):
     @staticmethod
-    def create_model(data: dict):
+    def create_model(data: dict, username="admin"):
         """
         创建模型
         """
@@ -45,6 +48,9 @@ class ModelManage(object):
                 ),
                 "classification_model_asst_id",
             )
+        create_change_record(operator=username, model_id=data["model_id"], label="模型管理",
+                             _type=CREATE_INST, message=f"创建模型. 模型名称: {data['model_name']}",
+                             inst_id=result['_id'], model_object=OPERATOR_MODEL)
         return result
 
     @staticmethod
@@ -64,20 +70,46 @@ class ModelManage(object):
         model_id = data.pop("model_id", "")  # 不能更新model_id
         with Neo4jClient() as ag:
             exist_items, _ = ag.query_entity(MODEL, [{"field": "model_id", "type": "str<>", "value": model_id}])
+            # 排除当前正在更新的模型，避免自己和自己比较
+            exist_items = [i for i in exist_items if i["_id"] != id]
             model = ag.set_entity_properties(MODEL, [id], data, UPDATE_MODEL_CHECK_ATTR_MAP, exist_items)
         return model[0]
 
     @staticmethod
-    def search_model(language: str = "en", order_type: str = "ASC", order: str = "id"):
+    def search_model(language: str = "en", order_type: str = "ASC", order: str = "id",
+                     classification_ids: list = [], model_list: list = []):
         """
         查询模型
         Args:
             language: 语言，默认英语
             order_type: 排序方式，asc升序/desc降序
             order: 排序字段，默认order_id
+            classification_ids: 分类ID列表，可选，用于过滤特定分类下的模型
+            model_list: 模型ID列表，可选，用于过滤特定模型
         """
+        query_conditions = []
+
+        # 构造过滤条件 - classification_ids 和 model_list 是"或"关系
+        if classification_ids or model_list:
+            or_conditions = []
+
+            if classification_ids:
+                for classification_id in classification_ids:
+                    or_conditions.append({"field": "classification_id", "type": "str=", "value": classification_id})
+
+            if model_list:
+                for model_id in model_list:
+                    or_conditions.append({"field": "model_id", "type": "str=", "value": model_id})
+
+            query_conditions = or_conditions
+
         with Neo4jClient() as ag:
-            models, _ = ag.query_entity(MODEL, [], order=order, order_type=order_type)
+            # 如果有过滤条件，使用OR查询，否则查询所有
+            if query_conditions:
+                models, _ = ag.query_entity(MODEL, query_conditions, order=order, order_type=order_type,
+                                            param_type="OR")
+            else:
+                models, _ = ag.query_entity(MODEL, [], order=order, order_type=order_type)
 
         lan = SettingLanguage(language)
 
@@ -94,7 +126,7 @@ class ModelManage(object):
         return json.loads(attrs.replace('\\"', '"'))
 
     @staticmethod
-    def create_model_attr(model_id, attr_info):
+    def create_model_attr(model_id, attr_info, username="admin"):
         """
         创建模型属性
         """
@@ -118,10 +150,14 @@ class ModelManage(object):
                 continue
             attr = attr
 
+        create_change_record(operator=username, model_id=model_id, label="模型管理",
+                             _type=CREATE_INST, message=f"创建模型属性. 模型名称: {model_info['model_name']}",
+                             inst_id=model_info['_id'], model_object=OPERATOR_MODEL)
+
         return attr
 
     @staticmethod
-    def update_model_attr(model_id, attr_info):
+    def update_model_attr(model_id, attr_info, username="admin"):
         """
         更新模型属性
         """
@@ -155,10 +191,14 @@ class ModelManage(object):
                 continue
             attr = attr
 
+        create_change_record(operator=username, model_id=model_id, label="模型管理",
+                             _type=UPDATE_INST, message=f"修改模型属性. 模型名称: {model_info['model_name']}",
+                             inst_id=model_info['_id'], model_object=OPERATOR_MODEL)
+
         return attr
 
     @staticmethod
-    def delete_model_attr(model_id: str, attr_id: str):
+    def delete_model_attr(model_id: str, attr_id: str, username: str = "admin"):
         """
         删除模型属性
         """
@@ -183,6 +223,10 @@ class ModelManage(object):
             model_params = [{"field": "model_id", "type": "str=", "value": model_id}]
             ag.remove_entitys_properties(INSTANCE, model_params, [attr_id])
 
+        create_change_record(operator=username, model_id=model_id, label="模型管理",
+                             _type=DELETE_INST, message=f"删除模型属性. 模型名称: {model_info['model_name']}",
+                             inst_id=model_info['_id'], model_object=OPERATOR_MODEL)
+
         return ModelManage.parse_attrs(result[0].get("attrs", "[]"))
 
     @staticmethod
@@ -203,7 +247,7 @@ class ModelManage(object):
             result.append(
                 dict(
                     id=item["id"],
-                    name=item["path"],
+                    name=item["name"],
                     is_default=False,
                     type="str",
                 )
@@ -236,7 +280,7 @@ class ModelManage(object):
         system_mgmt_client = SystemMgmt()
 
         if ORGANIZATION in attr_types:
-            groups = UserGroup.groups_list(system_mgmt_client, {"search": ""})
+            groups = UserGroup.get_all_groups(system_mgmt_client)
             # 获取默认的第一个根组织
             groups = groups if groups else []
             option = []
@@ -249,7 +293,8 @@ class ModelManage(object):
             users = UserGroup.user_list(system_mgmt_client, {"search": ""})
             option = [
                 dict(
-                    id=user["username"],
+                    # id=user["username"],
+                    id=user["id"],
                     name=user["username"],
                     is_default=False,
                     type="str",

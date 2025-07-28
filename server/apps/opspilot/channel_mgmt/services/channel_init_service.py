@@ -1,11 +1,11 @@
-from apps.core.logger import logger
+from apps.core.logger import opspilot_logger as logger
 from apps.opspilot.enum import ChannelChoices
 from apps.opspilot.models import Channel
 
 
 class ChannelInitService:
     def __init__(self, owner):
-        self.owner = owner.username
+        self.owner = owner
 
     def init(self):
         logger.info("初始化企业微信应用通道")

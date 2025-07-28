@@ -1,4 +1,6 @@
 import json
+import re
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Type
 
@@ -18,24 +20,26 @@ from apps.cmdb.collection.constants import (
     REPLICAS_METRICS, K8S_STATEFULSET_REPLICAS, K8S_REPLICASET_REPLICAS, K8S_DEPLOYMENT_REPLICAS, ANNOTATIONS_METRICS,
     K8S_DEPLOYMENT_ANNOTATIONS, K8S_REPLICASET_ANNOTATIONS, K8S_STATEFULSET_ANNOTATIONS, K8S_DAEMONSET_ANNOTATIONS,
     K8S_JOB_ANNOTATIONS, K8S_CRONJOB_ANNOTATIONS, POD_NODE_RELATION, VMWARE_CLUSTER, VMWARE_COLLECT_MAP,
-    NETWORK_COLLECT, NETWORK_INTERFACES_RELATIONS,
+    NETWORK_COLLECT, NETWORK_INTERFACES_RELATIONS, PROTOCOL_METRIC_MAP, ALIYUN_COLLECT_CLUSTER, HOST_COLLECT_METRIC,
+    MIDDLEWARE_METRIC_MAP, QCLOUD_COLLECT_CLUSTER, DB_COLLECT_METRIC_MAP,
 )
 from apps.cmdb.constants import INSTANCE
 from apps.cmdb.graph.neo4j import Neo4jClient
 from apps.cmdb.models import OidMapping
-from apps.core.logger import logger
+from apps.core.logger import cmdb_logger as logger
 
 
 # 指标纳管（纳管控制器）
 class MetricsCannula:
     def __init__(self, inst_id, organization: list, inst_name: str, task_id: int, collect_plugin: Type,
-                 manual: bool = False, default_metrics: dict = None):
+                 manual: bool = False, default_metrics: dict = None, filter_collect_task=True):
         self.inst_id = inst_id
         self.organization = organization
         self.task_id = str(task_id)
         self.manual = False if default_metrics else manual  # 是否手动
         self.inst_name = inst_name
         self.collect_plugin = collect_plugin
+        self.filter_collect_task = filter_collect_task
         self.collect_data = {}  # 采集后的原始数据
         self.collect_params = {}
         self.collection_metrics = default_metrics or self.get_collection_metrics()
@@ -72,8 +76,10 @@ class MetricsCannula:
         for model_id, metrics in self.collection_metrics.items():
             params = [
                 {"field": "model_id", "type": "str=", "value": model_id},
-                {"field": "collect_task", "type": "str=", "value": self.task_id},
             ]
+            if self.filter_collect_task:
+                params.append({"field": "collect_task", "type": "str=", "value": self.task_id})
+
             with Neo4jClient() as ag:
                 already_data, _ = ag.query_entity(INSTANCE, params)
                 management = Management(
@@ -84,7 +90,8 @@ class MetricsCannula:
                     metrics,
                     ["inst_name"],
                     self.now_time,
-                    self.task_id
+                    self.task_id,
+                    collect_plugin=self.collect_plugin
                 )
                 if self.manual:
                     self.add_list.extend(management.add_list)
@@ -100,6 +107,8 @@ class MetricsCannula:
 
 
 class CollectK8sMetrics:
+    _MODEL_ID = "k8s_cluster"
+
     def __init__(self, cluster_name, *args, **kwargs):
         self.cluster_name = cluster_name
         self.metrics = self.get_metrics()
@@ -525,6 +534,7 @@ class CollectK8sMetrics:
                 kubelet_version=inst_index_info.get("kubelet_version"),
                 container_runtime_version=inst_index_info.get("container_runtime_version"),
                 pod_cidr=inst_index_info.get("pod_cidr"),
+                self_cluster=self.cluster_name,
                 assos=[
                     {
                         "model_id": "k8s_cluster",
@@ -559,6 +569,8 @@ class CollectK8sMetrics:
 
 
 class CollectVmwareMetrics(CollectBase):
+    _MODEL_ID = "vmware_vc"
+
     def __init__(self, inst_name, inst_id, task_id, *args, **kwargs):
         super().__init__(inst_name, inst_id, task_id, *args, **kwargs)
         self.model_resource_id_mapping = {}
@@ -731,7 +743,7 @@ class CollectNetworkMetrics(CollectBase):
         self.collect_inst = self.get_collect_inst()
         self.is_topo = self.collect_inst.is_network_topo
         self.set_metrics()
-        self.interfaces_data = []
+        self.interfaces_data = {}
 
     def set_metrics(self):
         if self.is_topo:
@@ -831,7 +843,7 @@ class CollectNetworkMetrics(CollectBase):
                 oid = index_data["metric"]["sysobjectid"]
                 oid_data = self.oid_map.get(oid, "")
                 if not oid_data:
-                    logger.info("==OID不存在，此实例数据跳过 OID={}==".format(oid))
+                    logger.info("==OID does not exist, this instance data is skipped OID={}==".format(oid))
                     continue
                 else:
                     index_data["metric"].update(oid_data)
@@ -860,6 +872,11 @@ class CollectNetworkMetrics(CollectBase):
         topo_data = self.collection_metrics_dict.pop(NETWORK_INTERFACES_RELATIONS, [])
         for metric_key, metrics in self.collection_metrics_dict.items():
             for index_data in metrics:
+                if index_data["instance_id"] not in self.instance_id_map:
+                    logger.info(
+                        "This data is discarded because no feature library can be found for the OID. instance_id={}".format(
+                            index_data["instance_id"]))
+                    continue
                 if "sysobjectid" in index_data:
                     model_id = index_data["device_type"]
                     mapping = self.device_map
@@ -877,99 +894,1159 @@ class CollectNetworkMetrics(CollectBase):
                         data[field] = index_data.get(key_or_func, "")
 
                 self.result.setdefault(model_id, []).append(data)
+                if model_id == "interface":
+                    self.interfaces_data[data["inst_name"]] = data
 
         if self.is_topo:
             relationships = self.find_interface_relationships(topo_data)
+            self.add_interface_assos(relationships)
             # 把接口的关联补充接口的关联关系中
 
-    def find_interface_relationships(self, snmp_data):
-        """
-        寻找网络设备接口之间的关联关系
-        """
+    def add_interface_assos(self, relationships):
+        for relationship in relationships:
+            source_inst_name = relationship["source_inst_name"]
+            if not self.interfaces_data.get(source_inst_name):
+                continue
+            data = {'asst_id': 'connect',
+                    'inst_name': relationship["target_inst_name"],
+                    'model_asst_id': 'interface_connect_interface',
+                    'model_id': 'interface'
+                    }
+            self.interfaces_data.get(source_inst_name)["assos"].append(data)
 
-        # Step 1: 数据分类
-        arp_ifindex = [entry for entry in snmp_data if entry[self.TAG] == "ARP-IfIndex"]
-        arp_physaddress = [entry for entry in snmp_data if entry[self.TAG] == "ARP-PhysAddress"]
-        iparr_table = [entry for entry in snmp_data if entry[self.TAG] == "IpAddr-IpAddr"]
-        iftable_descr = [entry for entry in snmp_data if entry[self.TAG] == "IFTable-IfDescr"]
-        iftable_alias = [entry for entry in snmp_data if entry[self.TAG] == "IFTable-IfAlias"]
+    def find_interface_relationships(self, data):
+        # 数据结构
+        device_interfaces = defaultdict(dict)  # {instance_id: {ifindex: {"ifdescr": ..., "mac": ..., "ifalias": ...}}}
+        ip_to_mac = defaultdict(dict)  # {instance_id: {ip: mac}}
+        arp_table = defaultdict(dict)  # {instance_id: {ip: {"ifindex": ..., "mac": ...}}}
 
-        # Step 2: 构建接口名称映射表（优先使用接口别名）
-        interface_names = {}
-        for entry in iftable_descr:
-            instance_id = entry["instance_id"]
-            interface_id = entry[self.IF_INDEX]
-            key = f"{instance_id}_{interface_id}"
-            interface_names[key] = entry[self.VAL]  # 默认使用接口描述
-        for entry in iftable_alias:
-            if entry.get(self.VAL):
-                instance_id = entry["instance_id"]
-                interface_id = entry[self.IF_INDEX]
-                key = f"{instance_id}_{interface_id}"
-                interface_names[key] = entry[self.VAL]  # 覆盖为接口别名（优先级更高）
+        # 预处理数据
+        for entry in data:
+            instance_id = entry['instance_id']
+            tag = entry['tag']
+            ifindex = entry.get('ifindex')
+            value = entry.get('val')
 
-        # Step 3: 构建 MAC-IP 映射表（基于 ARP 表）
-        mac_ip_mapping = {}
-        for arp_index, arp_phys in zip(arp_ifindex, arp_physaddress):
-            # 从 ARP 表中找到对应的 IP 地址
-            ip_entry = next(
-                (entry for entry in iparr_table if entry[self.IF_INDEX] == arp_index[self.IF_INDEX]),
-                None
-            )
-            if ip_entry:
-                mac_ip_mapping[arp_phys[self.VAL]] = ip_entry[self.VAL]  # MAC -> IP
+            if tag == 'IFTable-IfDescr':  # 接口描述
+                device_interfaces[instance_id].setdefault(ifindex, {})['ifdescr'] = value
+            elif tag == 'IFTable-PhysAddress':  # 接口MAC地址
+                device_interfaces[instance_id].setdefault(ifindex, {})['mac'] = self.normalize_mac(value)
+            elif tag == 'IFTable-IfAlias':  # 接口别名
+                device_interfaces[instance_id].setdefault(ifindex, {})['ifalias'] = value
+            elif tag == 'IpAddr-IpAddr':  # IP地址与MAC地址的映射
+                mac = device_interfaces[instance_id].get(ifindex, {}).get('mac')
+                if mac:
+                    ip_to_mac[instance_id][value] = mac
+            elif tag == 'ARP-IfIndex':  # ARP表中的接口索引
+                arp_table[instance_id].setdefault(ifindex, {})['ifindex'] = value
+            elif tag == 'ARP-PhysAddress':  # ARP表中的MAC地址
+                arp_table[instance_id].setdefault(ifindex, {})['mac'] = self.normalize_mac(value)
 
-        # Step 4: 构建 IP-接口映射表（基于 IPARR 表）
-        ip_interface_mapping = {}
-        for entry in iparr_table:
-            key = entry[self.VAL]  # IP
-            ip_interface_mapping[key] = (
-                entry["instance_id"], entry[self.IF_INDEX])  # IP -> (instance_id, interface_id)
+        # 构建 MAC 到设备和接口的索引
+        mac_to_device = {}
+        for instance_id, interfaces in device_interfaces.items():
+            for ifindex, details in interfaces.items():
+                mac = details.get('mac')
+                if mac:
+                    mac_to_device[mac] = (instance_id, ifindex)
 
-        # Step 5: 寻找接口关联关系
-        relationships = []
-        for mac, ip in mac_ip_mapping.items():
-            if ip in ip_interface_mapping:
-                target_instance_id, target_interface_id = ip_interface_mapping[ip]
-                target_interface_key = f"{target_instance_id}_{target_interface_id}"
-                target_interface_name = interface_names.get(target_interface_key,
-                                                            f"Interface-{target_interface_id}")  # 默认值为接口 ID
+        # 构建连接关系
+        relations = []
+        for src_instance, src_arp in arp_table.items():
+            for ip, arp_info in src_arp.items():
+                dst_mac = arp_info.get('mac')
+                if not dst_mac:
+                    continue
 
-                # 格式化目标模型实例名
-                target_inst_name = self.set_interface_inst_name({
-                    "instance_id": target_instance_id,
-                    "alias": target_interface_name,
-                    "description": target_interface_name
-                })
+                # 使用索引快速查找目标设备和接口
+                if dst_mac in mac_to_device:
+                    dst_instance, dst_ifindex = mac_to_device[dst_mac]
+                    if dst_instance == src_instance:
+                        continue  # 跳过同一设备
 
-                # 获取原模型实例名
-                source_instance = next(
-                    (entry for entry in snmp_data if
-                     entry[self.TAG] == "IFTable-PhysAddress" and entry[self.VAL] == mac),
-                    None
-                )
-                if source_instance:
-                    source_instance_id = source_instance["instance_id"]
-                    source_interface_id = source_instance[self.IF_INDEX]
-                    source_interface_key = f"{source_instance_id}_{source_interface_id}"
-                    source_interface_name = interface_names.get(source_interface_key,
-                                                                f"Interface-{source_interface_id}")
+                    if dst_instance not in self.instance_id_map or src_instance not in self.instance_id_map:
+                        logger.info(
+                            "This data is discarded because no feature library can be found for the OID. instance_id={}".format(
+                                src_instance))
+                        continue
 
-                    source_inst_name = self.set_interface_inst_name({
-                        "instance_id": source_instance_id,
-                        "alias": source_interface_name,
-                        "description": source_interface_name
-                    })
+                    src_ifindex = arp_info.get('ifindex')
+                    src_interface = device_interfaces[src_instance].get(src_ifindex, {})
+                    dst_interface = device_interfaces[dst_instance].get(dst_ifindex, {})
+                    if not src_interface or not dst_interface:
+                        continue
 
-                    # 构建关联关系
-                    relationships.append({
-                        "model_id": "network_interface",
-                        "inst_name": target_inst_name,
+                    relations.append({
+                        "source_device": src_instance,
+                        # "source_interface": src_interface.get('ifalias') or src_interface.get('ifdescr'),
+                        "source_inst_name": self.set_interface_inst_name(
+                            data={"instance_id": src_instance, **self.set_alias_descr(src_interface)}),
+                        "target_device": dst_instance,
+                        # "target_interface": dst_interface.get('ifalias') or dst_interface.get('ifdescr'),
+                        "target_inst_name": self.set_interface_inst_name(
+                            data={"instance_id": dst_instance, **self.set_alias_descr(dst_interface)}),
+                        "model_id": "interface",
                         "asst_id": "connect",
                         "model_asst_id": "interface_connect_interface",
-                        "source_inst_name": source_inst_name,  # 原模型实例名
-                        "target_inst_name": target_inst_name,  # 目标模型实例名
                     })
 
-        # Step 6: 返回结果
-        return relationships
+        return relations
+
+    @staticmethod
+    def set_alias_descr(data):
+        """设置别名"""
+        result = {"description": data["ifdescr"]}
+        if data.get("ifalias", ""):
+            result["alias"] = data["ifalias"]
+
+        return result
+
+    @staticmethod
+    def normalize_mac(mac):
+        """将 MAC 地址标准化为统一格式"""
+        if mac.startswith("0x"):
+            mac = mac[2:]  # 去掉 "0x"
+        return ":".join(mac[i:i + 2] for i in range(0, len(mac), 2)).lower()
+
+
+class ProtocolCollectMetrics(CollectBase):
+    def __init__(self, inst_name, inst_id, task_id, *args, **kwargs):
+        super().__init__(inst_name, inst_id, task_id, *args, **kwargs)
+
+    @property
+    def _metrics(self):
+        data = PROTOCOL_METRIC_MAP[self.model_id]
+        return data
+
+    def prom_sql(self):
+        sql = " or ".join(m for m in self._metrics)
+        return sql
+
+    @staticmethod
+    def set_mysql_inst_name(data, *args, **kwargs):
+        # {ip}-mysql-{port}
+        inst_name = f"{data['ip_addr']}-mysql-{data['port']}"
+        return inst_name
+
+    @property
+    def model_field_mapping(self):
+        mapping = {
+            "mysql": {
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "enable_binlog": "enable_binlog",
+                "sync_binlog": "sync_binlog",
+                "max_conn": "max_conn",
+                "max_mem": "max_mem",
+                "basedir": "basedir",
+                "datadir": "datadir",
+                "socket": "socket",
+                "bind_address": "bind_address",
+                "slow_query_log": "slow_query_log",
+                "slow_query_log_file": "slow_query_log_file",
+                "log_error": "log_error",
+                "wait_timeout": "wait_timeout",
+                "inst_name": self.set_mysql_inst_name
+            },
+
+        }
+
+        return mapping
+
+    def format_data(self, data):
+        """格式化数据"""
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def format_metrics(self):
+        """格式化数据"""
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            mapping = self.model_field_mapping.get(self.model_id, {})
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[self.model_id] = result
+
+
+class AliyunCollectMetrics(CollectBase):
+    _MODEL_ID = "aliyun_account"
+
+    def __init__(self, inst_name, inst_id, task_id, *args, **kwargs):
+        super().__init__(inst_name, inst_id, task_id, *args, **kwargs)
+        self.model_resource_id_mapping = {}
+
+    @property
+    def _metrics(self):
+        return ALIYUN_COLLECT_CLUSTER
+
+    # def prom_sql(self):
+    #     sql = " or ".join(
+    #         "{}{{instance_id=\"{}\"}}".format(m, f"{self.task_id}_{self.inst_name}") for m in self._metrics)
+    #     return sql
+
+    def prom_sql(self):
+        sql = " or ".join(m for m in self._metrics)
+        return sql
+
+    def check_task_id(self, instance_id):
+        # 只要是同一个account 就认为是同一个task 为了保证不同的区域的数据能在同一个地方采集上来
+        # TODO 做下架需要修改逻辑 保证task_id
+        task_id, _ = instance_id.split("_", 1)
+        return task_id == self.task_id
+
+    @staticmethod
+    def set_instance_inst_name(data, *args, **kwargs):
+        # {resource_name}（{resource_id}）
+        inst_name = f"{data['resource_name']}({data['resource_id']})"
+        return inst_name
+
+    def set_asso_instances(self, data, *args, **kwargs):
+        model_id = kwargs["model_id"]
+        result = [
+            {
+                "model_id": "aliyun_account",
+                "inst_name": self.inst_name,
+                "asst_id": "belong",
+                "model_asst_id": f"{model_id}_belong_aliyun_account"
+            }
+        ]
+        return result
+
+    @property
+    def model_field_mapping(self):
+        mapping = {
+            "aliyun_ecs": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "ip_addr": "ip_addr",
+                "public_ip": "public_ip",
+                "region": "region",
+                "zone": "zone",
+                "vpc": "vpc",
+                "status": "status",
+                "instance_type": "instance_type",
+                "os_name": "os_name",
+                "vcpus": (int, "vcpus"),
+                "memory_mb": (int, "memory"),
+                "charge_type": "charge_type",
+                "create_time": (self.convert_datetime_format, "create_time"),
+                "expired_time": (self.convert_datetime_format, "expired_time"),
+                self.asso: self.set_asso_instances
+            },
+            "aliyun_bucket": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "location": "location",
+                "extranet_endpoint": "extranet_endpoint",
+                "intranet_endpoint": "intranet_endpoint",
+                "storage_class": "storage_class",
+                "cross_region_replication": "cross_region_replication",
+                "block_public_access": "block_public_access",
+                "creation_date": (self.convert_datetime_format, "creation_date"),
+                self.asso: self.set_asso_instances
+
+            },
+            "aliyun_mysql": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "zone_slave": "zone_slave",
+                "engine": "engine",
+                "version": "version",
+                "type": "type",
+                "status": "status",
+                "class": "class",
+                "storage_type": "storage_type",
+                "network_type": "network_type",
+                "net_type": "net_type",
+                "connection_mode": "connection_mode",
+                "lock_mode": "lock_mode",
+                "cpu": (int, "cpu"),
+                "memory_mb": (int, "memory_mb"),
+                "charge_type": "charge_type",
+                "expire_time": (self.convert_datetime_format, "expire_time"),
+                self.asso: self.set_asso_instances
+
+            },
+            "aliyun_pgsql": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "zone_slave": "zone_slave",
+                "engine": "engine",
+                "version": "version",
+                "type": "type",
+                "status": "status",
+                "class": "class",
+                "storage_type": "storage_type",
+                "network_type": "network_type",
+                "net_type": "net_type",
+                "connection_mode": "connection_mode",
+                "lock_mode": "lock_mode",
+                "cpu": (int, "cpu"),
+                "memory_mb": (int, "memory_mb"),
+                "charge_type": "charge_type",
+                "expire_time": (self.convert_datetime_format, "expire_time"),
+                self.asso: self.set_asso_instances
+
+            },
+            "aliyun_mongodb": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "zone_slave": "zone_slave",
+                "engine": "engine",
+                "version": "version",
+                "type": "type",
+                "status": "status",
+                "class": "class",
+                "storage_type": "storage_type",
+                "storage_gb": (int, "storage_gb"),
+                "lock_mode": "lock_mode",
+                "charge_type": "charge_type",
+                "expire_time": (self.convert_datetime_format, "expire_time"),
+                self.asso: self.set_asso_instances
+            },
+            "aliyun_redis": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "engine_version": "engine_version",
+                "architecture_type": "architecture_type",
+                "capacity": "capacity",
+                "network_type": "network_type",
+                "connection_domain": "connection_domain",
+                "port": (int, "port"),
+                "bandwidth": (int, "bandwidth"),
+                "qps": (int, "qps"),
+                "shard_count": "shard_count",
+                "instance_class": "instance_class",
+                "package_type": "package_type",
+                "charge_type": "charge_type",
+                "end_time": (self.convert_datetime_format, "end_time"),
+                "create_time": (self.convert_datetime_format, "create_time"),
+                self.asso: self.set_asso_instances
+            },
+            "aliyun_clb": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "zone_slave": "zone_slave",
+                "vpc": "vpc",
+                "ip_addr": "ip_addr",
+                "status": "status",
+                "class": "class",
+                "charge_type": "charge_type",
+                "create_time": (self.convert_datetime_format, "create_time"),
+                self.asso: self.set_asso_instances
+            },
+            "aliyun_kafka_inst": {
+                "inst_name": self.set_instance_inst_name,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "vpc": "vpc",
+                "status": "status",
+                "class": "class",
+                "storage_gb": (int, "storage_gb"),
+                "storage_type": "storage_type",
+                "msg_retain": (int, "msg_retain"),
+                "topoc_num": (int, "topoc_num"),
+                "io_max_read": (int, "io_max_read"),
+                "io_max_write": (int, "io_max_write"),
+                "charge_type": "charge_type",
+                "create_time": (self.convert_datetime_format, "create_time"),
+                self.asso: self.set_asso_instances
+            }
+        }
+
+        return mapping
+
+    def format_data(self, data):
+        """格式化数据"""
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            instance_id = index_data["metric"]["instance_id"]
+            if not self.check_task_id(instance_id):
+                continue
+
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def format_metrics(self):
+        """格式化数据"""
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            model_id = metric_key.split("_info_gauge")[0]
+            mapping = self.model_field_mapping.get(model_id, {})
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data, model_id=model_id)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[model_id] = result
+
+
+class HostCollectMetrics(CollectBase):
+    def __init__(self, inst_name, inst_id, task_id, *args, **kwargs):
+        super().__init__(inst_name, inst_id, task_id, *args, **kwargs)
+        self.os_type_list = [{"id": "1", "name": "Linux"}, {"id": "2", "name": "Windows"},
+                             {"id": "3", "name": "AIX"},
+                             {"id": "4", "name": "Unix"}, {"id": "other", "name": "Other"}]
+        self.cup_arch_list = [{"id": "x86", "name": "x86"}, {"id": "x64", "name": "x64"}, {"id": "arm", "name": "ARM"},
+                              {"id": "arm64", "name": "ARM64"}, {"id": "other", "name": "Other"}]
+
+    @property
+    def _metrics(self):
+        data = HOST_COLLECT_METRIC
+        return data
+
+    def prom_sql(self):
+        sql = " or ".join(
+            "{}{{instance_id=\"{}\"}}".format(m, f"{self.task_id}_{self.inst_name}") for m in self._metrics)
+        return sql
+
+    @property
+    def model_field_mapping(self):
+        mapping = {
+            "inst_name": self.set_inst_name,
+            "hostname": "hostname",
+            "os_type": self.set_os_type,
+            "os_name": "os_name",
+            "os_version": "os_version",
+            "os_bit": "os_bits",
+            "cpu_model": "cpu_model",
+            "cpu_core": (self.transform_int, "cpu_cores"),
+            "memory": (self.transform_int, "memory_gb"),
+            "disk": (self.transform_int, "disk_gb"),
+            "cpu_arch": self.set_cpu_arch,
+            "inner_mac": (self.format_mac, "mac_address"),
+
+        }
+
+        return mapping
+
+    def set_inst_name(self, *args, **kwargs):
+        return self.inst_name
+
+    @staticmethod
+    def transform_int(data):
+        return int(float(data))
+
+    @staticmethod
+    def format_mac(mac, *args, **kwargs):
+        # 统一转为大写，冒号分隔
+        mac = mac.strip().lower().replace("-", ":")
+        if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", mac):
+            return mac
+        return mac.upper()
+
+    def set_cpu_arch(self, data, *args, **kwargs):
+        cpu_arch = data["cpu_architecture"]
+        for arch in self.cup_arch_list:
+            if arch["name"].lower() in cpu_arch.lower():
+                return arch["id"]
+        return "other"
+
+    def set_os_type(self, data, *args, **kwargs):
+        os_type = data["os_type"]
+        for os in self.os_type_list:
+            if os["name"].lower() in os_type.lower():
+                return os["id"]
+        return "other"
+
+    def format_data(self, data):
+        """格式化数据"""
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def format_metrics(self):
+        """格式化数据"""
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in self.model_field_mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[self.model_id] = result
+
+
+class MiddlewareCollectMetrics(CollectBase):
+    @property
+    def _metrics(self):
+        assert self.model_id in MIDDLEWARE_METRIC_MAP, f"{self.model_id} needs to be defined in MIDDLEWARE_METRIC_MAP"
+        return MIDDLEWARE_METRIC_MAP[self.model_id]
+
+    def format_data(self, data):
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def get_inst_name(self, data):
+        return f"{data['ip_addr']}-{self.model_id}-{data['port']}"
+
+    @property
+    def model_field_mapping(self):
+        mapping = {
+            "nginx": {
+                "ip_addr": "ip_addr",
+                # "port": lambda data: data["listen_port"].split("&"), # Multiple ports are separated by &
+                "port": "port",
+                "bin_path": "bin_path",
+                "version": "version",
+                "log_path": "log_path",
+                "conf_path": "conf_path",
+                "server_name": "server_name",
+                "include": "include",
+                "ssl_version": "ssl_version",
+                "inst_name": self.get_inst_name
+            },
+            "zookeeper": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "install_path": "install_path",  # bin路径
+                "log_path": "log_path",  # 运行日志路径
+                "conf_path": "conf_path",  # 配置文件路径
+                "java_path": "java_path",
+                "java_version": "java_version",
+                "data_dir": "data_dir",
+                "tick_time": "tick_time",
+                "init_limit": "init_limit",
+                "sync_limit": "sync_limit",
+                "server": "server"
+            },
+            "kafka": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "install_path": "install_path",  # bin路径
+                "conf_path": "conf_path",  # 配置文件路径
+                "log_path": "log_path",  # 运行日志路径
+                "java_path": "java_path",
+                "java_version": "java_version",
+                "xms": "xms",  # 初始堆内存大小
+                "xmx": "xmx",  # 最大堆内存大小
+                "broker_id": "broker_id",  # broker id
+                "io_threads": "io_threads",
+                "network_threads": "network_threads",
+                "socket_receive_buffer_bytes": "socket_receive_buffer_bytes",  # 接收缓冲区大小
+                "socket_request_max_bytes": "socket_request_max_bytes",  # 单个请求套接字最大字节数
+                "socket_send_buffer_bytes": "socket_send_buffer_bytes",  # 发送缓冲区大小
+            },
+            "etcd": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "data_dir": "data_dir",  # 快照文件路径
+                "conf_file_path": "conf_file_path",
+                "peer_port": "peer_port",  # 集群通讯端口
+                "install_path": "install_path",
+            },
+            "rabbitmq": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "allport": "allport",
+                "node_name": "node_name",
+                "log_path": "log_path",
+                "conf_path": "conf_path",
+                "version": "version",
+                "enabled_plugin_file": "enabled_plugin_file",
+                "erlang_version": "erlang_version",
+            },
+            "tomcat": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "catalina_path": "catalina_path",
+                "version": "version",
+                "xms": "xms",
+                "xmx": "xmx",
+                "max_perm_size": "max_perm_size",
+                "permsize": "permsize",
+                "log_path": "log_path",
+                "java_version": "java_version",
+            },
+            "apache":{
+                "inst_name": self.get_inst_name,
+                "ip_addr":"ip_addr",
+                "port":"port",
+                "version":"version",
+                "httpd_path":"httpd_path",
+                "httpd_conf_path":"httpd_conf_path",
+                "doc_root":"doc_root",
+                "error_log":"error_log",
+                "custom_Log":"custom_Log",
+                "include":"include",
+            },
+            "activemq":{
+                "inst_name": self.get_inst_name,
+                "ip_addr":"ip_addr",
+                "port":"port",
+                "version":"version",
+                "install_path":"install_path",
+                "conf_path":"conf_path",
+                "java_path":"java_path",
+                "java_version":"java_version",
+                "xms":"xms",
+                "xmx":"xmx",
+            }
+
+        }
+
+        return mapping
+
+    def format_metrics(self):
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            mapping = self.model_field_mapping.get(self.model_id, {})
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[self.model_id] = result
+
+    def prom_sql(self):
+        sql = " or ".join(m for m in self._metrics)
+        return sql
+
+
+class QCloudCollectMetrics(CollectBase):
+    _MODEL_ID = "qcloud"
+
+    def __init__(self, inst_name, inst_id, task_id, *args, **kwargs):
+        super().__init__(inst_name, inst_id, task_id, *args, **kwargs)
+        self.model_resource_id_mapping = {}
+
+    @property
+    def _metrics(self):
+        return QCLOUD_COLLECT_CLUSTER
+
+    def prom_sql(self):
+        sql = " or ".join(m for m in self._metrics)
+        return sql
+
+    @staticmethod
+    def set_instance_inst_name(data, *args, **kwargs):
+        if not data.get("resource_name"):
+            print(data)
+        inst_name = f"{data['resource_name']}_{data['resource_id']}"
+        return inst_name
+
+    def set_asso_instances(self, data, *args, **kwargs):
+        model_id = kwargs["model_id"]
+        result = [
+            {
+                "model_id": "qcloud",
+                "inst_name": self.inst_name,
+                "asst_id": "belong",
+                "model_asst_id": f"{model_id}_belong_{self._MODEL_ID}"
+            }
+        ]
+        return result
+
+    @property
+    def model_field_mapping(self):
+
+        mapping = {
+            "qcloud_cvm": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "ip_addr": "ip_addr",
+                "public_ip": "public_ip",
+                "region": "region",
+                "zone": "zone",
+                "vpc": "vpc",
+                "status": "status",
+                "instance_type": "instance_type",
+                "os_name": "os_name",
+                "vcpus": (int, "vcpus"),
+                "memory_mb": (int, "memory_mb"),
+                "charge_type": "charge_type",
+            },
+            "qcloud_rocketmq": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+                "zone": "zone",
+                "status": "status",
+                "topic_num": (int, "topic_num"),
+                "used_topic_num": (int, "used_topic_num"),
+                "tpsper_name_space": (int, "tpsper_name_space"),
+                "name_space_num": (int, "name_space_num"),
+                "group_num": (int, "group_num"),
+            },
+            "qcloud_mysql": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "ip_addr": "ip_addr",
+                "region": "region",
+                "zone": "zone",
+                "status": "status",
+                "volume": (int, "volume"),
+                "memory_mb": (int, "memory_mb"),
+                "charge_type": "charge_type",
+            },
+            "qcloud_redis": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "ip_addr": "ip_addr",
+                "vpc": "vpc",
+                "region": "region",
+                "zone": "zone",
+                "port": "port",
+                "wan_address": "wan_address",
+                "status": "status",
+                "sub_status": "sub_status",
+                "engine": "engine",
+                "version": "version",
+                "type": "type",
+                "memory_mb": "memory_mb",
+                "shard_size": "shard_size",
+                "shard_num": "shard_num",
+                "replicas_num": "replicas_num",
+                "client_limit": "client_limit",
+                "net_limit": "net_limit",
+                "charge_type": "charge_type",
+            },
+            "qcloud_mongodb": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "ip_addr": "ip_addr",
+                "tag": "tag",
+                "project_id": "project_id",
+                "vpc": "vpc",
+                "region": "region",
+                "zone": "zone",
+                "port": "port",
+                "status": "status",
+                "cluster_type": "cluster_type",
+                "machine_type": "machine_type",
+                "version": "version",
+                "cpu": "cpu",
+                "memory_mb": "memory_mb",
+                "volume_mb": "volume_mb",
+                "secondary_num": "secondary_num",
+                "mongos_cpu": "mongos_cpu",
+                "mongos_memory_mb": "mongos_memory_mb",
+                "mongos_node_num": "mongos_node_num",
+                "charge_type": "charge_type",
+
+            },
+            "qcloud_pgsql": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "project_id": "project_id",
+                "vpc": "vpc",
+                "region": "region",
+                "zone": "zone",
+                "status": "status",
+                "chartset": "chartset",
+                "engine": "engine",
+                "mode": "mode",
+                "version": "version",
+                "kernel_version": "kernel_version",
+                "cpu": "cpu",
+                "memory_mb": "memory_mb",
+                "volume_mb": "volume_mb",
+                "charge_type": "charge_type",
+            },
+            "qcloud_pulsar_cluster": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "project_id": "project_id",
+                "region": "region",
+                "status": "status",
+                "version": "version",
+                "vpc_endpoint": "vpc_endpoint",
+                "public_endpoint": "public_endpoint",
+                "max_namespace_num": "max_namespace_num",
+                "max_topic_num": "max_topic_num",
+                "max_qps": "max_qps",
+                "max_retention_s": "max_retention_s",
+                "max_storage_mb": "max_storage_mb",
+                "max_delay_s": "max_delay_s",
+                "charge_type": "charge_type",
+            },
+            "qcloud_cmq": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "region": "region",
+                "status": "status",
+                "max_delay_s": "max_delay_s",
+                "polling_wait_s": "polling_wait_s",
+                "visibility_timeout_s": "visibility_timeout_s",
+                "max_message_b": "max_message_b",
+                "qps": "qps",
+            },
+            "qcloud_cmq_topic": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "region": "region",
+                "status": "status",
+                "max_retention_s": "max_retention_s",
+                "max_message_b": "max_message_b",
+                "filter_type": "filter_type",
+                "qps": "qps",
+            },
+            "qcloud_clb": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "project_id": "project_id",
+                "security_group_id": "security_group_id",
+                "vpc": "vpc",
+                "region": "region",
+                "master_zone": "master_zone",
+                "backup_zone": "backup_zone",
+                "status": "status",
+                "domain": "domain",
+                "ip_addr": "ip_addr",
+                "type": "type",
+                "isp": "isp",
+                "charge_type": "charge_type",
+            },
+            "qcloud_eip": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "region": "region",
+                "status": "status",
+                "type": "type",
+                "ip_addr": "ip_addr",
+                "instance_type": "instance_type",
+                "instance_id": "instance_id",
+                "isp": "isp",
+                "charge_type": "charge_type",
+
+            },
+            "qcloud_bucket": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "region": "region",
+            },
+            "qcloud_filesystem": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tag": "tag",
+                "region": "region",
+                "zone": "zone",
+                "status": "status",
+                "protocol": "protocol",
+                "type": "type",
+                "net_limit": (int, "net_limit"),
+                "size_gib": (int, "size_gib"),
+            },
+            "qcloud_domain": {
+                "inst_name": self.set_instance_inst_name,
+                self.asso: self.set_asso_instances,
+                "resource_name": "resource_name",
+                "resource_id": "resource_id",
+                "tld": "tld",
+                "status": "status",
+            }
+        }
+        return mapping
+
+    def format_data(self, data):
+        """格式化数据"""
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def format_metrics(self):
+        """格式化数据"""
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            model_id = metric_key.split("_info_gauge")[0]
+            mapping = self.model_field_mapping.get(model_id, {})
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data, model_id=model_id)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[model_id] = result
+
+
+class DBCollectCollectMetrics(CollectBase):
+    """数据库 采集指标"""
+
+    @property
+    def _metrics(self):
+        assert self.model_id in DB_COLLECT_METRIC_MAP, f"{self.model_id} needs to be defined in DB_COLLECT_METRIC_MAP"
+        return DB_COLLECT_METRIC_MAP[self.model_id]
+
+    def format_data(self, data):
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def get_inst_name(self, data):
+        return f"{data['ip_addr']}-{self.model_id}-{data['port']}"
+
+    def format_data(self, data):
+        """格式化数据"""
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    @property
+    def model_field_mapping(self):
+
+        mapping = {
+            "es": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "log_path": "log_path",
+                "data_path": "data_path",
+                "is_master": "is_master",
+                "node_name": "node_name",
+                "cluster_name": "cluster_name",
+                "java_version": "java_version",
+                "java_path": "java_path",
+                "conf_path": "conf_path",
+                "install_path": "install_path",
+            },
+            "redis": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "install_path": "install_path",
+                "max_conn": "max_conn",
+                "max_mem": "max_mem",
+                "database_role": "database_role",
+            },
+            "mongodb":{
+                "inst_name": self.get_inst_name,
+                "ip_addr":"ip_addr",
+                "port":"port",
+                "version":"version",
+                "mongo_path":"mongo_path",
+                "bin_path":"bin_path",
+                "config":"config",
+                "fork":"fork",
+                "system_log":"system_log",
+                "db_path":"db_path",
+                "max_incoming_conn":"max_incoming_conn",
+                "database_role":"database_role",
+            },
+            "postgresql":{
+                "inst_name": lambda x: f"{x['ip_addr']}-pg-{x['port']}",
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "conf_path": "conf_path",
+                "data_path": "data_path",
+                "max_conn": "max_conn",
+                "cache_memory_mb": "cache_memory_mb",
+                "log_path": "log_path",
+            }
+        }
+        return mapping
+
+    def format_metrics(self):
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            mapping = self.model_field_mapping.get(self.model_id, {})
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[self.model_id] = result
+
+    def prom_sql(self):
+        sql = " or ".join(m for m in self._metrics)
+        return sql

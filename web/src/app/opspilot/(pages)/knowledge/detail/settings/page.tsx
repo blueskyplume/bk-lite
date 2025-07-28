@@ -19,7 +19,7 @@ const SettingsPage: React.FC = () => {
   const { groups, loading: groupsLoading } = useGroups();
   const searchParams = useSearchParams();
   const id = searchParams ? searchParams.get('id') : null;
-  const { formData, configData, setFormData, setConfigData, loading } = useFetchConfigData(id);
+  const { formData, configData, setFormData, setConfigData, loading, knowledgeBasePermissions } = useFetchConfigData(id);
   const [confirmLoading, setConfirmLoading] = useState(false);
   const { updateKnowledgeSettings } = useKnowledgeApi();
 
@@ -50,6 +50,12 @@ const SettingsPage: React.FC = () => {
           rag_num_candidates: configData.candidate,
           result_count: configData.resultCount,
           rerank_top_k: configData.rerankTopK,
+          enable_naive_rag: configData.enableNaiveRag,
+          enable_qa_rag: configData.enableQaRag,
+          enable_graph_rag: configData.enableGraphRag,
+          rag_size: configData.ragSize,
+          qa_size: configData.qaSize,
+          graph_size: configData.graphSize,
         };
 
         try {
@@ -123,7 +129,9 @@ const SettingsPage: React.FC = () => {
                   </Button>
                 </Col>
                 <Col>
-                  <PermissionWrapper requiredPermissions={['Edit']}>
+                  <PermissionWrapper 
+                    requiredPermissions={['Edit']}
+                    instPermissions={knowledgeBasePermissions}>
                     <Button type="primary" onClick={handleConfirm} loading={confirmLoading}>
                       {t('common.confirm')}
                     </Button>

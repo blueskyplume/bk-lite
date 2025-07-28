@@ -1,7 +1,8 @@
 'use client';
 import React, { useEffect, useState, useRef } from 'react';
-import { Input, Button, Tag, Modal, message, Segmented } from 'antd';
+import { Input, Button, Tag, message, Segmented, Popconfirm } from 'antd';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import { useTranslation } from '@/utils/i18n';
 import {
   ColumnItem,
@@ -10,7 +11,9 @@ import {
   TableDataItem,
   UserItem,
   TimeSelectorDefaultValue,
+  TimeValuesProps,
 } from '@/app/monitor/types';
+import { getRecentTimeRange } from '@/app/monitor/utils/common';
 import { ViewModalProps } from '@/app/monitor/types/monitor';
 import TimeSelector from '@/components/time-selector';
 import Permission from '@/components/permission';
@@ -32,11 +35,11 @@ const Alert: React.FC<ViewModalProps> = ({
   objects,
   form = INIT_VIEW_MODAL_FORM,
 }) => {
-  const { get, patch, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const { getMonitorAlert, patchMonitorAlert } = useMonitorApi();
   const { t } = useTranslation();
   const STATE_MAP = useStateMap();
   const LEVEL_LIST = useLevelList();
-  const { confirm } = Modal;
   const { convertToLocalizedTime } = useLocalizedTime();
   const commonContext = useCommon();
   const detailRef = useRef<ModalRef>(null);
@@ -51,9 +54,10 @@ const Alert: React.FC<ViewModalProps> = ({
     total: 0,
     pageSize: 20,
   });
-  const beginTime: number = dayjs().subtract(10080, 'minute').valueOf();
-  const lastTime: number = dayjs().valueOf();
-  const [timeRange, setTimeRange] = useState<number[]>([beginTime, lastTime]);
+  const [timeValues, setTimeValues] = useState<TimeValuesProps>({
+    timeRange: [],
+    originValue: 10080,
+  });
   const timeDefaultValue =
     useRef<TimeSelectorDefaultValue>({
       selectValue: 10080,
@@ -61,6 +65,7 @@ const Alert: React.FC<ViewModalProps> = ({
     })?.current || {};
   const [activeTab, setActiveTab] = useState<string>('activeAlarms');
   const [frequence, setFrequence] = useState<number>(0);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   const columns: ColumnItem[] = [
     {
@@ -86,11 +91,9 @@ const Alert: React.FC<ViewModalProps> = ({
     },
     {
       title: t('monitor.events.alertName'),
-      dataIndex: 'title',
-      key: 'title',
+      dataIndex: 'content',
+      key: 'content',
       width: 120,
-      ellipsis: true,
-      render: (_, record) => <>{record.content || '--'}</>,
     },
     {
       title: t('monitor.events.state'),
@@ -118,14 +121,22 @@ const Alert: React.FC<ViewModalProps> = ({
           >
             {t('common.detail')}
           </Button>
-          <Permission requiredPermissions={['Detail']}>
-            <Button
-              type="link"
-              disabled={record.status !== 'new'}
-              onClick={() => showAlertCloseConfirm(record)}
+          <Permission
+            requiredPermissions={['Detail']}
+            instPermissions={record.permission}
+          >
+            <Popconfirm
+              title={t('monitor.events.closeTitle')}
+              description={t('monitor.events.closeContent')}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+              okButtonProps={{ loading: confirmLoading }}
+              onConfirm={() => handleCloseConfirm(record)}
             >
-              {t('common.close')}
-            </Button>
+              <Button type="link" disabled={record.status !== 'new'}>
+                {t('common.close')}
+              </Button>
+            </Popconfirm>
           </Permission>
         </>
       ),
@@ -145,7 +156,7 @@ const Alert: React.FC<ViewModalProps> = ({
     };
   }, [
     frequence,
-    timeRange,
+    timeValues,
     activeTab,
     searchText,
     pagination.current,
@@ -157,7 +168,7 @@ const Alert: React.FC<ViewModalProps> = ({
     getAssetInsts('refresh');
   }, [
     isLoading,
-    timeRange,
+    timeValues,
     activeTab,
     pagination.current,
     pagination.pageSize,
@@ -173,36 +184,29 @@ const Alert: React.FC<ViewModalProps> = ({
     setActiveTab(val);
   };
 
-  const showAlertCloseConfirm = (row: TableDataItem) => {
-    confirm({
-      title: t('monitor.events.closeTitle'),
-      content: t('monitor.events.closeContent'),
-      centered: true,
-      onOk() {
-        return new Promise(async (resolve) => {
-          try {
-            await patch(`/monitor/api/monitor_alert/${row.id}/`, {
-              status: 'closed',
-            });
-            message.success(t('monitor.events.successfullyClosed'));
-            onRefresh();
-          } finally {
-            resolve(true);
-          }
-        });
-      },
-    });
+  const handleCloseConfirm = async (row: TableDataItem) => {
+    setConfirmLoading(true);
+    try {
+      await patchMonitorAlert(row.id as string, {
+        status: 'closed',
+      });
+      message.success(t('monitor.events.successfullyClosed'));
+      onRefresh();
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
   const getParams = () => {
+    const recentTimeRange = getRecentTimeRange(timeValues);
     return {
       monitor_instance_id: form.instance_id,
       content: searchText,
       page: pagination.current,
       page_size: pagination.pageSize,
       monitor_objects: monitorObject,
-      created_at_after: dayjs(timeRange[0]).toISOString(),
-      created_at_before: dayjs(timeRange[1]).toISOString(),
+      created_at_after: dayjs(recentTimeRange[0]).toISOString(),
+      created_at_before: dayjs(recentTimeRange[1]).toISOString(),
     };
   };
 
@@ -224,7 +228,7 @@ const Alert: React.FC<ViewModalProps> = ({
     }
     try {
       setTableLoading(type !== 'timer');
-      const data = await get('/monitor/api/monitor_alert/', { params });
+      const data = await getMonitorAlert(params);
       setTableData(data.results);
       setPagination((pre) => ({
         ...pre,
@@ -235,8 +239,11 @@ const Alert: React.FC<ViewModalProps> = ({
     }
   };
 
-  const onTimeChange = (val: number[]) => {
-    setTimeRange(val);
+  const onTimeChange = (val: number[], originValue: number | null) => {
+    setTimeValues({
+      timeRange: val,
+      originValue,
+    });
   };
 
   const onRefresh = () => {

@@ -1,13 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input, Dropdown, Menu, Modal, message, Spin } from 'antd';
 import Icon from '@/components/icon';
 import { KnowledgeValues, Card } from '@/app/opspilot/types/knowledge';
 import ModifyKnowledgeModal from './modifyKnowledge';
 import PermissionWrapper from '@/components/permission';
-import knowledgeStyle from './index.module.scss';
 import styles from '@/app/opspilot/styles/common.module.scss';
 import { useTranslation } from '@/utils/i18n';
 import { getIconTypeByIndex } from '@/app/opspilot/utils/knowledgeBaseUtils';
@@ -24,22 +23,86 @@ const KnowledgePage = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<null | KnowledgeValues>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const isFetching = useRef(false);
+
+  const fetchCards = useCallback(async (reset = false) => {
+    if (isFetching.current || (!reset && !hasMore)) return;
+    
+    isFetching.current = true;
+    
+    if (reset) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+    
+    try {
+      const pageToFetch = reset ? 1 : currentPage;
+      const data = await fetchKnowledgeBase({
+        page: pageToFetch,
+        page_size: 20,
+        search: searchTerm
+      });
+      
+      if (reset) {
+        setCards(Array.isArray(data.items) ? data.items : []);
+        setCurrentPage(1);
+      } else {
+        setCards(prev => [...prev, ...(Array.isArray(data.items) ? data.items : [])]);
+      }
+      
+      const hasMoreData = pageToFetch * 20 < (data.count || 0);
+      setHasMore(hasMoreData);
+      
+      if (hasMoreData) {
+        setCurrentPage(pageToFetch + 1);
+      }
+    } catch {
+      message.error(t('common.fetchFailed'));
+    } finally {
+      isFetching.current = false;
+      if (reset) {
+        setLoading(false);
+      } else {
+        setLoadingMore(false);
+      }
+    }
+  }, [currentPage, searchTerm, hasMore]);
 
   useEffect(() => {
-    const getKnowledgeBase = async () => {
-      setLoading(true);
-      try {
-        const data = await fetchKnowledgeBase();
-        setCards(Array.isArray(data) ? data : []);
-      } catch {
-        message.error(t('common.fetchFailed'));
-      } finally {
-        setLoading(false);
-      }
-    };
+    setCurrentPage(1);
+    setCards([]);
+    setHasMore(true);
+    fetchCards(true);
+  }, [searchTerm]);
 
-    getKnowledgeBase();
-  }, []);
+  // Intersection Observer设置
+  useEffect(() => {
+    if (!loadMoreRef.current || loading || loadingMore || !hasMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !isFetching.current) {
+          fetchCards();
+        }
+      },
+      {
+        root: null,
+        rootMargin: '100px',
+        threshold: 0.1,
+      }
+    );
+
+    observer.observe(loadMoreRef.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [loading, loadingMore, hasMore]);
 
   const handleSearch = (value: string) => {
     setSearchTerm(value);
@@ -90,12 +153,16 @@ const KnowledgePage = () => {
   const menu = (card: Card) => (
     <Menu className={`${styles.menuContainer}`}>
       <Menu.Item key="edit">
-        <PermissionWrapper requiredPermissions={['Edit']}>
+        <PermissionWrapper 
+          requiredPermissions={['Edit']}
+          instPermissions={card.permissions}>
           <span className='block' onClick={() => handleMenuClick('edit', card)}>{t('common.edit')}</span>
         </PermissionWrapper>
       </Menu.Item>
       <Menu.Item key="delete">
-        <PermissionWrapper requiredPermissions={['Delete']}>
+        <PermissionWrapper 
+          requiredPermissions={['Delete']}
+          instPermissions={card.permissions}>
           <span className='block' onClick={() => handleMenuClick('delete', card)}>{t('common.delete')}</span>
         </PermissionWrapper>
       </Menu.Item>
@@ -118,13 +185,13 @@ const KnowledgePage = () => {
         />
       </div>
       <Spin spinning={loading}>
-        <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4 ${knowledgeStyle.knowledge}`}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4">
           <PermissionWrapper
             requiredPermissions={['Add']}
-            className={`p-4 rounded-xl flex items-center justify-center shadow-md cursor-pointer ${knowledgeStyle.add}`}
+            className="p-4 rounded-xl flex items-center justify-center shadow-md cursor-pointer bg-[var(--color-bg)]"
           >
             <div
-              className="w-full h-full flex items-center justify-center"
+              className="w-full h-full flex items-center justify-center min-h-[120px]"
               onClick={() => { setIsModalVisible(true); setEditingCard(null); }}
             >
               <Icon type="tianjia" className="text-2xl" />
@@ -134,7 +201,7 @@ const KnowledgePage = () => {
           {filteredCards.map((card, index) => (
             <div
               key={card.id}
-              className={`p-4 rounded-xl relative shadow-md cursor-pointer ${knowledgeStyle.card}`}
+              className="p-4 rounded-xl relative shadow-md cursor-pointer bg-[var(--color-bg)]"
               onClick={() => router.push(`/opspilot/knowledge/detail?id=${card.id}&name=${card.name}&desc=${card.introduction}`)}
             >
               <div className="absolute top-6 right-2" onClick={(e) => e.stopPropagation()}>
@@ -148,16 +215,19 @@ const KnowledgePage = () => {
                 <div className="rounded-full">
                   <Icon type={getIconTypeByIndex(index)} className="text-4xl" />
                 </div>
-                <h3 className="ml-2 text-sm font-semibold truncate" title={card.name}>
+                <h3 className="ml-2 text-sm font-semibold truncate text-[var(--color-text-1)]" title={card.name}>
                   {card.name}
                 </h3>
               </div>
-              <p className={`my-5 text-xs line-clamp-3 ${knowledgeStyle.desc}`}>{card.introduction}</p>
-              <div className={`absolute bottom-4 right-4 font-mini ${knowledgeStyle.desc}`}>
+              <p className="mt-3 mb-2 text-xs line-clamp-3 h-[50px] text-[var(--color-text-3)]">{card.introduction}</p>
+              <div className="flex items-end justify-end text-[var(--color-text-4)] font-mini w-full text-right">
                 <span>{t('knowledge.form.owner')}: {card.created_by} ｜ {t('knowledge.form.group')}: {Array.isArray(card.team_name) ? card.team_name.join(',') : '--'}</span>
               </div>
             </div>
           ))}
+        </div>
+        <div ref={loadMoreRef} className="w-full h-6 flex items-center justify-center">
+          {loadingMore && <Spin size="small" />}
         </div>
       </Spin>
       <ModifyKnowledgeModal

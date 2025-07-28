@@ -1,12 +1,15 @@
+from datetime import datetime, timezone
+
+from apps.node_mgmt.models import NodeCollectorInstallStatus
 from apps.node_mgmt.models.sidecar import Node, Collector, CollectorConfiguration, Action
 from apps.node_mgmt.serializers.node import NodeSerializer
+from datetime import datetime, timedelta
 
 
 class NodeService:
     @staticmethod
     def process_node_data(node_data):
         """处理节点数据列表，并补充每个节点的采集器名称和采集器配置名称"""
-        collector_ids = set()
         configuration_ids = set()
 
         # 收集所有需要的 collector_id 和 configuration_id
@@ -14,18 +17,36 @@ class NodeService:
             if 'collectors' not in node['status']:
                 continue
             for collector in node['status']['collectors']:
-                collector_ids.add(collector['collector_id'])
                 configuration_ids.add(collector['configuration_id'])
 
         # 批量查询所有需要的 Collector 和 CollectorConfiguration
-        collectors = Collector.objects.filter(id__in=collector_ids)
+        collectors = Collector.objects.all()
         collector_dict = {collector.id: collector for collector in collectors}
 
         configurations = CollectorConfiguration.objects.filter(id__in=configuration_ids)
         configuration_dict = {config.id: config for config in configurations}
 
+        node_ids = [node["id"] for node in node_data]
+        node_install_map = {}
+        objs = NodeCollectorInstallStatus.objects.filter(node__in=node_ids)
+        for obj in objs:
+            if obj.status == "success":
+                status = 11
+            elif obj.status == "error":
+                status = 12
+            else:
+                status = 10
+
+
+            node_install_map.setdefault(obj.node_id, []).append(
+                dict( collector_id=obj.collector_id, status=status, message=obj.result)
+            )
+
         # 处理节点数据
         for node in node_data:
+            node_collector_install = node_install_map.get(node["id"], [])
+            if node_collector_install:
+                node["status"]["collectors_install"] = node_collector_install
             if 'collectors' not in node['status']:
                 continue
             for collector in node['status']['collectors']:
@@ -35,6 +56,18 @@ class NodeService:
                 configuration_obj = configuration_dict.get(collector['configuration_id'])
                 collector['configuration_name'] = configuration_obj.name if configuration_obj else None
 
+        # 计算节点活跃度，一分钟内为活跃
+        for node in node_data:
+            now_timestamp = int(datetime.now(timezone.utc).timestamp())
+            # 解析成 datetime 对象
+            updated_at_timestamp = int(datetime.strptime(node["updated_at"], "%Y-%m-%dT%H:%M:%S%z").timestamp())
+            # 计算时间差
+            time_diff = now_timestamp - updated_at_timestamp
+            # 判断是否活跃
+            if time_diff < 60:
+                node["active"] = True
+            else:
+                node["active"] = False
         return node_data
 
     @staticmethod
@@ -76,7 +109,7 @@ class NodeService:
             action.save()
 
     @staticmethod
-    def get_node_list(organization_ids, cloud_region_id, name, ip, os, page, page_size):
+    def get_node_list(organization_ids, cloud_region_id, name, ip, os, page, page_size, is_active):
         """获取节点列表"""
         qs = Node.objects.all()
         if cloud_region_id:
@@ -89,6 +122,15 @@ class NodeService:
             qs = qs.filter(ip__icontains=ip)
         if os:
             qs = qs.filter(operating_system__icontains=os)
+
+        # 获取当前时间前一分钟的utc时间
+        now = datetime.now(timezone.utc)
+        one_minute_ago = now - timedelta(minutes=1)
+        if is_active is True:
+            qs = qs.filter(updated_at__gte=one_minute_ago)
+        elif is_active is False:
+            qs = qs.filter(updated_at__lt=one_minute_ago)
+
         count = qs.count()
         if page_size == -1:
             nodes = qs

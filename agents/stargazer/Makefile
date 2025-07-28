@@ -10,7 +10,9 @@ setup:
 
 
 install:
-	./.venv/bin/pip-compile ./requirements/requirements-core.txt ./requirements/requirements-extra.txt ./requirements/requirements-monitor.txt ./requirements/requirements-collect.txt -v --output-file ./requirements.txt
+	./.venv/bin/pip-compile ./requirements/requirements-core.txt \
+							./requirements/requirements-extra.txt \
+						-v --output-file ./requirements.txt
 	./.venv/bin/pip-sync -v
 
 install-hook:
@@ -21,3 +23,6 @@ lint:
 
 run:
 	sanic server:app --host=0.0.0.0 --port=8083 --workers=1
+
+build:
+	docker build -t bklite/stargazer -f ./support-files/docker/Dockerfile .

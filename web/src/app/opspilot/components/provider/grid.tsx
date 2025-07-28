@@ -8,6 +8,7 @@ import { Model, ModelConfig } from '@/app/opspilot/types/provider';
 import PermissionWrapper from '@/components/permission';
 import ConfigModal from '@/app/opspilot/components/provider/configModal';
 import { useProviderApi } from '@/app/opspilot/api/provider';
+import { CONFIG_MAP } from '@/app/opspilot/constants/provider';
 
 interface ProviderGridProps {
   models: Model[];
@@ -55,32 +56,28 @@ const ProviderGrid: React.FC<ProviderGridProps> = ({ models, filterType, loading
   const menu = (model: Model) => (
     <Menu className={`${comStyles.menuContainer}`}>
       <Menu.Item key="edit">
-        <PermissionWrapper className='w-full' requiredPermissions={['Setting']}>
+        <PermissionWrapper 
+          className='w-full' 
+          requiredPermissions={['Setting']}
+          instPermissions={model.permissions || []}>
           <span className='block w-full' onClick={() => handleMenuClick('edit', model)}>{t('common.edit')}</span>
         </PermissionWrapper>
       </Menu.Item>
       {model.is_build_in === false && (<Menu.Item key="delete">
-        <PermissionWrapper className='w-full' requiredPermissions={['Delete']}>
+        <PermissionWrapper 
+          className='w-full' 
+          requiredPermissions={['Delete']}
+          instPermissions={model.permissions || []}>
           <span className='block w-full' onClick={() => handleMenuClick('delete', model)}>{t('common.delete')}</span>
         </PermissionWrapper>
       </Menu.Item>)}
     </Menu>
   );
 
-  const getConfigField = (type: string): keyof Model | undefined => {
-    const configMap: Partial<Record<string, keyof Model>> = {
-      llm_model: 'llm_config',
-      embed_provider: 'embed_config',
-      rerank_provider: 'rerank_config',
-      ocr_provider: 'ocr_config',
-    };
-    return configMap[type];
-  };
-
   const handleEditOk = async (values: any) => {
     if (!selectedModel) return;
 
-    const configField = getConfigField(filterType);
+    const configField = CONFIG_MAP[filterType];
     const updatedModel: Model = {
       ...selectedModel,
       name: values.name,
@@ -101,9 +98,11 @@ const ProviderGrid: React.FC<ProviderGridProps> = ({ models, filterType, loading
       if (!configField) {
         throw new Error(`Invalid filterType: ${filterType}`);
       }
-      (updatedModel[configField] as ModelConfig) = {
-        ...(selectedModel[configField] as ModelConfig),
+      (updatedModel[configField as keyof Model] as ModelConfig) = {
+        ...(selectedModel[configField as keyof Model] as ModelConfig),
         base_url: values.url,
+        api_key: values.apiKey,
+        ...(filterType !== 'ocr_provider' && { model: values.modelName })
       };
     }
 

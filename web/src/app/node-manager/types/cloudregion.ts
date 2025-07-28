@@ -1,21 +1,33 @@
 import type { TableDataItem } from '@/app/node-manager/types/index';
+import { ListItem } from '@/types';
+import { ColumnFilterItem } from 'antd/es/table/interface';
 
 //配置页面的table的列定义
 interface ConfigHookParams {
   configurationClick: (key: string) => void;
   openSub: (key: string, item?: any) => void;
+  nodeClick: () => void;
+  modifyDeleteconfirm: (key: string) => void;
+  applyConfigurationClick: (item: TableDataItem) => void;
+  filter: ColumnFilterItem[];
+}
+// 子配置页面table的列定义
+interface SubConfigHookParams {
+  edit: (item: ConfigListProps) => void;
+  nodeData: ConfigDate;
 }
 interface VariableProps {
   openUerModal: (type: string, form: TableDataItem) => void;
   getFormDataById: (key: string) => TableDataItem;
-  delconfirm: (key: string, text: any) => void;
+  delConfirm: (key: string, text: any) => void;
 }
 
 //api返回的配置文件列表的类型
-interface IConfiglistprops {
+interface ConfigListProps {
   id: string;
   name: string;
   collector_name: string;
+  collector_id?: string;
   operating_system: string;
   node_count: string;
   config_template?: string;
@@ -35,7 +47,7 @@ interface CollectorItem {
 }
 
 //node展开的数据类型
-interface NodeExpanddata {
+interface NodeExpandData {
   key: string;
   name: string;
   filename: string;
@@ -44,13 +56,13 @@ interface NodeExpanddata {
 }
 
 //更新配置文件的请求
-interface updateConfigReq {
+interface UpdateConfigReq {
   node_ids: string[];
   collector_configuration_id: string;
 }
 
 //节点模块返回的数据
-interface nodeItemtRes {
+interface NodeItemRes {
   id: string;
   ip: string;
   operating_system: string;
@@ -61,34 +73,38 @@ interface nodeItemtRes {
 }
 
 //节点处理后的数据格式
-interface mappedNodeItem {
+interface MappedNodeItem {
   key: string;
   ip: string;
-  operatingsystem: string;
+  operatingSystem: string;
   sidecar: string;
 }
 
 interface ConfigDate {
   key: string;
   name: string;
-  collector: string;
-  operatingsystem: string;
-  nodecount: number;
-  configinfo: string;
-  nodes: string[]
+  collector?: string;
+  collector_id?: string;
+  operatingSystem: string;
+  nodeCount: number;
+  configInfo: string;
+  nodes: string[];
+  nodesList?: ListItem;
+  operating_system?: string;
 }
 
 interface SubRef {
   getChildConfig: () => void;
 }
 
-interface SubProps { 
-  cancel: any, 
-  edit: any, 
-  nodeData: ConfigDate 
+interface SubProps {
+  cancel: () => void;
+  edit: (item: ConfigListProps) => void;
+  nodeData: ConfigDate;
+  collectors: TableDataItem[];
 }
 
-interface cloudRegionItem {
+interface CloudRegionItem {
   id: string;
   name: string;
   description: string;
@@ -108,7 +124,7 @@ interface VarResItem {
   description: string;
 }
 
-interface CloudregioncardProps {
+interface CloudRegionCardProps {
   id: number;
   name: string;
   introduction: string;
@@ -139,23 +155,41 @@ interface ControllerInstallProps {
   config?: any;
 }
 
+interface ConfigParams {
+  name: string;
+  collector_id: string;
+  cloud_region_id?: number;
+  config_template: string;
+  nodes?: string[];
+}
+
+interface ConfigListParams {
+  cloud_region_id?: number;
+  name?: string;
+  node_id?: string;
+  ids?: string[];
+}
+
 export type {
   ConfigHookParams,
   VariableProps,
-  IConfiglistprops,
+  ConfigListProps,
   CollectorItem,
-  NodeExpanddata,
-  updateConfigReq,
-  nodeItemtRes,
-  mappedNodeItem,
+  NodeExpandData,
+  UpdateConfigReq,
+  NodeItemRes,
+  MappedNodeItem,
   ConfigDate,
   SubRef,
   SubProps,
-  cloudRegionItem,
+  CloudRegionItem,
   VarSourceItem,
   VarResItem,
-  CloudregioncardProps,
+  CloudRegionCardProps,
   ControllerInstallFields,
   ControllerInstallProps,
   NodeItem,
+  SubConfigHookParams,
+  ConfigParams,
+  ConfigListParams,
 };

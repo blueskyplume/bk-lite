@@ -1,8 +1,17 @@
 'use client';
 import React, { useEffect, useState, useRef } from 'react';
 import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
-import { Input, Button, Modal, message, Spin, Segmented, Empty } from 'antd';
+import {
+  Input,
+  Button,
+  Popconfirm,
+  message,
+  Spin,
+  Segmented,
+  Empty,
+} from 'antd';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import metricStyle from './index.module.scss';
 import { useTranslation } from '@/utils/i18n';
 import CustomTable from '@/components/custom-table';
@@ -12,7 +21,7 @@ import {
   MetricItem,
   GroupInfo,
   IntergrationItem,
-  ObectItem,
+  ObjectItem,
   MetricListItem,
 } from '@/app/monitor/types/monitor';
 import Collapse from '@/components/collapse';
@@ -21,11 +30,20 @@ import MetricModal from './metricModal';
 import { useSearchParams } from 'next/navigation';
 import { deepClone } from '@/app/monitor/utils/common';
 import { useUserInfoContext } from '@/context/userInfo';
-const { confirm } = Modal;
 import Permission from '@/components/permission';
+import { NEED_TAGS_ENTRY_OBJECTS } from '@/app/monitor/constants/monitor';
 
 const Configure = () => {
-  const { get, del, isLoading, post } = useApiClient();
+  const { isLoading } = useApiClient();
+  const {
+    getMonitorObject,
+    deleteMonitorMetrics,
+    deleteMetricsGroup,
+    getMetricsGroup,
+    getMonitorMetrics,
+    updateMetricsGroup,
+    updateMonitorMetrics,
+  } = useMonitorApi();
   const { t } = useTranslation();
   const commonContext = useUserInfoContext();
   const superRef = useRef(commonContext?.isSuperUser || false);
@@ -45,6 +63,8 @@ const Configure = () => {
   const [items, setItems] = useState<IntergrationItem[]>([]);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dragOverTargetId, setDragOverTargetId] = useState<string | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [groupConfirmLoading, setGroupConfirmLoading] = useState(false);
 
   const columns: ColumnItem[] = [
     {
@@ -82,7 +102,6 @@ const Configure = () => {
       dataIndex: 'data_type',
       key: 'data_type',
       width: 100,
-      render: (_, record) => <>{record.data_type || '--'}</>,
     },
     {
       title: t('common.unit'),
@@ -98,8 +117,6 @@ const Configure = () => {
       dataIndex: 'display_description',
       key: 'display_description',
       width: 150,
-      ellipsis: true,
-      render: (_, record) => <>{record.display_description || '--'}</>,
     },
     {
       title: t('common.action'),
@@ -122,13 +139,18 @@ const Configure = () => {
             </Button>
           </Permission>
           <Permission requiredPermissions={['Delete Metric']}>
-            <Button
-              type="link"
-              disabled={record.is_pre && !isSuperUser}
-              onClick={() => showDeleteConfirm(record)}
+            <Popconfirm
+              title={t('common.deleteTitle')}
+              description={t('common.deleteContent')}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+              okButtonProps={{ loading: confirmLoading }}
+              onConfirm={() => handleDeleteConfirm(record)}
             >
-              {t('common.delete')}
-            </Button>
+              <Button type="link" disabled={record.is_pre && !isSuperUser}>
+                {t('common.delete')}
+              </Button>
+            </Popconfirm>
           </Permission>
         </>
       ),
@@ -144,16 +166,18 @@ const Configure = () => {
     setLoading(true);
     let _objId = '';
     try {
-      if (['Docker', 'Cluster', 'vCenter'].includes(groupName)) {
+      if (NEED_TAGS_ENTRY_OBJECTS.includes(groupName)) {
         const typeMaps: Record<string, string> = {
           Docker: 'Container Management',
           Cluster: 'K8S',
+          vCenter: 'VMWare',
+          TCP: 'Tencent Cloud',
         };
-        const data = await get(`/monitor/api/monitor_object/`);
+        const data = await getMonitorObject();
         const _items = data
-          .filter((item: ObectItem) => item.type === typeMaps[groupName])
-          .sort((a: ObectItem, b: ObectItem) => a.id - b.id)
-          .map((item: ObectItem) => ({
+          .filter((item: ObjectItem) => item.type === typeMaps[groupName])
+          .sort((a: ObjectItem, b: ObjectItem) => a.id - b.id)
+          .map((item: ObjectItem) => ({
             label: item.display_name,
             value: item.id,
           }));
@@ -169,42 +193,26 @@ const Configure = () => {
     }
   };
 
-  const showDeleteConfirm = (row: MetricItem) => {
-    confirm({
-      title: t('common.deleteTitle'),
-      content: t('common.deleteContent'),
-      centered: true,
-      onOk() {
-        return new Promise(async (resolve) => {
-          try {
-            await del(`/monitor/api/metrics/${row.id}/`);
-            message.success(t('common.successfullyDeleted'));
-            getInitData();
-          } finally {
-            resolve(true);
-          }
-        });
-      },
-    });
+  const handleDeleteConfirm = async (row: MetricItem) => {
+    setConfirmLoading(true);
+    try {
+      await deleteMonitorMetrics(row.id);
+      message.success(t('common.successfullyDeleted'));
+      getInitData();
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
-  const showGroupDeleteConfirm = (row: MetricListItem) => {
-    confirm({
-      title: t('common.deleteTitle'),
-      content: t('common.deleteContent'),
-      centered: true,
-      onOk() {
-        return new Promise(async (resolve) => {
-          try {
-            await del(`/monitor/api/metrics_group/${row.id}/`);
-            message.success(t('common.successfullyDeleted'));
-            getInitData();
-          } finally {
-            resolve(true);
-          }
-        });
-      },
-    });
+  const handleGroupDeleteConfirm = async (row: MetricListItem) => {
+    setGroupConfirmLoading(true);
+    try {
+      await deleteMetricsGroup(row.id);
+      message.success(t('common.successfullyDeleted'));
+      getInitData();
+    } finally {
+      setGroupConfirmLoading(false);
+    }
   };
 
   const getInitData = async (objId = activeTab) => {
@@ -212,17 +220,14 @@ const Configure = () => {
       monitor_object_id: +objId,
       monitor_plugin_id: +pluginID,
     };
-    const getGroupList = get(`/monitor/api/metrics_group/`, {
-      params: {
-        ...params,
-        name: searchText,
-      },
+    const getGroupList = getMetricsGroup({
+      ...params,
+      name: searchText,
     });
-    const getMetrics = get('/monitor/api/metrics/', {
-      params: {
-        ...params,
-        monitor_plugin_id: +pluginID,
-      },
+
+    const getMetrics = getMonitorMetrics({
+      ...params,
+      monitor_plugin_id: +pluginID,
     });
     setLoading(true);
     try {
@@ -353,7 +358,7 @@ const Configure = () => {
               sort_order: index,
             })
           );
-          await post('/monitor/api/metrics_group/set_order/', updatedOrder);
+          await updateMetricsGroup(updatedOrder);
           message.success(t('common.updateSuccess'));
           getInitData();
         } catch {
@@ -375,9 +380,15 @@ const Configure = () => {
       id: item.id,
       sort_order: index,
     }));
-    await post('/monitor/api/metrics/set_order/', updatedOrder);
-    message.success(t('common.updateSuccess'));
-    getInitData();
+
+    updateMonitorMetrics(updatedOrder)
+      .then(() => {
+        message.success(t('common.updateSuccess'));
+        getInitData();
+      })
+      .catch(() => {
+        setLoading(false);
+      });
   };
 
   const onToggle = (id: string, isOpen: boolean) => {
@@ -388,7 +399,7 @@ const Configure = () => {
 
   return (
     <div className={metricStyle.metric}>
-      {['Docker', 'Cluster', 'vCenter'].includes(groupName) && (
+      {NEED_TAGS_ENTRY_OBJECTS.includes(groupName) && (
         <Segmented
           className="mb-[20px] custom-tabs"
           value={activeTab}
@@ -416,7 +427,7 @@ const Configure = () => {
             </Button>
           </Permission>
           <Permission requiredPermissions={['Add Metric']}>
-            <Button onClick={() => openMetricModal('Add Metric')}>
+            <Button onClick={() => openMetricModal('add')}>
               {t('monitor.intergrations.addMetric')}
             </Button>
           </Permission>
@@ -426,7 +437,7 @@ const Configure = () => {
         <div
           className={metricStyle.metricTable}
           style={{
-            height: ['Docker', 'Cluster'].includes(groupName)
+            height: NEED_TAGS_ENTRY_OBJECTS.includes(groupName)
               ? 'calc(100vh - 366px)'
               : 'calc(100vh - 316px)',
           }}
@@ -460,15 +471,23 @@ const Configure = () => {
                       ></Button>
                     </Permission>
                     <Permission requiredPermissions={['Edit Group']}>
-                      <Button
-                        type="link"
-                        size="small"
-                        disabled={
-                          !!metricItem.child?.length || metricItem.is_pre
-                        }
-                        icon={<DeleteOutlined />}
-                        onClick={() => showGroupDeleteConfirm(metricItem)}
-                      ></Button>
+                      <Popconfirm
+                        title={t('common.deleteTitle')}
+                        description={t('common.deleteContent')}
+                        okText={t('common.confirm')}
+                        cancelText={t('common.cancel')}
+                        okButtonProps={{ loading: groupConfirmLoading }}
+                        onConfirm={() => handleGroupDeleteConfirm(metricItem)}
+                      >
+                        <Button
+                          type="link"
+                          size="small"
+                          disabled={
+                            !!metricItem.child?.length || metricItem.is_pre
+                          }
+                          icon={<DeleteOutlined />}
+                        ></Button>
+                      </Popconfirm>
                     </Permission>
                   </div>
                 }

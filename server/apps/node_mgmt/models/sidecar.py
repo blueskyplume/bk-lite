@@ -67,6 +67,9 @@ class Collector(TimeInfo, MaintainerInfo):
     default_template = models.TextField(blank=True, null=True, verbose_name="默认模板")
     introduction = models.TextField(blank=True, verbose_name="采集器介绍")
     icon = models.CharField(max_length=100, default="", verbose_name="图标key")
+    controller_default_run = models.BooleanField(default=False, verbose_name="控制器默认运行")
+    enabled_default_config = models.BooleanField(default=False, verbose_name="是否启用默认初始化的配置")
+    default_config = JSONField(default=dict, verbose_name="默认初始化的配置")
 
     class Meta:
         verbose_name = "采集器信息"
@@ -79,9 +82,10 @@ class CollectorConfiguration(TimeInfo, MaintainerInfo):
     name = models.CharField(unique=True, max_length=100, verbose_name="配置名称")
     config_template = models.TextField(blank=True, verbose_name="配置模板")
     collector = models.ForeignKey(Collector, on_delete=models.CASCADE, verbose_name="采集器")
-    nodes = models.ManyToManyField(Node, blank=True, verbose_name="节点")
+    nodes = models.ManyToManyField(Node, through="NodeCollectorConfiguration", blank=True,verbose_name="节点")
     cloud_region = models.ForeignKey(CloudRegion, default=1, on_delete=models.CASCADE, verbose_name="云区域")
     is_pre = models.BooleanField(default=False, verbose_name="是否预定义")
+    env_config = JSONField(default=dict, verbose_name="环境变量配置")
 
     class Meta:
         verbose_name = "采集器配置信息"
@@ -94,16 +98,31 @@ class CollectorConfiguration(TimeInfo, MaintainerInfo):
         super().save(*args, **kwargs)
 
 
+class NodeCollectorConfiguration(models.Model):
+    node = models.ForeignKey("Node", on_delete=models.CASCADE)
+    collector_config = models.ForeignKey("CollectorConfiguration", on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = ("node", "collector_config")
+
+
 class ChildConfig(TimeInfo, MaintainerInfo):
-    collect_type = models.CharField(max_length=50, verbose_name='采集对象类型')
+    id = models.CharField(primary_key=True, max_length=100, verbose_name="子配置ID")
+    collect_type = models.CharField(max_length=50, verbose_name='采集类型')
     config_type = models.CharField(max_length=50, verbose_name='配置类型')
-    collect_instance_id = models.CharField(db_index=True, max_length=100, default="", verbose_name='采集对象实例ID')
     content = models.TextField(verbose_name='内容')
     collector_config = models.ForeignKey(CollectorConfiguration, on_delete=models.CASCADE, verbose_name='采集器配置')
+    env_config = JSONField(default=dict, verbose_name="环境变量配置")
 
     class Meta:
         verbose_name = "子配置"
         verbose_name_plural = "子配置"
+
+    # uuid
+    def save(self, *args, **kwargs):
+        if not self.id:
+            self.id = str(uuid.uuid4().hex)
+        super().save(*args, **kwargs)
 
 
 class Action(TimeInfo, MaintainerInfo):

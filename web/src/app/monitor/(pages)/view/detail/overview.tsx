@@ -9,6 +9,7 @@ import CustomTable from '@/components/custom-table';
 import GuageChart from '@/app/monitor/components/charts/guageChart';
 import SingleValue from '@/app/monitor/components/charts/singleValue';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import {
   MetricItem,
   ChartDataItem,
@@ -16,7 +17,11 @@ import {
   InterfaceTableItem,
   ViewDetailProps,
 } from '@/app/monitor/types/monitor';
-import { TableDataItem, TimeSelectorDefaultValue } from '@/app/monitor/types';
+import {
+  TableDataItem,
+  TimeSelectorDefaultValue,
+  TimeValuesProps,
+} from '@/app/monitor/types';
 import { useTranslation } from '@/utils/i18n';
 import {
   deepClone,
@@ -25,12 +30,11 @@ import {
   getEnumValueUnit,
   mergeViewQueryKeyValues,
   renderChart,
+  getRecentTimeRange,
 } from '@/app/monitor/utils/common';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
 import dayjs, { Dayjs } from 'dayjs';
-import {
-  INDEX_CONFIG,
-  useInterfaceLabelMap,
-} from '@/app/monitor/constants/monitor';
+import { useInterfaceLabelMap } from '@/app/monitor/constants/monitor';
 import Icon from '@/components/icon';
 import { ColumnItem } from '@/types';
 
@@ -41,14 +45,17 @@ const Overview: React.FC<ViewDetailProps> = ({
   idValues,
   instanceId,
 }) => {
-  const { get, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const { getMonitorMetrics, getInstanceQuery } = useMonitorApi();
+  const { getDashboardDisplay } = useObjectConfigInfo();
   const { t } = useTranslation();
   const INTERFACE_LABEL_MAP = useInterfaceLabelMap();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const beginTime: number = dayjs().subtract(15, 'minute').valueOf();
-  const lastTime: number = dayjs().valueOf();
-  const [timeRange, setTimeRange] = useState<number[]>([beginTime, lastTime]);
+  const [timeValues, setTimeValues] = useState<TimeValuesProps>({
+    timeRange: [],
+    originValue: 15,
+  });
   const [frequence, setFrequence] = useState<number>(0);
   const [metricData, setMetricData] = useState<MetricItem[]>([]);
   const [originMetricData, setOriginMetricData] = useState<MetricItem[]>([]);
@@ -66,11 +73,11 @@ const Overview: React.FC<ViewDetailProps> = ({
       }, frequence);
     }
     return () => clearTimer();
-  }, [frequence, timeRange]);
+  }, [frequence, timeValues]);
 
   useEffect(() => {
     handleSearch('refresh');
-  }, [timeRange]);
+  }, [timeValues]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -79,29 +86,25 @@ const Overview: React.FC<ViewDetailProps> = ({
 
   const getInitData = async () => {
     setLoading(true);
-    const indexList =
-      INDEX_CONFIG.find((item) => item.name === monitorObjectName)
-        ?.dashboardDisplay || [];
+    const indexList = getDashboardDisplay(monitorObjectName);
     try {
-      get('/monitor/api/metrics/', {
-        params: {
-          monitor_object_id: monitorObjectId,
-        },
+      getMonitorMetrics({
+        monitor_object_id: monitorObjectId,
       }).then((res) => {
         const interfaceConfig = indexList.find(
-          (item) => item.indexId === 'interfaces'
+          (item: TableDataItem) => item.indexId === 'interfaces'
         );
         const _metricData = res
           .filter((item: MetricItem) =>
             indexList.find(
-              (indexItem) =>
+              (indexItem: TableDataItem) =>
                 indexItem.indexId === item.name ||
                 (interfaceConfig?.displayDimension || []).includes(item.name)
             )
           )
           .map((item: MetricItem) => {
             const target = indexList.find(
-              (indexItem) => indexItem.indexId === item.name
+              (indexItem: TableDataItem) => indexItem.indexId === item.name
             );
             if (target) {
               Object.assign(item, target);
@@ -129,8 +132,9 @@ const Overview: React.FC<ViewDetailProps> = ({
         ])
       ),
     };
-    const startTime = timeRange.at(0);
-    const endTime = timeRange.at(1);
+    const recentTimeRange = getRecentTimeRange(timeValues);
+    const startTime = recentTimeRange.at(0);
+    const endTime = recentTimeRange.at(1);
     const MAX_POINTS = 100; // 最大数据点数
     const DEFAULT_STEP = 360; // 默认步长
     if (startTime && endTime) {
@@ -149,9 +153,10 @@ const Overview: React.FC<ViewDetailProps> = ({
   const fetchViewData = async (data: MetricItem[], type?: string) => {
     setLoading(type !== 'timer');
     const requestQueue = data.map((item: MetricItem) =>
-      get(`/monitor/api/metrics_instance/query_range/`, {
-        params: getParams(item),
-      }).then((response) => ({ id: item.id, data: response.data.result || [] }))
+      getInstanceQuery(getParams(item)).then((response) => ({
+        id: item.id,
+        data: response.data.result || [],
+      }))
     );
     try {
       const results = await Promise.all(requestQueue);
@@ -221,8 +226,11 @@ const Overview: React.FC<ViewDetailProps> = ({
     return Object.values(mergedData);
   };
 
-  const onTimeChange = (val: number[]) => {
-    setTimeRange(val);
+  const onTimeChange = (val: number[], originValue: number | null) => {
+    setTimeValues({
+      timeRange: val,
+      originValue,
+    });
   };
 
   const clearTimer = () => {
@@ -250,7 +258,10 @@ const Overview: React.FC<ViewDetailProps> = ({
       selectValue: 0,
     }));
     const _times = arr.map((item) => dayjs(item).valueOf());
-    setTimeRange(_times);
+    setTimeValues({
+      timeRange: _times,
+      originValue: 0,
+    });
   };
 
   const getGuageLabel = (arr: ChartDataItem[]) => {
@@ -388,7 +399,7 @@ const Overview: React.FC<ViewDetailProps> = ({
       <div className="flex justify-end mb-[15px]">
         <TimeSelector
           defaultValue={timeDefaultValue}
-          onChange={(value) => onTimeChange(value)}
+          onChange={onTimeChange}
           onFrequenceChange={onFrequenceChange}
           onRefresh={onRefresh}
         />

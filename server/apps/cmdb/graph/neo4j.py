@@ -1,10 +1,11 @@
 import os
+from typing import List, Union
 
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 from neo4j.graph import Path
 
-from apps.cmdb.constants import INSTANCE
+from apps.cmdb.constants import INSTANCE, ModelConstraintKey
 from apps.cmdb.graph.format_type import FORMAT_TYPE
 from apps.core.exceptions.base_app_exception import BaseAppException
 
@@ -306,12 +307,41 @@ class Neo4jClient:
             order_type: str = "ASC",
             param_type="AND",
             permission_params: str = "",
+            permission_or_creator_filter: dict = None,
     ):
         """
         查询实体
         """
         label_str = f":{label}" if label else ""
-        params_str = self.format_final_params(params, search_param_type=param_type, permission_params=permission_params)
+        
+        # 处理权限或创建人的OR条件
+        if permission_or_creator_filter:
+            inst_names = permission_or_creator_filter.get("inst_names", [])
+            creator = permission_or_creator_filter.get("creator")
+            
+            # 构建OR条件：有权限的实例 OR 自己创建的实例
+            or_conditions = []
+            if inst_names:
+                or_conditions.append(f"n.inst_name IN {inst_names}")
+            if creator:
+                or_conditions.append(f"n._creator = '{creator}'")
+            
+            or_condition_str = " OR ".join(or_conditions)
+            
+            # 将OR条件与其他条件结合
+            params_str = self.format_search_params(params, param_type=param_type)
+            if params_str:
+                params_str = f"({params_str}) AND ({or_condition_str})"
+            else:
+                params_str = f"({or_condition_str})"
+            
+            # 结合权限参数
+            if permission_params:
+                params_str = f"{params_str} AND {permission_params}"
+        else:
+            # 原有逻辑
+            params_str = self.format_final_params(params, search_param_type=param_type, permission_params=permission_params)
+        
         params_str = f"WHERE {params_str}" if params_str else params_str
 
         sql_str = f"MATCH (n{label_str}) {params_str} RETURN n"
@@ -409,12 +439,37 @@ class Neo4jClient:
             # 取出可编辑属性
             properties = self.get_editable_attr(properties, check_attr_map.get("editable", {}))
 
+        nodes = self.batch_update_node_properties(label, entity_ids, properties)
+        return self.entity_to_list(nodes)
+
+    def batch_update_entity_properties(self,
+                                       label: str,
+                                       entity_ids: list,
+                                       properties: dict,
+                                       check_attr_map: dict,
+                                       check: bool = True):
+        """批量更新实体属性"""
+
+        if check:
+            # 校验必填项
+            self.check_required_attr(properties, check_attr_map.get("is_required", {}), is_update=True)
+
+            # 取出可编辑属性
+            properties = self.get_editable_attr(properties, check_attr_map.get("editable", {}))
+            if not properties:
+                return []
+
+        nodes = self.batch_update_node_properties(label, entity_ids, properties)
+        return self.entity_to_list(nodes)
+
+    def batch_update_node_properties(self, label: str, node_ids: Union[int, List[int]], properties: dict):
+        """批量更新节点属性"""
         label_str = f":{label}" if label else ""
         properties_str = self.format_properties_set(properties)
         if not properties_str:
             raise BaseAppException("properties is empty")
-        entitys = self.session.run(f"MATCH (n{label_str}) WHERE id(n) IN {entity_ids} SET {properties_str} RETURN n")
-        return self.entity_to_list(entitys)
+        nodes = self.session.run(f"MATCH (n{label_str}) WHERE id(n) IN {node_ids} SET {properties_str} RETURN n")
+        return nodes
 
     def format_properties_remove(self, attrs: list):
         """格式化properties的remove数据"""
@@ -537,12 +592,46 @@ class Neo4jClient:
                 return entity
         return None
 
-    def entity_count(self, label: str, group_by_attr: str, params: list, permission_params: str = ""):
+    def entity_count(self, label: str, group_by_attr: str, params: list, permission_params: str = "",
+                     instance_permission_params: list = None):
         """实体数量"""
 
         label_str = f":{label}" if label else ""
-        params_str = self.format_final_params(params, permission_params=permission_params)
-        params_str = f"WHERE {params_str}" if params_str else params_str
+        base_params_str = self.format_search_params(params)
+
+        # 处理权限参数
+        if instance_permission_params:
+            # 构建实例权限过滤条件
+            instance_conditions = []
+            for perm_param in instance_permission_params:
+                model_id = perm_param.get('model_id')
+                instance_names = perm_param.get('inst_names', [])
+                if model_id and instance_names:
+                    # 对于有具体实例权限的模型，只统计指定的实例
+                    condition = f"(n.{group_by_attr} = '{model_id}' AND n.inst_name IN {instance_names})"
+                    instance_conditions.append(condition)
+
+            if instance_conditions:
+                instance_condition_str = " OR ".join(instance_conditions)
+                # 组织权限和实例权限是OR关系
+                if permission_params:
+                    combined_permission = f"({permission_params}) OR ({instance_condition_str})"
+                else:
+                    combined_permission = instance_condition_str
+                
+                # 组合基础查询参数和权限参数
+                if base_params_str:
+                    params_str = f"WHERE {base_params_str} AND ({combined_permission})"
+                else:
+                    params_str = f"WHERE ({combined_permission})"
+            else:
+                # 没有实例权限，只使用组织权限
+                params_str = self.format_final_params(params, permission_params=permission_params)
+                params_str = f"WHERE {params_str}" if params_str else params_str
+        else:
+            # 没有实例权限参数，使用原有逻辑
+            params_str = self.format_final_params(params, permission_params=permission_params)
+            params_str = f"WHERE {params_str}" if params_str else params_str
 
         data = self.session.run(
             f"MATCH (n{label_str}) {params_str} RETURN n.{group_by_attr} AS {group_by_attr}, COUNT(n) AS count"
@@ -550,18 +639,80 @@ class Neo4jClient:
 
         return {i[group_by_attr]: i["count"] for i in data}
 
-    def full_text(self, search: str, permission_params: str = ""):
-        """全文检索, 无实例权限"""
+    def full_text(self, search: str, permission_params: str = "", instance_permission_params: list = None):
+        """全文检索"""
 
-        params = f"{permission_params} AND" if permission_params else ""
+        base_params = f"{permission_params} AND" if permission_params else ""
 
-        # query = f"""
-        #         MATCH (n:{INSTANCE})
-        #         WHERE {params} AND
-        #             ANY(key IN keys(n) WHERE (NOT n[key] IS NULL AND toString(n[key]) CONTAINS '{search}'))
-        #         RETURN n
-        #         """
+        # 处理权限参数
+        if instance_permission_params:
+            # 构建实例权限过滤条件
+            instance_conditions = []
+            for perm_param in instance_permission_params:
+                model_id = perm_param.get('model_id')
+                instance_names = perm_param.get('inst_names', [])
+                if model_id and instance_names:
+                    # 对于有具体实例权限的模型，只检索指定的实例
+                    condition = f"(n.model_id = '{model_id}' AND n.inst_name IN {instance_names})"
+                    instance_conditions.append(condition)
+
+            if instance_conditions:
+                instance_condition_str = " OR ".join(instance_conditions)
+                # 组织权限和实例权限是OR关系
+                if permission_params:
+                    combined_permission = f"({permission_params}) OR ({instance_condition_str})"
+                else:
+                    combined_permission = instance_condition_str
+                
+                # 组合权限参数和全文检索条件
+                params = f"{combined_permission} AND" if combined_permission else ""
+            else:
+                # 没有实例权限，只使用组织权限
+                params = base_params
+        else:
+            # 没有实例权限参数，使用原有逻辑
+            params = base_params
 
         query = f"""MATCH (n:{INSTANCE}) WHERE {params} ANY(key IN keys(n) WHERE (NOT n[key] IS NULL AND ANY(value IN n[key] WHERE toString(value) CONTAINS '{search}'))) RETURN n"""  # noqa
         objs = self.session.run(query)
         return self.entity_to_list(objs)
+
+    def batch_save_entity(
+            self,
+            label: str,
+            properties_list: list,
+            check_attr_map: dict,
+            exist_items: list,
+            operator: str = None,
+    ):
+        """批量保存实体，支持新增与更新"""
+        unique_key = check_attr_map.get(ModelConstraintKey.unique.value, {}).keys()
+        add_nodes = []
+        update_results = []
+        if unique_key:
+            properties_map = {}
+            for properties in properties_list:
+                properties_key = tuple([properties.get(k) for k in unique_key if k in properties])
+                # 对参数中的节点按唯一键进行去重
+                properties_map[properties_key] = properties
+            # 已有节点处理
+            item_map = {}
+            for item in exist_items:
+                item_key = tuple([item.get(k) for k in unique_key if k in item])
+                item_map[item_key] = item
+            for properties_key, properties in properties_map.items():
+                node = item_map.get(properties_key)
+                if node:
+                    # 节点更新
+                    results = self.batch_update_entity_properties(label=label, entity_ids=[node.get("_id")],
+                                                                  properties=properties,
+                                                                  check_attr_map=check_attr_map)
+                    update_results.append(results[0]) if results else None
+                else:
+                    # 暂存统一新增
+                    add_nodes.append(properties)
+        else:
+            add_nodes = properties_list
+        add_results = self.batch_create_entity(label=label, properties_list=add_nodes, check_attr_map=check_attr_map,
+                                               exist_items=exist_items, operator=operator)
+        return add_results, update_results

@@ -49,6 +49,18 @@ export const useRoleApi = () => {
   const getAppData = async (params: any) => {
     return await get('/system_mgmt/group_data_rule/get_app_data/', params);
   }
+  const getAppModules = async (params: any) => {
+    return await get('/system_mgmt/group_data_rule/get_app_module/', params);
+  }
+  const addApplication = async (params: any) => {
+    return await post('/system_mgmt/app/', params);
+  }
+  const updateApplication = async (params: any) => {
+    return await put(`/system_mgmt/app/${params.id}/`, params);
+  }
+  const deleteApplication = async (params: any) => {
+    return await del(`/system_mgmt/app/${params.id}/`);
+  }
   return {
     getRoles,
     addRole,
@@ -65,6 +77,10 @@ export const useRoleApi = () => {
     deleteGroupDataRule,
     addGroupDataRule,
     updateGroupDataRule,
-    getAppData
+    getAppData,
+    getAppModules,
+    addApplication,
+    updateApplication,
+    deleteApplication
   };
 };

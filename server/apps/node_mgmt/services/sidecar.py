@@ -1,26 +1,23 @@
 import hashlib
-import logging
+from datetime import datetime, timezone
 from string import Template
-
 from django.core.cache import cache
-from django.http import JsonResponse
-from django.utils.http import quote_etag
-
-from apps.node_mgmt.constants import L_INSTALL_DOWNLOAD_URL, L_SIDECAR_DOWNLOAD_URL, W_SIDECAR_DOWNLOAD_URL, LOCAL_HOST, \
-    TELEGRAF_CONFIG
+from django.http import JsonResponse, HttpResponse
+from apps.core.utils.crypto.aes_crypto import AESCryptor
+from apps.node_mgmt.constants import CACHE_TIMEOUT
+from apps.node_mgmt.default_config.default_config import create_default_config
 from apps.node_mgmt.models.cloud_region import SidecarEnv
-from apps.node_mgmt.models.sidecar import Node, Collector, CollectorConfiguration
-
-
-logger = logging.getLogger("app")
+from apps.node_mgmt.models.sidecar import Node, Collector, CollectorConfiguration, NodeOrganization
+from apps.node_mgmt.utils.sidecar import format_tags_dynamic
+from apps.core.logger import node_logger as logger
 
 
 class Sidecar:
 
     @staticmethod
     def generate_etag(data):
-        """根据Collector列表生成ETag"""
-        return quote_etag(hashlib.md5(data.encode('utf-8')).hexdigest())
+        """根据数据生成干净的 ETag，不加引号"""
+        return hashlib.md5(data.encode('utf-8')).hexdigest()
 
     @staticmethod
     def get_version():
@@ -33,13 +30,17 @@ class Sidecar:
 
         # 获取客户端的 ETag
         if_none_match = request.headers.get('If-None-Match')
+        if if_none_match:
+            if_none_match = if_none_match.strip('"')
 
         # 从缓存中获取采集器的 ETag
         cached_etag = cache.get('collectors_etag')
 
         # 如果缓存的 ETag 存在且与客户端的相同，则返回 304 Not Modified
         if cached_etag and cached_etag == if_none_match:
-            return JsonResponse(status=304, data={}, headers={'ETag': cached_etag})
+            response = HttpResponse(status=304)
+            response['ETag'] = cached_etag
+            return response
 
         # 从数据库获取采集器列表
         collectors = list(Collector.objects.values())
@@ -51,10 +52,32 @@ class Sidecar:
         new_etag = Sidecar.generate_etag(_collectors.decode('utf-8'))
 
         # 更新缓存中的 ETag
-        cache.set('collectors_etag', new_etag)
+        cache.set('collectors_etag', new_etag, CACHE_TIMEOUT)
 
         # 返回采集器列表和新的 ETag
         return JsonResponse({'collectors': collectors}, headers={'ETag': new_etag})
+
+    @staticmethod
+    def asso_groups(node_id: str, groups: list):
+        if groups:
+            NodeOrganization.objects.bulk_create(
+                [NodeOrganization(node_id=node_id, organization=group) for group in groups],
+                ignore_conflicts=True,
+                batch_size=100,
+            )
+
+    @staticmethod
+    def update_groups(node_id: str, groups: list):
+        """
+        更新节点关联的组织
+        :param node_id: 节点ID
+        :param groups: 组织列表
+        """
+        # 删除现有的组织关联
+        NodeOrganization.objects.filter(node_id=node_id).delete()
+
+        # 重新关联新的组织
+        Sidecar.asso_groups(node_id, groups)
 
     @staticmethod
     def update_node_client(request, node_id):
@@ -62,13 +85,21 @@ class Sidecar:
 
         # 获取客户端发送的ETag
         if_none_match = request.headers.get('If-None-Match')
+        if if_none_match:
+            if_none_match = if_none_match.strip('"')
 
         # 从缓存中获取node的ETag
         cached_etag = cache.get(f"node_etag_{node_id}")
 
         # 如果缓存的ETag存��且与客户端的相同，则返回304 Not Modified
         if cached_etag and cached_etag == if_none_match:
-            return JsonResponse(status=304, data={}, headers={'ETag': cached_etag})
+
+            # 更新时间
+            Node.objects.filter(id=node_id).update(updated_at=datetime.now(timezone.utc).isoformat())
+
+            response = HttpResponse(status=304)
+            response['ETag'] = cached_etag
+            return response
 
         # 从请求体中获取数据
         request_data = dict(
@@ -85,28 +116,34 @@ class Sidecar:
         # 更新或创建 Sidecar 信息
         node = Node.objects.filter(id=node_id).first()
 
+        # 处理标签数据
+        tags_data = format_tags_dynamic(request_data.get("tags", []), ["group", "cloud"])
+
         if not node:
+
+            # 补充云区域关联
+            clouds = tags_data.get("cloud", [])
+            if clouds:
+                request_data.update(cloud_region_id=int(clouds[0]))
+
             # 创建节点
             node = Node.objects.create(**request_data)
 
-            # 创建默认配置
-            try:
-                collector_obj = Collector.objects.filter(
-                    name='telegraf', node_operating_system=node.operating_system
-                ).first()
-                configuration = CollectorConfiguration.objects.create(
-                    name=f'telegraf-{node.id}',
-                    collector=collector_obj,
-                    config_template=TELEGRAF_CONFIG,
-                    is_pre=True,
-                )
-                configuration.nodes.add(node)
-            except Exception as e:
-                logger.error(f"create default configuration failed {e}")
+            # 关联组织
+            Sidecar.asso_groups(node_id, tags_data.get("group", []))
+
+            # 创建默认的配置
+            create_default_config(node)
 
         else:
+            # 更新时间
+            request_data.update(updated_at=datetime.now(timezone.utc).isoformat())
+
             # 更新节点
             Node.objects.filter(id=node_id).update(**request_data)
+
+            # 更新组织关联(覆盖)
+            Sidecar.update_groups(node_id, tags_data.get("group", []))
 
         # 预取相关数据，减少查询次数
         new_obj = Node.objects.prefetch_related('action_set', 'collectorconfiguration_set').get(id=node_id)
@@ -135,7 +172,7 @@ class Sidecar:
         _response_data = JsonResponse(response_data).content
         new_etag = Sidecar.generate_etag(_response_data.decode('utf-8'))
         # 更新缓存中的ETag
-        cache.set(f"node_etag_{node_id}", new_etag)
+        cache.set(f"node_etag_{node_id}", new_etag, CACHE_TIMEOUT)
 
         # 返回响应
         return JsonResponse(status=202, data=response_data, headers={'ETag': new_etag})
@@ -146,13 +183,17 @@ class Sidecar:
 
         # 获取客户端发送的 ETag
         if_none_match = request.headers.get('If-None-Match')
+        if if_none_match:
+            if_none_match = if_none_match.strip('"')
 
         # 从缓存中获取配置的 ETag
         cached_etag = cache.get(f"configuration_etag_{configuration_id}")
 
         # 对比客户端的 ETag 和缓存的 ETag
         if cached_etag and cached_etag == if_none_match:
-            return JsonResponse(status=304, data={}, headers={'ETag': cached_etag})
+            response = HttpResponse(status=304)
+            response['ETag'] = cached_etag
+            return response
 
         # 从数据库获取节点信息
         node = Node.objects.filter(id=node_id).first()
@@ -170,13 +211,14 @@ class Sidecar:
         for child_config in configuration.childconfig_set.all():
             # 假设子配置的 `content` 是纯文本格式，直接追加
             merged_template += f"\n# {child_config.collect_type} - {child_config.config_type}\n"
-            merged_template += child_config.content
+            merged_template += Sidecar.render_template(child_config.content, child_config.env_config)
 
         configuration = dict(
             id=configuration.id,
             collector_id=configuration.collector_id,
             name=configuration.name,
             template=merged_template,
+            env_config=configuration.env_config or {},
         )
         # TODO test merged_template
 
@@ -185,19 +227,45 @@ class Sidecar:
         new_etag = Sidecar.generate_etag(_configuration.decode('utf-8'))
 
         # 更新缓存中的 ETag
-        cache.set(f"configuration_etag_{configuration_id}", new_etag)
+        cache.set(f"configuration_etag_{configuration_id}", new_etag, CACHE_TIMEOUT)
+
+        variables = Sidecar.get_variables(node)
+        # 如果配置中有 env_config，则合并到变量中
+        if configuration.get('env_config'):
+            variables.update(configuration['env_config'])
 
         # 渲染配置模板
-        configuration['template'] = Sidecar.render_template(configuration['template'], Sidecar.get_variables(node))
+        configuration['template'] = Sidecar.render_template(configuration['template'], variables)
 
         # 返回配置信息和新的 ETag
         return JsonResponse(configuration, headers={'ETag': new_etag})
 
     @staticmethod
+    def get_node_config_env(node_id, configuration_id):
+        node = Node.objects.filter(id=node_id).first()
+        if not node:
+            return JsonResponse(status=404, data={}, manage="Node collector Configuration not found")
+
+        obj = CollectorConfiguration.objects.filter(id=configuration_id).first()
+        if not obj:
+            return JsonResponse(status=404, data={}, manage="Configuration environment not found")
+
+        return JsonResponse(dict(id=configuration_id, env_config={k: str(v) for k, v in obj.env_config.items()}))
+
+    @staticmethod
     def get_variables(node_obj):
         """获取变量"""
         objs = SidecarEnv.objects.filter(cloud_region=node_obj.cloud_region_id)
-        variables = {obj.key: obj.value for obj in objs}
+        variables = {}
+        for obj in objs:
+            if obj.type == "secret":
+                # 如果是密文，解密后使用
+                aes_obj = AESCryptor()
+                value = aes_obj.decode(obj.value)
+                variables[obj.key] = value
+            else:
+                # 如果是普通变量，直接使用
+                variables[obj.key] = obj.value
         node_dict = {
             "node__id": node_obj.id,
             "node__cloud_region": node_obj.cloud_region_id,
@@ -219,62 +287,6 @@ class Sidecar:
         :param variables: 字典，包含变量名和对应值
         :return: 渲染后的字符串
         """
-        _variables = {
-            **variables,
-        }
         template_str = template_str.replace('node.', 'node__')
         template = Template(template_str)
         return template.safe_substitute(variables)
-
-    @staticmethod
-    def get_sidecar_install_guide(ip, operating_system, group):
-        """生成 sidecar 安装指南"""
-        local_host = LOCAL_HOST
-        local_api_token = ""
-        if operating_system.lower() == 'windows':
-            return r'.\install_sidecar.bat  "{}" "{}" "{}" "{}"'.format(ip, local_api_token, local_host, group)
-        elif operating_system.lower() == 'linux':
-            params = [L_INSTALL_DOWNLOAD_URL, ip, local_api_token, local_host, L_SIDECAR_DOWNLOAD_URL, group]
-            return 'curl -sSL {}|bash -s - -n "{}" -t "{}" -s "{}" -d "{}" -g "{}"'.format(*params)
-        else:
-            return ""
-
-    # def get_installation_steps(self):
-    #     """获取安装步骤"""
-    #     local_host = LOCAL_HOST
-    #     local_api_token = ""
-    #
-    #     if self.node.os_type == LINUX_OS:
-    #         return self.linux_step(self.node.node_id, local_api_token, local_host)
-    #     elif self.node.os_type == WINDOWS_OS:
-    #         return self.windows_step(self.node.node_id, local_api_token, local_host)
-
-    def windows_step(self, node_id, gl_token, gl_host):
-        """windows安装步骤"""
-
-        return [
-            {
-                "title": "下载安装包",
-                "content": "下载安装包",
-                "download_url": W_SIDECAR_DOWNLOAD_URL,
-            },
-            {
-                "title": "创建以下目录",
-                "content": "c:/gse",
-            },
-            {
-                "title": "执行安装脚本，在指定目录下安装控制器和探针",
-                "content": r'.\install_sidecar.bat "{}" "{}" "{}"'.format(node_id, gl_token, gl_host),
-            },
-        ]
-
-    def linux_step(self, node_id, gl_token, gl_host):
-        """linux安装步骤"""
-
-        params = [L_INSTALL_DOWNLOAD_URL, node_id, gl_token, gl_host, L_SIDECAR_DOWNLOAD_URL]
-        return [
-            {
-                "title": "下载安装包",
-                "content": 'curl -sSL {}|bash -s - -n "{}" -t "{}" -s "{}" -d "{}"'.format(*params),
-            },
-        ]

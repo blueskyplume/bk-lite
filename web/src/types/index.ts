@@ -36,27 +36,35 @@ export interface Group {
   id: string;
   name: string;
   children?: Group[];
+  hasAuth?: boolean;
+  parentId?: string;
+  subGroupCount?: number;
+  subGroups?: Group[];
 }
 
 export interface UserInfoContextType {
   loading: boolean;
   roles: string[];
   groups: Group[];
+  groupTree: Group[];
   selectedGroup: Group | null;
   flatGroups: Group[];
   isSuperUser: boolean;
   isFirstLogin: boolean;
   userId: string;
+  displayName: string;
   setSelectedGroup: (group: Group) => void;
 }
 
 export interface ClientData {
   id: string;
   name: string;
-  client_id: string;
+  display_name: string;
   description: string;
   url: string;
   icon?: string;
+  is_build_in?: boolean;
+  tags?: string[];
 }
 
 export interface TourItem {
@@ -78,6 +86,7 @@ export interface MenuItem {
   tour?: TourItem;
   isNotMenuItem?: boolean;
   children?: MenuItem[];
+  withParentPermission?: boolean;
 }
 
 export interface Option {
@@ -93,12 +102,19 @@ export interface EntityListProps<T> {
   filterOptions?: Option[];
   filter?: boolean;
   filterLoading?: boolean;
+  search?: boolean;
   operateSection?: React.ReactNode;
   infoText?: string;
+  nameField?: string;
+  descSlot?: (item: T) => React.ReactNode;
   menuActions?: (item: T) => React.ReactNode;
-  singleAction?: (item: T) => { text: string, onClick: (item: T) => void };
+  singleAction?: (item: T) => { text: string; onClick: (item: T) => void };
   openModal?: (item?: T) => void;
   onSearch?: (value: string) => void;
   onCardClick?: (item: T) => void;
   changeFilter?: (value: string[]) => void;
+}
+
+export interface TimeSelectorRef {
+  getValue: () => void;
 }

@@ -1,0 +1,118 @@
+{
+  "client_id": "system-manager",
+  "name": "Setting",
+  "url": "/system-manager/user",
+  "icon": "system-manager",
+  "description": "Covering user and organizational role permission management, ensuring resource access security through fine-grained permission control while improving operational efficiency. Provides flexible configuration and management to meet different business needs",
+  "menus": [
+    {
+      "name": "Organization",
+      "children": [
+        {
+          "id": "user_group",
+          "name": "User&Group",
+          "operation": [
+            "View",
+            "Add User",
+            "Edit User",
+            "Delete User",
+            "Add Group",
+            "Edit Group",
+            "Delete Group"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Application",
+      "children": [
+        {
+          "id": "application_list",
+          "name": "Application-list",
+          "operation": [
+            "View",
+            "Edit",
+            "Add",
+            "Delete"
+          ]
+        },
+        {
+          "id": "application_role",
+          "name": "Application-role",
+          "operation": [
+            "View",
+            "Edit",
+            "Add",
+            "Add user",
+            "Remove user",
+            "Edit Permission",
+            "Delete"
+          ]
+        },
+        {
+          "id": "data_permission",
+          "name": "Data permission",
+          "operation": [
+            "View",
+            "Edit",
+            "Add",
+            "Delete"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Channel",
+      "children": [
+        {
+          "id": "channel_list",
+          "name": "Channel-list",
+          "operation": [
+            "View",
+            "Edit",
+            "Delete",
+            "Add"
+          ]
+        },
+        {
+          "id": "channel_setting",
+          "name": "Channel-setting",
+          "operation": [
+            "View",
+            "Edit",
+            "Delete",
+            "Add"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Security Management",
+      "children": [
+        {"id": "security_management",
+          "name": "Security Management",
+          "operation": [
+            "View",
+            "Edit",
+            "Add",
+            "Delete"
+          ]
+        }
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "name": "admin",
+      "role_name": "system-manager_admin",
+      "menus": []
+    },
+    {
+      "name": "normal",
+      "role_name": "system-manager_normal",
+      "menus": [
+        "user_list-View"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 export interface ModelConfig {
     openai_api_key?: string;
+    api_key?: string;
     openai_base_url?: string;
     base_url?: string;
     model?: string;
@@ -17,6 +18,7 @@ export interface Model {
     rerank_config?: ModelConfig;
     ocr_config?: ModelConfig;
     consumer_team: string;
+    permissions?: string[];
 }
 
 export interface TabConfig {

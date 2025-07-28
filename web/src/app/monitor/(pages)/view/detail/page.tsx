@@ -4,7 +4,6 @@ import React, { useState } from 'react';
 import { Segmented } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { OBJECT_ICON_MAP } from '@/app/monitor/constants/monitor';
 import Icon from '@/components/icon';
 import detailStyle from '../index.module.scss';
 import { ArrowLeftOutlined } from '@ant-design/icons';
@@ -16,7 +15,7 @@ const ViewDetail = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const desc = searchParams.get('instance_name');
-  const icon = OBJECT_ICON_MAP[searchParams.get('name') || ''];
+  const icon = searchParams.get('icon');
   const monitorObjDisplayName: string =
     searchParams.get('monitorObjDisplayName') || '';
   const monitorObjectId: React.Key = searchParams.get('monitorObjId') || '';
@@ -42,7 +41,7 @@ const ViewDetail = () => {
       <div className={detailStyle.leftSide}>
         <div className={detailStyle.topIntro}>
           <Icon
-            type={icon || 'Host'}
+            type={icon as string}
             className="mr-[10px] text-[30px] min-w-[30px]"
           />
           <span className="flex items-center">

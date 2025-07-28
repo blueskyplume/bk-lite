@@ -13,7 +13,7 @@ import {
 } from '@/app/node-manager/constants/cloudregion';
 import { useGroupNames } from '@/app/node-manager/hooks/node';
 import CustomTable from '@/components/custom-table';
-import useApiCloudRegion from '@/app/node-manager/api/cloudregion';
+import useApiCloudRegion from '@/app/node-manager/api/cloudRegion';
 import InstallGuidance from './installGuidance';
 
 const ControllerTable: React.FC<ControllerInstallProps> = ({
@@ -23,12 +23,12 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
   const { t } = useTranslation();
   const { isLoading } = useApiClient();
   const { getControllerNodes, getCollectorNodes } = useApiCloudRegion();
+  const installMay = useInstallMap();
+  const { showGroupNames } = useGroupNames();
   const guidance = useRef<ModalRef>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [pageLoading, setPageLoading] = useState<boolean>(false);
   const [tableData, setTableData] = useState<TableDataItem[]>([]);
-  const installMay = useInstallMap();
-  const { showGroupNames } = useGroupNames();
 
   const columns: any = useMemo(() => {
     return [
@@ -37,10 +37,6 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
         dataIndex: 'ip',
         width: 100,
         key: 'ip',
-        ellipsis: true,
-        render: (value: string, row: TableDataItem) => {
-          return <>{row.ip || '--'}</>;
-        },
       },
       {
         title: t('node-manager.cloudregion.node.operateSystem'),
@@ -69,21 +65,25 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
       },
       {
         title: t(
-          `node-manager.cloudregion.node.${config.type === 'collector' ? 'collector' : 'sidecar'}`
+          `node-manager.cloudregion.node.${
+            config.type.includes('Collector') ? 'collector' : 'sidecar'
+          }`
         ),
-        dataIndex: 'result',
+        dataIndex: 'status',
         width: 100,
-        key: 'result',
+        key: 'status',
         ellipsis: true,
-        render: (value: Record<string, string>) => {
+        render: (value: string) => {
+          const installStatus =
+            config.type === 'uninstallController' ? `${value}Uninstall` : value;
           return (
             <span
               style={{
                 color:
-                  installMay[value?.status]?.color || 'var(--ant-color-text)',
+                  installMay[installStatus]?.color || 'var(--ant-color-text)',
               }}
             >
-              {installMay[value?.status]?.text || '--'}
+              {installMay[installStatus]?.text || '--'}
             </span>
           );
         },
@@ -98,7 +98,7 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
           return (
             <Button
               type="link"
-              disabled={row.result?.status !== 'failed'}
+              disabled={row.status !== 'error'}
               onClick={() => checkDetail('remoteInstall', row)}
             >
               {t('node-manager.cloudregion.node.viewLog')}
@@ -112,7 +112,7 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
   useEffect(() => {
     if (isLoading) return;
     clearTimer();
-    if (config.taskId) {
+    if (config.taskId && config.type) {
       getNodeList('refresh');
       timerRef.current = setInterval(() => {
         getNodeList('timer');
@@ -129,22 +129,24 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
   };
 
   const checkDetail = (type: string, row: TableDataItem) => {
-    let message = '';
-    if (row.result?.status === 'failed') {
-      message += row.result?.message;
+    let str = '';
+    if (row.status === 'error') {
+      const { action, message } = row.result || {};
+      str = `${action ? action + ': ' : ''}${message}`;
     }
     guidance.current?.showModal({
       title: t('node-manager.cloudregion.node.log'),
       type,
-      form: { message: message || '--' },
+      form: { message: str || '--' },
     });
   };
 
   const getNodeList = async (refreshType: string) => {
     try {
       setPageLoading(refreshType !== 'timer');
-      const request =
-        config.type === 'collector' ? getCollectorNodes : getControllerNodes;
+      const request = config.type.includes('Collector')
+        ? getCollectorNodes
+        : getControllerNodes;
       const data = await request({ taskId: config.taskId });
       setTableData(
         data.map((item: TableDataItem, index: number) => ({
@@ -169,7 +171,7 @@ const ControllerTable: React.FC<ControllerInstallProps> = ({
         >
           <ArrowLeftOutlined className="text-[var(--color-primary)] text-[20px] cursor-pointer mr-[10px]" />
         </Popconfirm>
-        <span>{t('node-manager.cloudregion.node.autoInstall')}</span>
+        <span>{t(`node-manager.cloudregion.node.${config.type}`)}</span>
       </div>
       <div className={controllerInstallSyle.table}>
         <div className="flex justify-end mb-[16px]">

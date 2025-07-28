@@ -1,9 +1,16 @@
-from apps.rpc.base import RpcClient
+from apps.rpc.base import RpcClient, AppClient
 
 
 class NodeMgmt(object):
-    def __init__(self):
-        self.client = RpcClient('node_mgmt')
+    def __init__(self, is_local_client=False):
+        self.client = AppClient("apps.node_mgmt.nats.node") if is_local_client else RpcClient()
+
+    def cloud_region_list(self):
+        """
+        :return: 云区域列表
+        """
+        return_data = self.client.run("cloud_region_list")
+        return return_data
 
     def node_list(self, query_data):
         """
@@ -18,53 +25,86 @@ class NodeMgmt(object):
             "page_size": 10,
         }
         """
-        return_data = self.client.run('node_list', query_data)
+        return_data = self.client.run("node_list", query_data)
         return return_data
 
-    def batch_setting_node_child_config(self, data):
+    def batch_add_node_child_config(self, configs: list):
         """
-        :param data: 批量设置节点子配置
-        {
-            "object_type": "web",
-            "nodes": [{
-            "id": "27439797-fd14-4e18-b54e-3f7ce8727030",
-            "configs": [{
-                    "url": "https://wepaas.canway.net/",
-                    "type": "http_response",
-                    "instance_id": "https://wepaas.canway.net/"
-                }]
-            }]
-        }
+        批量创建子配置
+        :param configs: 配置列表，每个配置包含以下字段：
+            - id: 子配置ID
+            - collect_type: 采集类型
+            - type: 配置类型
+            - content: 配置内容
+            - node_id: 节点ID
+            - collector_name: 采集器名称
+            - env_config: 环境变量配置（可选）
         """
-        return_data = self.client.run('batch_setting_node_child_config', data)
+        return_data = self.client.run("batch_add_node_child_config", configs)
         return return_data
 
-    def get_instance_child_config(self, query_data):
+    def batch_add_node_config(self, configs: list):
         """
-        :param query_data: 查询条件
-        {
-            "collect_type": "http_response", // 非必填
-            "config_type": "http_response",  // 非必填
-            "collect_instance_id": "https://wepaas.canway.net/"
-        }
+        批量创建配置
+        :param configs: 配置列表，每个配置包含以下字段：
+            - id: 配置ID
+            - name: 配置名称
+            - content: 配置内容
+            - node_id: 节点ID
+            - collector_name: 采集器名称
+            - env_config: 环境变量配置（可选）
         """
-        return_data = self.client.run('get_instance_child_config', query_data)
+        return_data = self.client.run("batch_add_node_config", configs)
         return return_data
 
-    def update_instance_child_config(self, data):
+    def get_child_configs_by_ids(self, ids):
         """
-        :param data: 更新实例子配置
-        {
-            "id": 1,
-            "content": ""
-        }
+        :param ids: 子配置ID列表
         """
-        return_data = self.client.run('update_instance_child_config', data)
+        return_data = self.client.run("get_child_configs_by_ids", ids)
         return return_data
 
-    def delete_instance_child_config(self, instance_ids):
+    def get_configs_by_ids(self, ids):
         """
-        :param instance_ids: 实例ID列表
+        :param ids: 配置ID列表
         """
-        return_data = self.client.run('delete_instance_child_config', instance_ids)
+        return_data = self.client.run("get_configs_by_ids", ids)
+        return return_data
+
+    def update_child_config_content(self, id, content, env_config=None):
+        """
+        :param id: 子配置ID
+        :param content: 子配置内容
+        """
+        return_data = self.client.run("update_child_config_content", {"id": id, "content": content, "env_config": env_config})
+        return return_data
+
+    def update_config_content(self, id, content, env_config=None):
+        """
+        :param id: 配置ID
+        :param content: 配置内容
+        """
+        return_data = self.client.run("update_config_content", {"id": id, "content": content, "env_config": env_config})
+        return return_data
+
+    def delete_child_configs(self, ids):
+        """
+        :param ids: 子配置ID列表
+        """
+        return_data = self.client.run("delete_child_configs", ids)
+        return return_data
+
+    def delete_configs(self, ids):
+        """
+        :param ids: 配置ID列表
+        """
+        return_data = self.client.run("delete_configs", ids)
+        return return_data
+
+    def collectors_import(self, collectors: list):
+        """
+        导入采集器
+        :param collectors: 采集器列表
+        """
+        return_data = self.client.run("import_collectors", collectors)
         return return_data

@@ -1,9 +1,8 @@
-from rest_framework import serializers
-
+from apps.core.utils.serializers import UsernameSerializer
 from apps.opspilot.models import Channel
 
 
-class ChannelSerializer(serializers.ModelSerializer):
+class ChannelSerializer(UsernameSerializer):
     class Meta:
         model = Channel
         fields = "__all__"

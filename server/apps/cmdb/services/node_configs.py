@@ -2,17 +2,18 @@
 # @File: node_configs.py
 # @Time: 2025/3/21 14:19
 # @Author: windyzhao
-import copy
 import ipaddress
-import urllib.parse
 from abc import abstractmethod, ABCMeta
 
-from apps.cmdb.constants import STARGAZER_URL
+from jinja2 import Environment, FileSystemLoader, DebugUndefined
 
 
 class BaseNodeParams(metaclass=ABCMeta):
-    PLUGIN_MAP = {}
+    PLUGIN_MAP = {}  # 插件名称映射
+    plugin_name = None
     _registry = {}  # 自动收集支持的 model_id 对应的子类
+    BASE_INTERVAL_MAP = {"vmware_vc": 300, "network": 300, "network_topo": 300, "mysql_info": 300,
+                         "aliyun_account": 300, "qcloud": 300, }  # 默认的采集间隔时间
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -21,20 +22,28 @@ class BaseNodeParams(metaclass=ABCMeta):
             BaseNodeParams._registry[model_id] = cls
             if model_id == "network":
                 BaseNodeParams._registry["network_topo"] = cls
+            plugin_name = getattr(cls, "plugin_name", None)
+            if plugin_name:
+                BaseNodeParams.PLUGIN_MAP.update({model_id: plugin_name})
+        interval_map = getattr(cls, "interval_map", None)
+        if interval_map:
+            BaseNodeParams.BASE_INTERVAL_MAP.update(interval_map)
 
     def __init__(self, instance):
         self.instance = instance
         self.model_id = instance.model_id
         self.credential = self.instance.credential
-        self.base_path = f"{STARGAZER_URL}/api/collect/collect_info"
+        self.base_path = "${STARGAZER_URL}/api/collect/collect_info"
         self.host_field = "host"  # 默认的 ip字段 若不一样重新定义
+        self.timeout = 40 if self.instance.is_cloud else 30
+        self.response_timeout = 40 if self.instance.is_cloud else 30
 
     def get_host_ip_addr(self, host):
         if isinstance(host, dict):
-            ip_addr = host["ip_addr"]
+            ip_addr = host.get(self.host_field, "")
         else:
             ip_addr = host
-        return self.host_field, ip_addr
+        return "host", ip_addr
 
     @property
     def has_set_instances(self):
@@ -81,22 +90,21 @@ class BaseNodeParams(metaclass=ABCMeta):
             raise KeyError(f"未在 PLUGIN_MAP 中找到对应 {self.model_id} 的插件配置")
 
     @abstractmethod
-    def set_credential(self):
+    def set_credential(self, *args, **kwargs):
         """
         生成凭据
         """
         raise NotImplementedError
 
-    @property
-    def format_server_path(self):
+    def custom_headers(self, host):
         """
         格式化服务器的路径
         """
-        params = self.set_credential()
-        params.update({"plugin_name": self.model_plugin_name})
-        encoded_params = {k: urllib.parse.quote(str(v), safe='@') for k, v in params.items()}
-        url = f"{self.base_path}?" + "&".join(f"{k}={v}" for k, v in encoded_params.items())
-        return url
+        _key, _value = self.get_host_ip_addr(host)
+        params = self.set_credential(host=host)
+        params.update({"plugin_name": self.model_plugin_name, _key: _value})
+        _params = {f"cmdb{k}": str(v) for k, v in params.items()}
+        return _params
 
     @property
     def get_instance_type(self):
@@ -117,31 +125,57 @@ class BaseNodeParams(metaclass=ABCMeta):
         """
         生成节点管理创建配置的参数
         """
-        url = self.format_server_path
+        if self.plugin_name is None:
+            raise ValueError("插件名称未设置，请检查 plugin_name 是否正确")
+
         node = self.instance.access_point[0]
         nodes = []
         for host in self.hosts:
-            _url = copy.deepcopy(url)
-            _key, _value = self.get_host_ip_addr(host)
-            _url += "&{}={}".format(_key, _value)
+            content = {
+                "instance_id": str(self.get_instance_id(host)),
+                "interval": self.BASE_INTERVAL_MAP.get(self.model_id, 300),
+                "instance_type": self.get_instance_type,
+                "timeout": self.timeout,
+                "response_timeout": self.response_timeout,
+                "headers": self.custom_headers(host=host),
+                "config_type": self.model_id
+            }
+            jinja_context = self.render_template(context=content)
             nodes.append({
-                "id": node["id"],
-                "configs": [{
-                    "url": _url,
-                    "type": "http",
-                    "instance_id": str((self.get_instance_id(host),)),
-                    "interval": 60,
-                    "instance_type": self.get_instance_type
-                    # "task_id": self.instance.id,
-                }]
+                "id": self.get_instance_id(host),
+                "collect_type": "http",
+                "type": self.model_id,
+                "content": jinja_context,
+                "node_id": node["id"],
+                "collector_name": "Telegraf",
+                "env_config": {}
             })
-        return {"object_type": "http", "nodes": nodes}
+        return nodes
+
+    @staticmethod
+    def to_toml_dict(d):
+        if not d:
+            return "{}"
+        return "{ " + ", ".join(f'"{k}" = "{v}"' for k, v in d.items()) + " }"
+
+    def render_template(self, context: dict):
+        """
+        渲染指定目录下的 j2 模板文件。
+        :param context: 用于模板渲染的变量字典
+        :return: 渲染后的配置字符串
+        """
+        file_name = "base.child.toml.j2"
+        template_dir = "apps/cmdb/plugins/Telegraf/http/"
+        env = Environment(loader=FileSystemLoader(template_dir), undefined=DebugUndefined)
+        env.filters['to_toml'] = self.to_toml_dict
+        template = env.get_template(file_name)
+        return template.render(context)
 
     def delete_params(self):
         """
         生成节点管理删除配置的参数
         """
-        return [str((self.get_instance_id(host),)) for host in self.hosts]
+        return [str(self.get_instance_id(host)) for host in self.hosts]
 
     def main(self, operator="push"):
         """
@@ -155,14 +189,15 @@ class BaseNodeParams(metaclass=ABCMeta):
 
 class VmwareNodeParams(BaseNodeParams):
     supported_model_id = "vmware_vc"  # 通过此属性自动注册
+    plugin_name = "vmware_info"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # 当 instance.model_id 为 "network" 时，PLUGIN_MAP 配置为 "snmp_facts"
-        self.PLUGIN_MAP.update({self.model_id: "vmware_info"})
+        self.PLUGIN_MAP.update({self.model_id: self.plugin_name})
         self.host_field = "hostname"
 
-    def set_credential(self):
+    def set_credential(self, *args, **kwargs):
         """
         生成 vmware vc 的凭据
         """
@@ -183,13 +218,15 @@ class VmwareNodeParams(BaseNodeParams):
 
 class NetworkNodeParams(BaseNodeParams):
     supported_model_id = "network"  # 通过此属性自动注册
+    plugin_name = "snmp_facts"  # 插件名称
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # 当 instance.model_id 为 "vmware_vc" 时，PLUGIN_MAP 配置为 "vmware_info"
-        self.PLUGIN_MAP.update({self.model_id: "snmp_facts"})
+        self.PLUGIN_MAP.update({self.model_id: self.plugin_name})
+        self.host_field = "ip_addr"
 
-    def set_credential(self):
+    def set_credential(self, *args, **kwargs):
         """
         生成 network 的凭据
         # 示例参数：
@@ -219,7 +256,7 @@ class NetworkNodeParams(BaseNodeParams):
             "privacy": self.credential.get("privacy", ""),
             "authkey": self.credential.get("authkey", ""),
             "privkey": self.credential.get("privkey", ""),
-            "timeout": self.credential.get("timeout", ""),
+            "timeout": self.credential.get("timeout", "1"),
         }
         if self.model_id == "network_topo":
             credential_data.update({"topo": "true"})
@@ -233,6 +270,176 @@ class NetworkNodeParams(BaseNodeParams):
             return f"{self.instance.id}_{instance['inst_name']}"
         else:
             return f"{self.instance.id}_{instance}"
+
+
+class MysqlNodeParams(BaseNodeParams):
+    supported_model_id = "mysql"  # 通过此属性自动注册
+    plugin_name = "mysql_info"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 当 instance.model_id 为 "vmware_vc" 时，PLUGIN_MAP 配置为 "vmware_info"
+        self.PLUGIN_MAP.update({self.model_id: self.plugin_name})
+        self.host_field = "ip_addr"
+
+    def set_credential(self, *args, **kwargs):
+        credential_data = {
+            "port": self.credential.get("port", 3306),
+            "user": self.credential.get("user", ""),
+            "password": self.credential.get("password", ""),
+        }
+        return credential_data
+
+    def get_instance_id(self, instance):
+        """
+        获取实例 id
+        """
+        if self.has_set_instances:
+            return f"{self.instance.id}_{instance['inst_name']}"
+        else:
+            return f"{self.instance.id}_{instance}"
+
+
+class AliyunNodeParams(BaseNodeParams):
+    supported_model_id = "aliyun_account"
+    plugin_name = "aliyun_info"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.PLUGIN_MAP.update({self.model_id: self.plugin_name})
+
+    def set_credential(self, *args, **kwargs):
+        regions_id = self.credential["regions"]["resource_id"]
+        credential_data = {
+            "access_key": self.credential.get("accessKey", ""),
+            "access_secret": self.credential.get("accessSecret", ""),
+            "region_id": regions_id
+        }
+        return credential_data
+
+    def get_instance_id(self, instance):
+        """
+        获取实例 id
+        """
+        if self.has_set_instances:
+            return f"{self.instance.id}_{instance['inst_name']}"
+        else:
+            return f"{self.instance.id}_{instance}"
+
+
+class SSHNodeParamsMixin:
+    supported_model_id = ""
+    plugin_name = f"{supported_model_id}_info"
+    interval_map = {plugin_name: 300}
+    host_field = "ip_addr"
+
+    def set_credential(self, *args, **kwargs):
+        host = kwargs["host"]
+        node_ip = self.instance.access_point[0]["ip"]
+        credential_data = {
+            "node_id": self.instance.access_point[0]["id"],
+            "execute_timeout": self.instance.timeout,
+        }
+        host_ip = host.get("ip_addr", "") if host and isinstance(host, dict) else host
+        if host_ip != node_ip:
+            credential_data["username"] = self.credential.get("username", ""),
+            credential_data["password"] = self.credential.get("password", ""),
+            credential_data["port"] = self.credential.get("port", 22),
+        return credential_data
+
+    def get_instance_id(self, instance):
+        return f"{self.instance.id}_{instance}_{instance['inst_name']}" if self.has_set_instances else f"{self.instance.id}_{instance}"
+
+
+class HostNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "host"  # 模型id
+    plugin_name = "host_info"  # 插件名称
+
+
+class RedisNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "redis"
+    plugin_name = "redis_info"
+
+
+class NginxNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "nginx"
+    plugin_name = "nginx_info"
+
+
+class ZookeeperNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "zookeeper"
+    plugin_name = "zookeeper_info"
+
+
+class KafkaNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "kafka"
+    plugin_name = "kafka_info"
+
+
+class QCloudNodeParams(BaseNodeParams):
+    supported_model_id = "qcloud"
+    plugin_name = "qcloud_info"
+
+    interval_map = {plugin_name: 300}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.PLUGIN_MAP.update({self.model_id: "qcloud_info"})
+
+    def set_credential(self, *args, **kwargs):
+        """
+        生成 Tencent Cloud 的凭据
+        """
+        return {
+            "secret_id": self.credential.get("accessKey", ""),
+            "secret_key": self.credential.get("secretSecret", ""),
+        }
+
+    def get_instance_id(self, instance):
+        """
+        获取实例 ID
+        """
+        return f"{self.instance.id}_{instance['inst_name']}"
+
+
+class EtcdNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "etcd"
+    plugin_name = "etcd_info"
+
+
+class RabbitMQNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "rabbitmq"
+    plugin_name = "rabbitmq_info"
+
+
+class TomcatNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "tomcat"
+    plugin_name = "tomcat_info"
+
+
+class ESNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "es"
+    plugin_name = "es_info"
+
+
+class MongoDBParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "mongodb"
+    plugin_name = "mongodb_info"
+
+
+class ApacheNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "apache"
+    plugin_name = "apache_info"
+
+
+class ActiveMQNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "activemq"
+    plugin_name = "activemq_info"
+
+
+class PgsqlNodeParams(SSHNodeParamsMixin, BaseNodeParams):
+    supported_model_id = "postgresql"
+    plugin_name = "pgsql_info"
 
 
 class NodeParamsFactory:

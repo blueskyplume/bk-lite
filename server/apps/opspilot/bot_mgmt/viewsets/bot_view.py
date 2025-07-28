@@ -2,14 +2,13 @@ from django.http import JsonResponse
 from django.utils.translation import gettext as _
 from rest_framework.decorators import action
 
-from apps.core.decorators.api_perminssion import HasRole
-from apps.core.logger import logger
+from apps.core.logger import opspilot_logger as logger
 from apps.core.utils.viewset_utils import AuthViewSet
 from apps.opspilot.bot_mgmt.serializers import BotSerializer
 from apps.opspilot.enum import ChannelChoices
 from apps.opspilot.models import Bot, BotChannel, Channel, LLMSkill
 from apps.opspilot.quota_rule_mgmt.quota_utils import get_quota_client
-from apps.opspilot.utils.kubernetes_client import KubernetesClient
+from apps.opspilot.utils.pilot_client import PilotClient
 
 
 class BotViewSet(AuthViewSet):
@@ -19,11 +18,12 @@ class BotViewSet(AuthViewSet):
 
     def create(self, request, *args, **kwargs):
         data = request.data
-        client = get_quota_client(request)
-        bot_count, used_bot_count, __ = client.get_bot_quota()
-        if bot_count != -1 and bot_count <= used_bot_count:
-            return JsonResponse({"result": False, "message": _("Bot count exceeds quota limit.")})
-        current_team = data.get("team", []) or [request.COOKIES.get("current_team")]
+        if not request.user.is_superuser:
+            client = get_quota_client(request)
+            bot_count, used_bot_count, __ = client.get_bot_quota()
+            if bot_count != -1 and bot_count <= used_bot_count:
+                return JsonResponse({"result": False, "message": _("Bot count exceeds quota limit.")})
+        current_team = data.get("team", []) or [int(request.COOKIES.get("current_team"))]
         bot_obj = Bot.objects.create(
             name=data.get("name"),
             introduction=data.get("introduction"),
@@ -48,9 +48,14 @@ class BotViewSet(AuthViewSet):
         return JsonResponse({"result": True})
 
     def update(self, request, *args, **kwargs):
+        obj: Bot = self.get_object()
+        if not request.user.is_superuser:
+            current_team = request.COOKIES.get("current_team", "0")
+            has_permission = self.get_has_permission(request.user, obj, current_team)
+            if not has_permission:
+                return JsonResponse({"result": False, "message": _("You do not have permission to update this bot.")})
         data = request.data
         is_publish = data.pop("is_publish", False)
-        obj: Bot = self.get_object()
         channels = data.pop("channels", [])
         llm_skills = data.pop("llm_skills", [])
         rasa_model = data.pop("rasa_model", None)
@@ -72,7 +77,7 @@ class BotViewSet(AuthViewSet):
         obj.updated_by = request.user.username
         obj.save()
         if is_publish:
-            client = KubernetesClient()
+            client = PilotClient()
             try:
                 client.start_pilot(obj)
             except Exception as e:
@@ -105,6 +110,12 @@ class BotViewSet(AuthViewSet):
         enabled = request.data.get("enabled")
         channel_config = request.data.get("channel_config")
         channel = BotChannel.objects.get(id=channel_id)
+        if not request.user.is_superuser:
+            current_team = request.COOKIES.get("current_team", "0")
+            has_permission = self.get_has_permission(request.user, channel.bot, current_team)
+            if not has_permission:
+                return JsonResponse({"result": False, "message": _("You do not have permission to update this bot.")})
+
         channel.enabled = enabled
         if channel_config is not None:
             channel.channel_config = channel_config
@@ -112,13 +123,12 @@ class BotViewSet(AuthViewSet):
         return JsonResponse({"result": True})
 
     def destroy(self, request, *args, **kwargs):
-        client = KubernetesClient()
-        obj: Bot = self.get_object()
+        obj = self.get_object()
         if obj.online:
+            client = PilotClient()
             client.stop_pilot(obj.id)
         return super().destroy(request, *args, **kwargs)
 
-    @HasRole()
     def list(self, request, *args, **kwargs):
         name = request.query_params.get("name", "")
         queryset = Bot.objects.filter(name__icontains=name)
@@ -128,7 +138,13 @@ class BotViewSet(AuthViewSet):
     def start_pilot(self, request):
         bot_ids = request.data.get("bot_ids")
         bots = Bot.objects.filter(id__in=bot_ids)
-        client = KubernetesClient()
+        if not request.user.is_superuser:
+            current_team = request.COOKIES.get("current_team", "0")
+            has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True)
+            if not has_permission:
+                return JsonResponse({"result": False, "message": _("You do not have permission to start this bot.")})
+
+        client = PilotClient()
         for bot in bots:
             if not bot.api_token:
                 bot.api_token = bot.get_api_token()
@@ -142,7 +158,13 @@ class BotViewSet(AuthViewSet):
     def stop_pilot(self, request):
         bot_ids = request.data.get("bot_ids")
         bots = Bot.objects.filter(id__in=bot_ids)
-        client = KubernetesClient()
+        if not request.user.is_superuser:
+            current_team = request.COOKIES.get("current_team", "0")
+            has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True)
+            if not has_permission:
+                return JsonResponse({"result": False, "message": _("You do not have permission to stop this bot")})
+
+        client = PilotClient()
         for bot in bots:
             client.stop_pilot(bot.id)
             bot.api_token = ""

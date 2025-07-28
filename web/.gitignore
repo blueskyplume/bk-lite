@@ -47,7 +47,6 @@ package-lock.json
 pnpm-lock.yaml
 yarn.lock
 
-.vscode
 .history
 
 .idea/
@@ -66,3 +65,5 @@ server.key
 
 .env.local
 pnpm-workspace.yaml
+
+deploy/docker-compose/conf/nats/nats.conf

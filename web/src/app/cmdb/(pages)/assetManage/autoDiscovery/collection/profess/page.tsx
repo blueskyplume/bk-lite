@@ -6,6 +6,9 @@ import styles from './index.module.scss';
 import K8sTask from './components/k8sTask';
 import VMTask from './components/vmTask';
 import SNMPTask from './components/snmpTask';
+import SQLTask from './components/sqlTask';
+import CloudTask from './components/cloudTask';
+import HostTask from './components/hostTask';
 import TaskDetail from './components/taskDetail';
 import useApiClient from '@/utils/request';
 import CustomTable from '@/components/custom-table';
@@ -95,7 +98,7 @@ const ProfessionalCollection: React.FC = () => {
     page: stateRef.current.pagination.current,
     page_size: stateRef.current.pagination.pageSize,
     model_id:
-      selectedRef.current.node?.tabItems?.[0]?.id || selectedRef.current.nodeId,
+      selectedRef.current.node?.tabItems?.[0]?.model_id || selectedRef.current.nodeId,
     search: stateRef.current.searchText,
     ...(stateRef.current.currentExecStatus !== undefined && {
       exec_status: stateRef.current.currentExecStatus,
@@ -320,13 +323,10 @@ const ProfessionalCollection: React.FC = () => {
 
   const getTaskContent = () => {
     if (!selectedRef.current.node) return null;
-    
     const modelItem = selectedRef.current.node.tabItems?.find(
       (item) => item.id === activeTab
     );
-    
     if (!modelItem) return null;
-
     const props = {
       onClose: closeDrawer,
       onSuccess: fetchData,
@@ -334,13 +334,17 @@ const ProfessionalCollection: React.FC = () => {
       modelItem: modelItem as ModelItem,
       editId: editingId,
     };
-
-    if (selectedRef.current.nodeId === 'k8s') {
-      return <K8sTask {...props} />;
-    } else if (['network_topo', 'network'].includes(selectedRef.current.nodeId)) {
-      return <SNMPTask {...props} />;
-    }
-    return <VMTask {...props} />;
+    const taskMap: Record<string, React.ComponentType<any>> = {
+      k8s: K8sTask,
+      vmware: VMTask,
+      network_topo: SNMPTask,
+      network: SNMPTask,
+      databases: SQLTask,
+      cloud: CloudTask,
+      host_manage: HostTask,
+    };
+    const TaskComponent = taskMap[selectedRef.current.nodeId] || K8sTask;
+    return <TaskComponent {...props} />;
   };
 
   const toCamelCase = (str: string) => {
@@ -358,11 +362,16 @@ const ProfessionalCollection: React.FC = () => {
 
   const onSelectFields = async (fields: string[]) => {
     setDisplayFieldKeys(fields);
-    setCurrentColumns(
-      allColumns.filter(
-        (col) => fields.includes(col.key as string) || col.key === 'action'
-      ) as ExtendedColumnItem[]
-    );
+    const actionCol = allColumns.find(col => col.key === 'action');
+    const ordered = [
+      ...allColumns
+        .filter(col => fields.includes(col.key as string))
+        .sort((a, b) =>
+          fields.indexOf(a.key as string) - fields.indexOf(b.key as string)
+        ),
+      ...(actionCol ? [actionCol] : []),
+    ] as ExtendedColumnItem[];
+    setCurrentColumns(ordered);
   };
 
   const actionRender = useCallback(
@@ -376,7 +385,10 @@ const ProfessionalCollection: React.FC = () => {
       return (
         <div className="flex gap-3">
           {record.input_method && !record.examine ? (
-            <PermissionWrapper requiredPermissions={['Execute']}>
+            <PermissionWrapper
+              requiredPermissions={['Execute']}
+              instPermissions={record.permission}
+            >
               <Button
                 type="link"
                 size="small"
@@ -397,7 +409,10 @@ const ProfessionalCollection: React.FC = () => {
             </Button>
           )}
 
-          <PermissionWrapper requiredPermissions={['Execute']}>
+          <PermissionWrapper
+            requiredPermissions={['Execute']}
+            instPermissions={record.permission}
+          >
             <Button
               type="link"
               size="small"
@@ -410,7 +425,10 @@ const ProfessionalCollection: React.FC = () => {
                 : t('Collection.table.executeNow')}
             </Button>
           </PermissionWrapper>
-          <PermissionWrapper requiredPermissions={['Edit']}>
+          <PermissionWrapper
+            requiredPermissions={['Edit']}
+            instPermissions={record.permission}
+          >
             <Button
               type="link"
               size="small"
@@ -420,7 +438,10 @@ const ProfessionalCollection: React.FC = () => {
               {t('Collection.table.modify')}
             </Button>
           </PermissionWrapper>
-          <PermissionWrapper requiredPermissions={['Delete']}>
+          <PermissionWrapper
+            requiredPermissions={['Delete']}
+            instPermissions={record.permission}
+          >
             <Button
               type="link"
               size="small"
@@ -450,7 +471,7 @@ const ProfessionalCollection: React.FC = () => {
         title: t('Collection.table.execStatus'),
         dataIndex: 'exec_status',
         key: 'exec_status',
-        width: 120,
+        width: 160,
         filters: statusFilters,
         filterMultiple: false,
         render: (status: ExecStatusType) => {
@@ -470,7 +491,7 @@ const ProfessionalCollection: React.FC = () => {
         title: t('Collection.table.collectSummary'),
         dataIndex: 'collect_digest',
         key: 'collect_digest',
-        width: 400,
+        width: 440,
         render: (_: any, record: CollectTask) => {
           const digest = (record.message || {}) as CollectTaskMessage;
           return Object.keys(digest).length > 0 ? (
@@ -509,7 +530,7 @@ const ProfessionalCollection: React.FC = () => {
         dataIndex: 'action',
         key: 'action',
         fixed: 'right',
-        width: 230,
+        width: 260,
         render: (_, record) => actionRender(record),
       },
     ],
@@ -558,6 +579,7 @@ const ProfessionalCollection: React.FC = () => {
             expandedKeys={expandedKeys}
             selectedKeys={[selectedRef.current.nodeId]}
             onSelect={onTreeSelect}
+            style={{ minHeight: '100px' }}
           />
         </Spin>
       </div>
@@ -601,7 +623,7 @@ const ProfessionalCollection: React.FC = () => {
             rowKey="id"
             columns={currentColumns}
             dataSource={tableData}
-            scroll={{ y: 'calc(100vh - 450px)' }}
+            scroll={{ y: hasMultipleTabs ? 'calc(100vh - 510px)' :  'calc(100vh - 450px)'}}
             onSelectFields={onSelectFields}
             onChange={handleTableChange}
             pagination={{

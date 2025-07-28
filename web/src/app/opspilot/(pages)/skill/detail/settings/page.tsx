@@ -3,15 +3,14 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Switch, Button, InputNumber, Slider, Spin, message } from 'antd';
 import { useTranslation } from '@/utils/i18n';
-import { v4 as uuidv4 } from 'uuid';
 import useGroups from '@/app/opspilot/hooks/useGroups';
 import styles from './index.module.scss';
 import { useSearchParams } from 'next/navigation';
-import { CustomChatMessage } from '@/app/opspilot/types/global';
-import CustomChat from '@/app/opspilot/components/custom-chat';
+import CustomChatSSE from '@/app/opspilot/components/custom-chat-sse';
 import PermissionWrapper from '@/components/permission';
 import KnowledgeBaseSelector from '@/app/opspilot/components/skill/knowledgeBaseSelector';
 import { KnowledgeBase, RagScoreThresholdItem, KnowledgeBaseRagSource } from '@/app/opspilot/types/skill';
+import { SelectTool } from '@/app/opspilot/types/tool';
 import ToolSelector from '@/app/opspilot/components/skill/toolSelector';
 import { useSkillApi } from '@/app/opspilot/api/skill';
 
@@ -23,7 +22,7 @@ const SkillSettingsPage: React.FC = () => {
   const [isDeepSeek, setIsDeepSeek] = useState(false);
   const { groups, loading: groupsLoading } = useGroups();
   const { t } = useTranslation();
-  const { fetchSkillDetail, fetchKnowledgeBases, fetchLlmModels, saveSkillDetail, executeLlm } = useSkillApi();
+  const { fetchSkillDetail, fetchKnowledgeBases, fetchLlmModels, saveSkillDetail } = useSkillApi();
   const searchParams = useSearchParams();
   const id = searchParams ? searchParams.get('id') : null;
 
@@ -33,6 +32,7 @@ const SkillSettingsPage: React.FC = () => {
   const [ragEnabled, setRagEnabled] = useState(true);
   const [showRagSource, setRagSourceStatus] = useState(false);
   const [showToolEnabled, setToolEnabled] = useState(false);
+  const [ragStrictMode, setRagStrictMode] = useState(false);
   const [ragSources, setRagSources] = useState<KnowledgeBaseRagSource[]>([]);
   const [selectedKnowledgeBases, setSelectedKnowledgeBases] = useState<number[]>([]);
   const [llmModels, setLlmModels] = useState<{ id: number, name: string, enabled: boolean, llm_model_type: string }[]>([]);
@@ -44,17 +44,72 @@ const SkillSettingsPage: React.FC = () => {
   });
   const [saveLoading, setSaveLoading] = useState(false);
   const [quantity, setQuantity] = useState<number>(10);
-  const [selectedTools, setSelectedTools] = useState<number[]>([]);
+  const [selectedTools, setSelectedTools] = useState<SelectTool[]>([]);
+  const [skillType, setSkillType] = useState<number | null>(null);
+  const [skillPermissions, setSkillPermissions] = useState<string[]>([]);
+  const [enableKmRoute, setEnableKmRoute] = useState(true);
+  const [kmLlmModel, setKmLlmModel] = useState<number | null>(null);
+  const [guideValue, setGuideValue] = useState<string>('');
 
   useEffect(() => {
+    const fetchFormData = async (knowledgeBases: KnowledgeBase[]) => {
+      try {
+        const data = await fetchSkillDetail(id);
+        const initialGuide = '您好，请问有什么可以帮助您的吗？可以点击如下问题进行快速提问。\n[问题1]\n[问题2]'
+        form.setFieldsValue({
+          name: data.name,
+          group: data.team,
+          introduction: data.introduction,
+          llmModel: data.llm_model,
+          temperature: data.temperature || 0.7,
+          prompt: data.skill_prompt,
+          guide: data.guide || initialGuide,
+          show_think: data.show_think,
+        });
+        setGuideValue(data.guide || initialGuide);
+        const selected = llmModels.find(model => model.id === data.llm_model);
+        setIsDeepSeek(selected?.llm_model_type === 'deep-seek');
+        setChatHistoryEnabled(data.enable_conversation_history);
+        setRagEnabled(data.enable_rag);
+        setRagStrictMode(data.enable_rag_strict_mode);
+        setRagSourceStatus(data.enable_rag_knowledge_source);
+
+        setTemperature(data.temperature || 0.7);
+
+        const initialRagSources = data.rag_score_threshold.map((item: RagScoreThresholdItem) => {
+          const base = knowledgeBases.find((base) => base.id === Number(item.knowledge_base));
+          return base ? { id: base.id, name: base.name, introduction: base.introduction || '', score: item.score } : null;
+        }).filter(Boolean) as KnowledgeBaseRagSource[];
+        setRagSources(initialRagSources);
+        setQuantity(data.conversation_window_size !== undefined ? data.conversation_window_size : 10);
+
+        const initialSelectedKnowledgeBases = data.rag_score_threshold.map((item: RagScoreThresholdItem) => Number(item.knowledge_base));
+        setSelectedKnowledgeBases(initialSelectedKnowledgeBases);
+        setSelectedTools(data.tools);
+        setToolEnabled(!!data.tools.length);
+
+        setSkillType(data.skill_type);
+        setSkillPermissions(data.permissions || []);
+        
+        setEnableKmRoute(data.enable_km_route !== undefined ? data.enable_km_route : true);
+        setKmLlmModel(data.km_llm_model || data.llm_model);
+      } catch (error) {
+        console.error(t('common.fetchFailed'), error);
+      } finally {
+        setPageLoading(prev => ({ ...prev, formDataLoading: false }));
+      }
+    };
+
     const fetchInitialData = async () => {
+      if (!id) return;
       try {
         const [llmModelsData, knowledgeBasesData] = await Promise.all([
-          fetchLlmModels(), // Replace with appropriate API call if needed
+          fetchLlmModels(),
           fetchKnowledgeBases()
         ]);
         setLlmModels(llmModelsData);
         setKnowledgeBases(knowledgeBasesData);
+        fetchFormData(knowledgeBasesData);
       } catch (error) {
         console.error(t('common.fetchFailed'), error);
       } finally {
@@ -63,57 +118,21 @@ const SkillSettingsPage: React.FC = () => {
     };
 
     fetchInitialData();
-  }, []);
-
-  useEffect(() => {
-    const fetchFormData = async () => {
-      if (id) {
-        try {
-          const data = await fetchSkillDetail(id);
-          form.setFieldsValue({
-            name: data.name,
-            group: data.team,
-            introduction: data.introduction,
-            llmModel: data.llm_model,
-            temperature: data.temperature || 0.7,
-            prompt: data.skill_prompt,
-            show_think: data.show_think,
-          });
-          const selected = llmModels.find(model => model.id === data.llm_model);
-          setIsDeepSeek(selected?.llm_model_type === 'deep-seek');
-          setChatHistoryEnabled(data.enable_conversation_history);
-          setRagEnabled(data.enable_rag);
-          setRagSourceStatus(data.enable_rag_knowledge_source);
-
-          setTemperature(data.temperature || 0.7);
-
-          const initialRagSources = data.rag_score_threshold.map((item: RagScoreThresholdItem) => {
-            const base = knowledgeBases.find((base) => base.id === Number(item.knowledge_base));
-            return base ? { id: base.id, name: base.name, introduction: base.introduction || '', score: item.score } : null;
-          }).filter(Boolean) as KnowledgeBaseRagSource[];
-          setRagSources(initialRagSources);
-          setQuantity(data.conversation_window_size !== undefined ? data.conversation_window_size : 10);
-
-          const initialSelectedKnowledgeBases = data.rag_score_threshold.map((item: RagScoreThresholdItem) => Number(item.knowledge_base));
-          setSelectedKnowledgeBases(initialSelectedKnowledgeBases);
-          setSelectedTools(data.tools);
-          setToolEnabled(!!data.tools.length);
-        } catch (error) {
-          console.error(t('common.fetchFailed'), error);
-        } finally {
-          setPageLoading(prev => ({ ...prev, formDataLoading: false }));
-        }
-      }
-    };
-
-    fetchFormData();
-  }, [id, knowledgeBases]);
+  }, [id]);
 
   const allLoading = Object.values(pageLoading).some(loading => loading) || groupsLoading;
 
   const handleSave = async () => {
     try {
       const values = await form.validateFields();
+      if (ragEnabled && ragSources.length === 0) {
+        message.error(t('skill.ragKnowledgeBaseRequired'));
+        return;
+      }
+      if (showToolEnabled && selectedTools.length === 0) { 
+        message.error(t('skill.ragToolRequired'));
+        return;
+      }
       const ragScoreThreshold = ragSources.map((source) => ({
         knowledge_base: knowledgeBases.find(base => base.name === source.name)?.id,
         score: source.score
@@ -127,11 +146,20 @@ const SkillSettingsPage: React.FC = () => {
         enable_conversation_history: chatHistoryEnabled,
         enable_rag: ragEnabled,
         enable_rag_knowledge_source: showRagSource,
+        enable_rag_strict_mode: ragStrictMode,
         rag_score_threshold: ragScoreThreshold,
         conversation_window_size: chatHistoryEnabled ? quantity : undefined,
         temperature: temperature,
         show_think: values.show_think,
-        tools: selectedTools
+        enable_km_route: enableKmRoute,
+        km_llm_model: enableKmRoute ? kmLlmModel : undefined,
+        guide: values.guide,
+        tools: selectedTools.map((tool: any) => ({
+          id: tool.id,
+          name: tool.name,
+          icon: tool.icon,
+          kwargs: tool.kwargs.filter((kwarg: any) => kwarg.key),
+        })),
       };
       setSaveLoading(true);
       await saveSkillDetail(id, payload);
@@ -143,47 +171,43 @@ const SkillSettingsPage: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (newMessage: CustomChatMessage[], lastUserMessage?: CustomChatMessage): Promise<CustomChatMessage[]> => {
-    return new Promise(async (resolve) => {
-      const message = lastUserMessage || [...newMessage].reverse().find(message => message.role === 'user');
-      if (!message) {
-        resolve(newMessage);
-        return;
-      }
-      try {
-        const values = await form.validateFields();
-        const ragScoreThreshold = selectedKnowledgeBases.map(id => ({
-          knowledge_base: id,
-          score: ragSources.find(base => base.id === id)?.score || 0.7,
-        }));
-        const payload = {
-          user_message: message?.content || '',
-          llm_model: values.llmModel,
-          skill_prompt: values.prompt,
-          enable_rag: ragEnabled,
-          enable_rag_knowledge_source: showRagSource,
-          rag_score_threshold: ragScoreThreshold,
-          chat_history: quantity ? newMessage.slice(0, quantity).map(msg => ({ text: msg.content, event: msg.role })) : [],
-          conversation_window_size: chatHistoryEnabled ? quantity : undefined,
-          temperature: temperature,
-          show_think: values.show_think,
-          tools: selectedTools
-        };
-        const reply = await executeLlm(payload);
-        const botMessage: CustomChatMessage = {
-          id: uuidv4(),
-          content: reply.content,
-          role: 'bot',
-          createAt: new Date().toISOString(),
-          updateAt: new Date().toISOString(),
-          knowledgeBase: reply.citing_knowledge || null,
-        };
-        resolve([...newMessage, botMessage]);
-      } catch (error) {
-        console.error(t('common.fetchFailed'), error);
-        resolve(newMessage);
-      }
-    });
+  const handleSendMessage = async (userMessage: string): Promise<{ url: string; payload: any }> => {
+    try {
+      const values = await form.validateFields();
+      const ragScoreThreshold = selectedKnowledgeBases.map(id => ({
+        knowledge_base: id,
+        score: ragSources.find(base => base.id === id)?.score || 0.7,
+      }));
+
+      const payload = {
+        user_message: userMessage,
+        llm_model: values.llmModel,
+        skill_prompt: values.prompt,
+        enable_rag: ragEnabled,
+        enable_rag_knowledge_source: showRagSource,
+        enable_rag_strict_mode: ragStrictMode,
+        rag_score_threshold: ragScoreThreshold,
+        chat_history: quantity ? [] : [],
+        conversation_window_size: chatHistoryEnabled ? quantity : undefined,
+        temperature: temperature,
+        show_think: values.show_think,
+        tools: selectedTools,
+        skill_type: skillType,
+        group: values.group?.[0],
+        skill_name: values.name,
+        skill_id: id,
+        enable_km_route: enableKmRoute,
+        km_llm_model: enableKmRoute ? kmLlmModel : undefined,
+      };
+
+      return {
+        url: '/api/proxy/opspilot/model_provider_mgmt/llm/execute/?stream=1',
+        payload
+      };
+    } catch (error) {
+      console.error(t('common.fetchFailed'), error);
+      throw error;
+    }
   };
 
   const handleTemperatureChange = (value: number | null) => {
@@ -195,6 +219,16 @@ const SkillSettingsPage: React.FC = () => {
   const changeToolEnable = (checked: boolean) => {
     setToolEnabled(checked);
     !checked && setSelectedTools([])
+  }
+
+  const handleKmRouteChange = (checked: boolean) => {
+    setEnableKmRoute(checked);
+    if (checked && !kmLlmModel) {
+      const currentLlmModel = form.getFieldValue('llmModel');
+      if (currentLlmModel) {
+        setKmLlmModel(currentLlmModel);
+      }
+    }
   }
 
   return (
@@ -209,7 +243,7 @@ const SkillSettingsPage: React.FC = () => {
           <div className='w-1/2 space-y-4 flex flex-col h-full'>
             <section className={`flex-1 ${styles.llmSection}`}>
               <div className={`border rounded-md mb-5 ${styles.llmContainer}`}>
-                <h2 className="font-semibold mb-3 text-base">{t('skill.information')}</h2>
+                <h2 className="font-semibold mb-3 text-base rounded-tl-md rounded-tr-md">{t('skill.information')}</h2>
                 <div className="px-4">
                   <Form
                     form={form}
@@ -285,11 +319,20 @@ const SkillSettingsPage: React.FC = () => {
                       rules={[{ required: true, message: `${t('common.input')} ${t('skill.form.prompt')}` }]}>
                       <TextArea rows={4} />
                     </Form.Item>
+                    <Form.Item
+                      label={t('skill.form.guide')}
+                      name="guide"
+                      tooltip={t('skill.form.guideTip')}>
+                      <TextArea 
+                        rows={4} 
+                        onChange={(e) => setGuideValue(e.target.value)}
+                      />
+                    </Form.Item>
                   </Form>
                 </div>
               </div>
               <div className={`border rounded-md ${styles.llmContainer}`}>
-                <h2 className="font-semibold mb-3 text-base">{t('skill.chatEnhancement')}</h2>
+                <h2 className="font-semibold mb-3 text-base rounded-tl-md rounded-tr-md">{t('skill.chatEnhancement')}</h2>
                 <div className={`p-4 rounded-md pb-0 ${styles.contentWrapper}`}>
                   <Form labelCol={{flex: '0 0 80px'}} wrapperCol={{flex: '1'}}>
                     <div className="flex justify-between">
@@ -323,9 +366,35 @@ const SkillSettingsPage: React.FC = () => {
                     <p className="pb-4 text-xs text-[var(--color-text-4)]">{t('skill.ragTip')}</p>
                     {ragEnabled && (
                       <div className="pb-2">
-                        <Form.Item label={t('skill.ragSource')}>
+                        <Form.Item
+                          label={t('skill.ragSource')}
+                          tooltip={t('skill.ragSourceTip')}>
                           <Switch size="small" className="ml-2" checked={showRagSource} onChange={setRagSourceStatus}/>
                         </Form.Item>
+                        <Form.Item
+                          label={t('skill.ragStrictMode')}
+                          tooltip={t('skill.ragStrictModeTip')}>
+                          <Switch size="small" className="ml-2" checked={ragStrictMode} onChange={setRagStrictMode}/>
+                        </Form.Item>
+                        <Form.Item
+                          label={t('skill.knowledgeRoute')}
+                          tooltip={t('skill.knowledgeRouteTip')}>
+                          <Switch size="small" className="ml-2" checked={enableKmRoute} onChange={handleKmRouteChange}/>
+                        </Form.Item>
+                        {enableKmRoute && (
+                          <Form.Item
+                            label={t('skill.kmLlmModel')}>
+                            <Select
+                              value={kmLlmModel}
+                              onChange={(value: number) => setKmLlmModel(value)}
+                              placeholder={t('common.select')}
+                            >
+                              {llmModels.map(model => (
+                                <Option key={model.id} value={model.id} disabled={!model.enabled}>{model.name}</Option>
+                              ))}
+                            </Select>
+                          </Form.Item>
+                        )}
                         <Form.Item label={t('skill.knowledgeBase')} tooltip={t('skill.knowledgeBaseTip')}>
                           <KnowledgeBaseSelector
                             ragSources={ragSources}
@@ -339,21 +408,29 @@ const SkillSettingsPage: React.FC = () => {
                     )}
                   </Form>
                 </div>
-                <div className={`p-4 rounded-md pb-0 ${styles.contentWrapper}`}>
-                  <Form labelCol={{flex: '0 0 135px'}} wrapperCol={{flex: '1'}}>
-                    <div className="flex justify-between">
-                      <h3 className="font-medium text-sm mb-4">{t('skill.tool')}</h3>
-                      <Switch size="small" className="ml-2" checked={showToolEnabled} onChange={changeToolEnable} />
-                    </div>
-                    <p className="pb-4 text-xs text-[var(--color-text-4)]">{t('skill.toolTip')}</p>
-                    {showToolEnabled && (<ToolSelector selectedToolIds={selectedTools} onChange={setSelectedTools} />)}
-                  </Form>
-                </div>
+                {skillType === 1 && (
+                  <div className={`p-4 rounded-md pb-0 ${styles.contentWrapper}`}>
+                    <Form labelCol={{flex: '0 0 135px'}} wrapperCol={{flex: '1'}}>
+                      <div className="flex justify-between">
+                        <h3 className="font-medium text-sm mb-4">{t('skill.tool')}</h3>
+                        <Switch size="small" className="ml-2" checked={showToolEnabled} onChange={changeToolEnable} />
+                      </div>
+                      <p className="pb-4 text-xs text-[var(--color-text-4)]">{t('skill.toolTip')}</p>
+                      {showToolEnabled && (
+                        <ToolSelector
+                          defaultTools={selectedTools}
+                          onChange={(selected: SelectTool[]) => setSelectedTools(selected)}
+                        />
+                      )}
+                    </Form>
+                  </div>
+                )}
               </div>
             </section>
             <div>
               <PermissionWrapper
-                requiredPermissions={['Edit']}>
+                requiredPermissions={['Edit']}
+                instPermissions={skillPermissions}>
                 <Button type="primary" onClick={handleSave} loading={saveLoading}>
                   {t('common.save')}
                 </Button>
@@ -361,7 +438,10 @@ const SkillSettingsPage: React.FC = () => {
             </div>
           </div>
           <div className="w-1/2 space-y-4">
-            <CustomChat handleSendMessage={handleSendMessage} />
+            <CustomChatSSE 
+              handleSendMessage={handleSendMessage} 
+              guide={guideValue} 
+            />
           </div>
         </div>
       )}

@@ -2,17 +2,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Spin, Input, Button, Tag, message } from 'antd';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import intergrationStyle from './index.module.scss';
 import { SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/utils/i18n';
 import Icon from '@/components/icon';
-import { deepClone } from '@/app/monitor/utils/common';
+import { deepClone, getIconByObjectName } from '@/app/monitor/utils/common';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
 import { useRouter } from 'next/navigation';
-import { ObectItem, TreeSortData } from '@/app/monitor/types/monitor';
-import {
-  OBJECT_ICON_MAP,
-  COLLECT_TYPE_MAP,
-} from '@/app/monitor/constants/monitor';
+import { ObjectItem, TreeSortData } from '@/app/monitor/types/monitor';
 import { ModalRef, TableDataItem, TreeItem } from '@/app/monitor/types';
 import ImportModal from './importModal';
 import axios from 'axios';
@@ -20,9 +18,12 @@ import { useAuth } from '@/context/auth';
 import TreeSelector from '@/app/monitor/components/treeSelector';
 import { useSearchParams } from 'next/navigation';
 import Permission from '@/components/permission';
+import { OBJECT_DEFAULT_ICON } from '@/app/monitor/constants/monitor';
 
 const Intergration = () => {
-  const { get, post, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const { updateMonitorObject, getMonitorObject, getMonitorPlugin } =
+    useMonitorApi();
   const { t } = useTranslation();
   const router = useRouter();
   const importRef = useRef<ModalRef>(null);
@@ -30,15 +31,16 @@ const Intergration = () => {
   const token = authContext?.token || null;
   const tokenRef = useRef(token);
   const searchParams = useSearchParams();
+  const { getCollectType } = useObjectConfigInfo();
   const objId = searchParams.get('objId') || '';
   const [pageLoading, setPageLoading] = useState<boolean>(false);
   const [searchText, setSearchText] = useState<string>('');
   const [exportDisabled, setExportDisabled] = useState<boolean>(true);
   const [exportLoading, setExportLoading] = useState<boolean>(false);
-  const [selectedApp, setSelectedApp] = useState<ObectItem | null>(null);
+  const [selectedApp, setSelectedApp] = useState<ObjectItem | null>(null);
   const [treeData, setTreeData] = useState<TreeItem[]>([]);
-  const [objects, setObjects] = useState<ObectItem[]>([]);
-  const [pluginList, setPluginList] = useState<ObectItem[]>([]);
+  const [objects, setObjects] = useState<ObjectItem[]>([]);
+  const [pluginList, setPluginList] = useState<ObjectItem[]>([]);
   const [treeLoading, setTreeLoading] = useState<boolean>(false);
   const [objectId, setObjectId] = useState<React.Key>('');
   const [defaultSelectObj, setDefaultSelectObj] = useState<React.Key>('');
@@ -51,7 +53,7 @@ const Intergration = () => {
   const handleNodeDrag = async (data: TreeSortData[]) => {
     try {
       setTreeLoading(true);
-      await post(`/monitor/api/monitor_object/order/`, data);
+      await updateMonitorObject(data);
       message.success(t('common.updateSuccess'));
       getObjects();
     } catch {
@@ -68,6 +70,9 @@ const Intergration = () => {
 
   const getObjectInfo = (): Record<string, string> => {
     const target: any = objects.find((item) => item.id === objectId);
+    if (target) {
+      target.icon = target.icon || OBJECT_DEFAULT_ICON;
+    }
     return target || {};
   };
 
@@ -76,9 +81,7 @@ const Intergration = () => {
     setExportDisabled(true);
     setPageLoading(true);
     try {
-      const data = await get('/monitor/api/monitor_plugin/', {
-        params,
-      });
+      const data = await getMonitorPlugin(params);
       setPluginList(data);
     } finally {
       setPageLoading(false);
@@ -88,7 +91,7 @@ const Intergration = () => {
   const getObjects = async () => {
     try {
       setTreeLoading(true);
-      const data: ObectItem[] = await get('/monitor/api/monitor_object/');
+      const data: ObjectItem[] = await getMonitorObject();
       const _treeData = getTreeData(deepClone(data));
       setTreeData(_treeData);
       setObjects(data);
@@ -99,37 +102,35 @@ const Intergration = () => {
     }
   };
 
-  const getTreeData = (data: ObectItem[]): TreeItem[] => {
-    const groupedData = data.reduce(
-      (acc, item) => {
-        if (!acc[item.type]) {
-          acc[item.type] = {
-            title: item.display_type || '--',
-            key: item.type,
-            children: [],
-          };
-        }
-        if (
-          ![
-            'Pod',
-            'Node',
-            'Docker Container',
-            'ESXI',
-            'VM',
-            'DataStorage',
-          ].includes(item.name)
-        ) {
-          acc[item.type].children.push({
-            title: item.display_name || '--',
-            label: item.name || '--',
-            key: item.id,
-            children: [],
-          });
-        }
-        return acc;
-      },
-      {} as Record<string, TreeItem>
-    );
+  const getTreeData = (data: ObjectItem[]): TreeItem[] => {
+    const groupedData = data.reduce((acc, item) => {
+      if (!acc[item.type]) {
+        acc[item.type] = {
+          title: item.display_type || '--',
+          key: item.type,
+          children: [],
+        };
+      }
+      if (
+        ![
+          'Pod',
+          'Node',
+          'Docker Container',
+          'ESXI',
+          'VM',
+          'DataStorage',
+          'CVM',
+        ].includes(item.name)
+      ) {
+        acc[item.type].children.push({
+          title: item.display_name || '--',
+          label: item.name || '--',
+          key: item.id,
+          children: [],
+        });
+      }
+      return acc;
+    }, {} as Record<string, TreeItem>);
     return Object.values(groupedData);
   };
 
@@ -194,12 +195,15 @@ const Intergration = () => {
     });
   };
 
-  const linkToDetial = (app: ObectItem) => {
+  const linkToDetial = (app: ObjectItem) => {
+    const { id, icon, name } = getObjectInfo();
     const row: TableDataItem = {
-      ...getObjectInfo(),
-      plugin_name: app?.display_name,
+      id,
+      icon,
+      name,
+      plugin_name: app?.name,
       plugin_id: app?.id,
-      collect_type: app?.name,
+      plugin_display_name: app?.display_name,
       plugin_description: app?.display_description || '--',
     };
     const params = new URLSearchParams(row);
@@ -207,7 +211,7 @@ const Intergration = () => {
     router.push(targetUrl);
   };
 
-  const onAppClick = (app: ObectItem) => {
+  const onAppClick = (app: ObjectItem) => {
     setSelectedApp(app);
     setExportDisabled(false); // Enable the export button
   };
@@ -271,9 +275,10 @@ const Intergration = () => {
                 >
                   <div className="flex items-center space-x-4 my-2">
                     <Icon
-                      type={
-                        OBJECT_ICON_MAP[getObjectInfo().name || ''] || 'Host'
-                      }
+                      type={getIconByObjectName(
+                        getObjectInfo().name || '',
+                        objects
+                      )}
                       className="text-[48px] min-w-[48px]"
                     />
                     <div
@@ -288,7 +293,7 @@ const Intergration = () => {
                         {app.display_name || '--'}
                       </h2>
                       <Tag className="mt-[4px]">
-                        {COLLECT_TYPE_MAP[app.name] || '--'}
+                        {getCollectType(getObjectInfo().name, app.name)}
                       </Tag>
                     </div>
                   </div>

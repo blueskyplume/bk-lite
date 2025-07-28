@@ -19,14 +19,14 @@
           "name": "bot_settings"
         },
         {
-          "title": "通知",
+          "title": "通道",
           "url": "/opspilot/studio/detail/channel",
           "icon": "channel1",
           "name": "bot_channel"
         },
         {
           "title": "日志",
-          "url": "/opspilot/studio/detail/logs",
+          "url": "/opspilot/studio/detail/logInfo",
           "icon": "talk-line",
           "name": "bot_conversation_log"
         },
@@ -130,6 +130,18 @@
           "url": "/opspilot/knowledge/detail/api",
           "icon": "api",
           "name": "knowledge_api"
+        },
+        {
+          "title": "问答对详情",
+          "url": "/opspilot/knowledge/detail/documents/qapair/result",
+          "name": "knowledge_qapair_result",
+          "isNotMenuItem": true
+        },
+        {
+          "title": "知识图谱设置",
+          "url": "/opspilot/knowledge/detail/documents/graph/edit",
+          "name": "knowledge_graph_edit",
+          "isNotMenuItem": true
         }
       ]
     },
@@ -171,7 +183,7 @@
           "name": "my_quota"
         },
         {
-          "title": "接口秘密值",
+          "title": "密钥",
           "url": "/opspilot/settings/key",
           "icon": "key",
           "name": "api_secret_key"
@@ -206,7 +218,7 @@
         },
         {
           "title": "Logs",
-          "url": "/opspilot/studio/detail/logs",
+          "url": "/opspilot/studio/detail/logInfo",
           "icon": "talk-line",
           "name": "bot_conversation_log"
         },
@@ -316,6 +328,18 @@
           "url": "/opspilot/knowledge/detail/invocationLogs",
           "icon": "talk-line",
           "name": "knowledge_invocation_logs"
+        },
+        {
+          "title": "QAPair Result",
+          "url": "/opspilot/knowledge/detail/documents/qapair/result",
+          "name": "knowledge_qapair_result",
+          "isNotMenuItem": true
+        },
+        {
+          "title": "Knowledge Graph Edit",
+          "url": "/opspilot/knowledge/detail/documents/graph/edit",
+          "name": "knowledge_graph_edit",
+          "isNotMenuItem": true
         }
       ]
     },

@@ -1,48 +1,44 @@
 'use client';
-import React, { useEffect, useRef, useState } from 'react';
-import { FormInstance, Input, message } from 'antd';
-import OperateModal from '@/components/operate-modal';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import useApiClient from '@/utils/request';
-import { Form, Menu } from 'antd';
-import cloudregionstyle from './index.module.scss';
+import { Menu, Button, Modal, message } from 'antd';
+import cloudRegionStyle from './index.module.scss';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/utils/i18n';
-import useApiCloudRegion from '@/app/node-manager/api/cloudregion';
-import EntityList from '@/components/entity-list/index';
+import useApiCloudRegion from '@/app/node-manager/api/cloudRegion';
+import EntityList from '@/components/entity-list';
+import PermissionWrapper from '@/components/permission';
 import type {
-  cloudRegionItem,
-  CloudregioncardProps,
+  CloudRegionItem,
+  CloudRegionCardProps,
 } from '@/app/node-manager/types/cloudregion';
+import CloudRegionModal from './cloudregionModal';
+import { ModalRef } from '@/app/node-manager/types';
+import { useMenuItem } from '@/app/node-manager/constants/cloudregion';
+const { confirm } = Modal;
 
-const Cloudregion = () => {
-  const cloudregionformRef = useRef<FormInstance>(null);
-  const divref = useRef(null);
+const CloudRegion = () => {
   const { t } = useTranslation();
-  const router = useRouter();
   const { isLoading } = useApiClient();
-  const { getcloudlist, updatecloudintro } = useApiCloudRegion();
-  const [selectedRegion, setSelectedRegion] =
-    useState<CloudregioncardProps | null>(null);
-  const [openeditcloudregion, setOpeneditcloudregion] = useState(false);
-  const [clouditem, setClouditem] = useState<cloudRegionItem[]>([]);
+  const { getCloudList, deleteCloudRegion } = useApiCloudRegion();
+  const router = useRouter();
+  const modalRef = useRef<ModalRef>(null);
+  const divRef = useRef(null);
+  const [cloudItems, setCloudItems] = useState<CloudRegionItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const menuItem = useMenuItem();
 
   // 获取相关的接口
   const fetchCloudRegions = async () => {
     setLoading(true);
     try {
-      const data = await getcloudlist();
-      if (data.length) {
-        setSelectedRegion(data[0]);
-        setClouditem([
-          {
-            id: data[0].id,
-            name: data[0].name,
-            description: data[0].introduction as string,
-            icon: 'yunquyu',
-          },
-        ]);
-      }
+      const data = await getCloudList();
+      const regionData = (data || []).map((item: CloudRegionCardProps) => {
+        item.description = item.introduction;
+        item.icon = 'yunquyu';
+        return item;
+      });
+      setCloudItems(regionData);
     } finally {
       setLoading(false);
     }
@@ -54,92 +50,105 @@ const Cloudregion = () => {
     }
   }, [isLoading]);
 
-  useEffect(() => {
-    cloudregionformRef.current?.resetFields();
-    cloudregionformRef.current?.setFieldsValue({
-      cloudregion: {
-        id: selectedRegion?.id,
-        title: selectedRegion?.name,
-        introduction: selectedRegion?.introduction,
-      },
-    });
-  }, [openeditcloudregion]);
-
-  const handleFormOkClick = () => {
-    const { cloudregion } = cloudregionformRef.current?.getFieldsValue();
-    updatecloudintro(cloudregion.id, {
-      introduction: cloudregion.introduction,
-    }).then(() => {
-      fetchCloudRegions();
-      message.success(t('common.updateSuccess'));
-    });
-    setOpeneditcloudregion(false);
-  };
-
-  const handleEdit = () => {
-    setOpeneditcloudregion(true);
-  };
-
-  const navigateToNode = (item: cloudRegionItem) => {
+  const navigateToNode = (item: CloudRegionItem) => {
     router.push(
-      `/node-manager/cloudregion/node?cloud_region_id=1&name=${item.name}`
+      `/node-manager/cloudregion/node?cloud_region_id=${item.id}&name=${item.name}`
     );
   };
+
+  const openModal = (config: any) => {
+    modalRef.current?.showModal({
+      title: config?.title,
+      type: config?.type,
+      form: config?.form,
+    });
+  };
+
+  const handleSubmit = () => {
+    fetchCloudRegions();
+  };
+
+  const handleDelete = (id: string) => {
+    confirm({
+      title: t(`node-manager.cloudregion.deleteform.title`),
+      content: t(`node-manager.cloudregion.deleteform.deleteInfo`),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      centered: true,
+      onOk() {
+        return new Promise(async (resolve) => {
+          try {
+            await deleteCloudRegion(id);
+            message.success(t('common.successfullyDeleted'));
+            fetchCloudRegions();
+          } finally {
+            return resolve(true);
+          }
+        })
+      }
+    })
+  };
+
+  const menuActions = useCallback(
+    (data: any) => {
+      return (
+        <Menu onClick={(e) => e.domEvent.preventDefault()}>
+          <Menu.Item
+            className="!p-0"
+            onClick={() =>
+              openModal({ title: 'editform', type: 'edit', form: data })
+            }
+          >
+            <PermissionWrapper
+              requiredPermissions={['Edit']}
+              className="!block"
+            >
+              <Button type="text" className="w-full">
+                {t(`common.edit`)}
+              </Button>
+            </PermissionWrapper>
+          </Menu.Item>
+          {data?.name !== "default" && (
+            <Menu.Item
+              className="!p-0"
+              onClick={() =>
+                handleDelete(data.id)
+              }
+            >
+              <PermissionWrapper
+                requiredPermissions={['Delete']}
+                className="!block"
+              >
+                <Button type="text" className="w-full">
+                  {t(`common.delete`)}
+                </Button>
+              </PermissionWrapper>
+            </Menu.Item>
+          )}
+        </Menu>
+      );
+    },
+    [menuItem]
+  );
+
   return (
     <div
-      ref={divref}
-      className={`${cloudregionstyle.cloudregion} w-full h-full`}
+      ref={divRef}
+      className={`${cloudRegionStyle.cloudregion} w-full h-full`}
     >
       <EntityList
-        data={clouditem}
+        data={cloudItems}
         loading={loading}
-        menuActions={() => {
-          return (
-            <Menu>
-              <Menu.Item key="edit" onClick={() => handleEdit()}>
-                {t('common.edit')}
-              </Menu.Item>
-            </Menu>
-          );
-        }}
-        openModal={() => {}}
-        onCardClick={(item: cloudRegionItem) => {
+        menuActions={menuActions}
+        openModal={() => openModal({ title: 'addform', type: 'add', form: {} })}
+        onCardClick={(item: CloudRegionItem) => {
           navigateToNode(item);
         }}
       ></EntityList>
       {/* 编辑默认云区域弹窗 */}
-      <OperateModal
-        title={t('node-manager.cloudregion.editform.title')}
-        open={openeditcloudregion}
-        okText={t('common.confirm')}
-        cancelText={t('common.cancel')}
-        onCancel={() => {
-          setOpeneditcloudregion(false);
-        }}
-        onOk={() => {
-          handleFormOkClick();
-        }}
-      >
-        <Form layout="vertical" ref={cloudregionformRef} name="nest-messages">
-          <Form.Item name={['cloudregion', 'id']} hidden>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name={['cloudregion', 'title']}
-            label={t('common.name')}
-          >
-            <Input placeholder={selectedRegion?.name} disabled />
-          </Form.Item>
-          <Form.Item
-            name={['cloudregion', 'introduction']}
-            label={t('node-manager.cloudregion.editform.Introduction')}
-          >
-            <Input.TextArea rows={5} />
-          </Form.Item>
-        </Form>
-      </OperateModal>
+      <CloudRegionModal ref={modalRef} onSuccess={handleSubmit} />
     </div>
   );
 };
 
-export default Cloudregion;
+export default CloudRegion;

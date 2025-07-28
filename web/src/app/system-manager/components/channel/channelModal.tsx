@@ -31,12 +31,16 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [confirmLoading, setConfirmLoading] = useState<boolean>(false);
   const [channelData, setChannelData] = useState<any>({ config: {} });
+  const [originalSmtpPwd, setOriginalSmtpPwd] = useState<string | undefined>(undefined);
+  const [originalBotKey, setOriginalBotKey] = useState<string | undefined>(undefined);
 
   const fetchChannelDetail = async (id: string) => {
     setLoading(true);
     try {
       const data = await getChannelDetail(id);
       setChannelData(data);
+      setOriginalSmtpPwd(data.config?.smtp_pwd);
+      setOriginalBotKey(data.config?.bot_key);
       form.setFieldsValue({
         ...data,
         ...data.config
@@ -77,13 +81,22 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
     try {
       setConfirmLoading(true);
       const values = await form.validateFields();
-      const { name, description, ...config } = values
+      const { name, description, smtp_pwd, bot_key, ...config } = values;
+
+      // Exclude smtp_pwd and bot_key if they haven't changed
+      const finalConfig = {
+        ...config,
+        ...(smtp_pwd !== originalSmtpPwd ? { smtp_pwd } : {}),
+        ...(bot_key !== originalBotKey ? { bot_key } : {}),
+      };
+
       const payload = {
         channel_type: channelType,
         name,
         description,
-        config
+        config: finalConfig,
       };
+
       if (type === 'add') {
         await addChannel(payload);
       } else if (type === 'edit' && channelId) {
@@ -112,8 +125,8 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
     if (['smtp_usessl', 'smtp_usetls'].includes(key)) {
       return 'switch';
     }
-    if (['smtp_pwd'].includes(key)) {
-      return 'inputPwd';
+    if (['smtp_pwd', 'bot_key'].includes(key)) {
+      return 'editablePwd';
     }
     return 'input';
   };

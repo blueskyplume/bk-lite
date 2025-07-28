@@ -8,6 +8,7 @@ import OperateModal from '@/components/operate-modal';
 import { useRoleApi } from '@/app/system-manager/api/application';
 import { Role, User, Menu } from '@/app/system-manager/types/application';
 import PermissionTable from './permissionTable';
+import PermissionWrapper from "@/components/permission";
 import RoleList from './roleList';
 
 const { Search } = Input;
@@ -18,14 +19,12 @@ const { confirm } = Modal;
 const RoleManagement: React.FC = () => {
   const { t } = useTranslation();
   const searchParams = useSearchParams();
-  const id = searchParams?.get('id') || '';
   const clientId = searchParams?.get('clientId') || '';
 
   const [roleForm] = Form.useForm();
   const [addUserForm] = Form.useForm();
 
   const [roleList, setRoleList] = useState<Role[]>([]);
-  const [userList, setUserList] = useState<User[]>([]);
   const [allUserList, setAllUserList] = useState<User[]>([]);
   const [tableData, setTableData] = useState<User[]>([]);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
@@ -67,7 +66,7 @@ const RoleManagement: React.FC = () => {
   const fetchRoles = async () => {
     setLoadingRoles(true);
     try {
-      const roles = await getRoles({ client_id: id });
+      const roles = await getRoles({ client_id: clientId });
       setRoleList(roles);
       if (roles.length > 0) {
         setSelectedRole(roles[0]);
@@ -79,37 +78,34 @@ const RoleManagement: React.FC = () => {
   };
 
   const fetchAllMenus = async () => {
-    const menus = await getAllMenus({ params: { client_id: id } });
+    const menus = await getAllMenus({ params: { client_id: clientId } });
     setMenuData(menus);
   };
 
   const fetchUsersByRole = async (role: Role, page: number, size: number, search?: string) => {
     setLoading(true);
     try {
-      const users = await getUsersByRole({
+      const data = await getUsersByRole({
         params: {
-          role_id: role.role_id,
-          client_id: id,
+          role_id: role.id,
           search,
+          page: page, 
+          page_size: size
         },
       });
-      setUserList(users);
-      handleTableChange(page, size, users);
+      setTableData(data.items || []);
+      setTotal(data.count);
+      setCurrentPage(page);
+      setPageSize(size);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleTableChange = (page: number, size?: number, listOverride?: User[]) => {
+  const handleTableChange = (page: number, size?: number) => {
+    if (!selectedRole) return;
     const newPageSize = size || pageSize;
-    const offset = (page - 1) * newPageSize;
-    const currentList = listOverride || userList;
-    const paginatedData = currentList.slice(offset, offset + newPageSize);
-
-    setTableData(paginatedData);
-    setCurrentPage(page);
-    setPageSize(newPageSize);
-    setTotal(listOverride?.length || userList.length);
+    fetchUsersByRole(selectedRole, page, newPageSize);
   };
 
   const fetchAllUsers = async () => {
@@ -127,7 +123,7 @@ const RoleManagement: React.FC = () => {
   const fetchRolePermissions = async (role: Role) => {
     setLoading(true);
     try {
-      const permissions = await getRoleMenus({ params: { id, policy_id: role.policy_id } });
+      const permissions = await getRoleMenus({ params: { role_id: role.id } });
       const permissionsMap: Record<string, string[]> = permissions.reduce((acc: any, item: string) => {
         const [name, ...operations] = item.split('-');
         if (!acc[name]) acc[name] = [];
@@ -146,7 +142,7 @@ const RoleManagement: React.FC = () => {
     setIsEditingRole(!!role);
     setSelectedRole(role);
     if (role) {
-      roleForm.setFieldsValue({ roleName: role.display_name });
+      roleForm.setFieldsValue({ roleName: role.name });
     } else {
       roleForm.resetFields();
     }
@@ -160,16 +156,13 @@ const RoleManagement: React.FC = () => {
       const roleName = roleForm.getFieldValue('roleName');
       if (isEditingRole && selectedRole) {
         await updateRole({
-          role_id: selectedRole.role_id,
-          policy_id: selectedRole.policy_id,
-          policy_name: roleName,
-          id
+          role_id: selectedRole.id,
+          role_name: roleName,
         });
       } else {
         await addRole({
           client_id: clientId,
-          name: roleName,
-          id
+          name: roleName
         });
       }
       await fetchRoles();
@@ -185,10 +178,8 @@ const RoleManagement: React.FC = () => {
   const onDeleteRole = async (role: Role) => {
     try {
       await deleteRole({
-        policy_id: role.policy_id,
-        display_name: role.display_name,
-        role_name: role.role_name,
-        id
+        role_name: role.name,
+        role_id: role.id,
       });
       message.success(t('common.delSuccess'));
       await fetchRoles();
@@ -207,21 +198,23 @@ const RoleManagement: React.FC = () => {
     },
     {
       title: t('system.user.table.lastName'),
-      dataIndex: 'lastName',
-      key: 'lastName',
+      dataIndex: 'display_name',
+      key: 'display_name',
     },
     {
       title: t('common.actions'),
       key: 'actions',
       render: (_: any, record: User) => (
-        <Popconfirm
-          title={t('common.delConfirm')}
-          okText={t('common.confirm')}
-          cancelText={t('common.cancel')}
-          onConfirm={() => handleDeleteUser(record)}
-        >
-          <Button type="link">{t('common.delete')}</Button>
-        </Popconfirm>
+        <PermissionWrapper requiredPermissions={['Remove user']}>
+          <Popconfirm
+            title={t('common.delConfirm')}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
+            onConfirm={() => handleDeleteUser(record)}
+          >
+            <Button type="link">{t('common.delete')}</Button>
+          </Popconfirm>
+        </PermissionWrapper>
       ),
     },
   ];
@@ -239,7 +232,7 @@ const RoleManagement: React.FC = () => {
         try {
           setDeleteLoading(true);
           await deleteUser({
-            role_id: selectedRole.role_id,
+            role_id: selectedRole.id,
             user_ids: selectedUserKeys,
           });
           message.success(t('common.delSuccess'));
@@ -260,7 +253,7 @@ const RoleManagement: React.FC = () => {
     if (!selectedRole) return;
     try {
       await deleteUser({
-        role_id: selectedRole.role_id,
+        role_id: selectedRole.id,
         user_ids: [record.id]
       });
       message.success(t('common.delSuccess'));
@@ -273,7 +266,7 @@ const RoleManagement: React.FC = () => {
 
   const onSelectRole = (role: Role) => {
     setSelectedRole(role);
-    if (activeTab === '2' || role.display_name === 'admin') {
+    if (activeTab === '2' || role.name === 'admin') {
       setActiveTab('1');
       fetchUsersByRole(role, 1, pageSize);
       return;
@@ -294,9 +287,8 @@ const RoleManagement: React.FC = () => {
         operations.map(operation => `${menuName}-${operation}`)
       );
       await setRoleMenus({
-        policy_id: selectedRole.policy_id,
-        policy_name: selectedRole.display_name,
-        id,
+        role_id: selectedRole.id,
+        role_name: selectedRole.name,
         menus
       });
       message.success(t('common.updateSuccess'));
@@ -323,7 +315,7 @@ const RoleManagement: React.FC = () => {
     try {
       const values = await addUserForm.validateFields();
       await addUser({
-        role_id: selectedRole?.role_id,
+        role_id: selectedRole?.id,
         user_ids: values.users
       });
       message.success(t('common.addSuccess'));
@@ -371,20 +363,24 @@ const RoleManagement: React.FC = () => {
                   onSearch={handleUserSearch}
                   placeholder={`${t('common.search')}`}
                 />
-                <Button
-                  className="mr-[8px]"
-                  type="primary"
-                  onClick={openUserModal}
-                >
-                  +{t('common.add')}
-                </Button>
-                <Button
-                  loading={deleteLoading}
-                  onClick={handleBatchDeleteUsers}
-                  disabled={selectedUserKeys.length === 0 || deleteLoading}
-                >
-                  {t('system.common.modifydelete')}
-                </Button>
+                <PermissionWrapper requiredPermissions={['Add user']}>
+                  <Button
+                    className="mr-[8px]"
+                    type="primary"
+                    onClick={openUserModal}
+                  >
+                    +{t('common.add')}
+                  </Button>
+                </PermissionWrapper>
+                <PermissionWrapper requiredPermissions={['Delete']}>
+                  <Button
+                    loading={deleteLoading}
+                    onClick={handleBatchDeleteUsers}
+                    disabled={selectedUserKeys.length === 0 || deleteLoading}
+                  >
+                    {t('system.common.modifydelete')}
+                  </Button>
+                </PermissionWrapper>
               </div>
               <Spin spinning={loading}>
                 <CustomTable
@@ -405,10 +401,12 @@ const RoleManagement: React.FC = () => {
                 />
               </Spin>
             </TabPane>
-            {selectedRole?.display_name !== 'admin' && (
+            {selectedRole?.name !== 'admin' && (
               <TabPane tab={t('system.role.permissions')} key="2">
                 <div className="flex justify-end items-center mb-4">
-                  <Button type="primary" loading={loading} onClick={handleConfirmPermissions}>{t('common.confirm')}</Button>
+                  <PermissionWrapper requiredPermissions={['Edit Permission']}>
+                    <Button type="primary" loading={loading} onClick={handleConfirmPermissions}>{t('common.confirm')}</Button>
+                  </PermissionWrapper>
                 </div>
                 <PermissionTable
                   t={t}
@@ -472,7 +470,9 @@ const RoleManagement: React.FC = () => {
               }
             >
               {allUserList.map(user => (
-                <Option key={user.id} value={user.id} label={user.username}>{user.username}</Option>
+                <Option key={user.id} value={user.id} label={`${user.display_name}(${user.username})`}>
+                  {user.display_name}({user.username})
+                </Option>
               ))}
             </Select>
           </Form.Item>

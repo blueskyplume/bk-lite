@@ -1,6 +1,7 @@
 import type { RadioChangeEvent } from 'antd';
 import type { CheckboxChangeEvent } from 'antd/es/checkbox';
 import type { DataNode as TreeDataNode } from 'antd/lib/tree';
+import type { ModuleItem } from '@/app/system-manager/constants/application';
 
 // Permission related interfaces
 export interface DataPermission {
@@ -28,7 +29,7 @@ export interface PermissionRuleItem {
   permission: string[];
 }
 
-// Permission configuration interface
+// Permission configuration interfaces
 export interface PermissionConfig {
   type: string;
   allPermissions: {
@@ -38,14 +39,12 @@ export interface PermissionConfig {
   specificData: Array<DataPermission>;
 }
 
-// Modified interface definition with type discriminator
-export interface ModulePermissionConfig extends PermissionConfig {
-  __type?: 'module';
-}
+// Module permission configuration (for flat structure modules)
+export type ModulePermissionConfig = PermissionConfig;
 
+// Provider permission configuration (for nested structure modules)
 export interface ProviderPermissionConfig {
-  __type?: 'provider';
-  [key: string]: PermissionConfig | 'provider' | undefined; // Unified index signature
+  [key: string]: PermissionConfig | ProviderPermissionConfig | undefined;
 }
 
 // Using discriminated union type
@@ -75,7 +74,7 @@ export interface SubModuleTabsProps {
   setActiveSubModule: (subModule: string) => void;
   permissions: PermissionsState;
   moduleData: Record<string, DataPermission[]>;
-  loadSpecificData: (module: string, subModule: string) => void;
+  loadSpecificData: (module: string, subModule?: string) => void; // 将 subModule 改为可选参数
   loading: { [key: string]: boolean };
   pagination: { [key: string]: PaginationInfo };
   activeKey: string;
@@ -83,6 +82,8 @@ export interface SubModuleTabsProps {
   handleAllPermissionChange: (e: CheckboxChangeEvent, module: string, type: 'view' | 'operate', subModule?: string) => void;
   handleSpecificDataChange: (record: DataPermission, module: string, type: 'view' | 'operate', subModule?: string) => void;
   handleTableChange: (pagination: PaginationInfo, filters: any, sorter: any, module?: string, subModule?: string) => void;
+  subModuleMap: { [key: string]: string[] }; // 动态子模块配置
+  moduleTree?: { [key: string]: ModuleItem }; // 新增：模块树用于获取 display_name
 }
 
 // ModuleContent component props interface
@@ -124,6 +125,8 @@ export interface PermissionTableColumnsProps {
   handleSpecificDataChange: (record: DataPermission, module: string, type: 'view' | 'operate', subModule?: string) => void;
   activeKey: string;
   activeSubModule: string;
+  module: string;
+  subModule?: string;
 }
 
 // SpecificDataTable component props interface

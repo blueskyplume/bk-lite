@@ -123,17 +123,15 @@ const TopMenu = () => {
   };
 
   const handleDocumentClick = () => {
-    window.open('https://wd.canway.net/?cat=27', '_blank');
+    window.open('https://github.com/TencentBlueKing/bk-lite', '_blank');
   };
-
-  const isConsole = process.env.NEXT_PUBLIC_IS_OPS_CONSOLE === 'true';
 
   const renderContent = loading ? (
     <div className="flex justify-center items-center h-32">
       <Spin tip="Loading..." />
     </div>
   ) : (
-    <div className="grid grid-cols-3 gap-4 max-h-[350px] overflow-auto">
+    <div className="grid grid-cols-4 gap-4 max-h-[420px] overflow-auto">
       {clientData.map((app) => (
         <div
           key={app.name}
@@ -141,10 +139,10 @@ const TopMenu = () => {
           onClick={() => window.open(app.url, '_blank')}
         >
           <Icon
-            type={app.client_id || 'yingyongxitongguanli'}
+            type={app.icon || app.name}
             className="text-2xl mb-1 transition-transform duration-300 transform group-hover:scale-125"
           />
-          {app.name}
+          {app.display_name || app.name}
         </div>
       ))}
     </div>
@@ -155,15 +153,13 @@ const TopMenu = () => {
       <div className="flex items-center justify-between px-4 w-full h-full">
         <div className="flex items-center space-x-2">
           <Image src="/logo-site.png" className="block w-auto h-10" alt="logo" width={100} height={40} />
-          <div className="font-medium">WeOps X</div>
-          {!isConsole && (
-            <Popover content={renderContent} title={t('common.appList')} trigger="hover">
-              <div className={`flex items-center justify-center cursor-pointer rounded-[10px] px-3 py-2 ${styles.nav}`}>
-                <Icon type="caidandaohang" className="mr-1" />
-                <CaretDownFilled className={`text-sm ${styles.icons}`} />
-              </div>
-            </Popover>
-          )}
+          <div className="font-medium">BlueKing Lite</div>
+          <Popover content={renderContent} title={t('common.appList')} trigger="hover">
+            <div className={`flex items-center justify-center cursor-pointer rounded-[10px] px-3 py-2 ${styles.nav}`}>
+              <Icon type="caidandaohang" className="mr-1" />
+              <CaretDownFilled className={`text-sm ${styles.icons}`} />
+            </div>
+          </Popover>
         </div>
         <div className="flex items-center flex-shrink-0 space-x-2">
           {hasViewedTour && (
@@ -179,7 +175,10 @@ const TopMenu = () => {
         </div>
       </div>
       <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2">
-        <div className="flex items-center space-x-4">
+        <div
+          className="flex items-center space-x-4 overflow-x-auto"
+          style={{ whiteSpace: 'nowrap' }}
+        >
           {menuItems
             .filter((item) => item.url && !item.isNotMenuItem)
             .map((item) => {

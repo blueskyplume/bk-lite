@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import {
   Input,
+  InputNumber,
   Button,
   Form,
   message,
@@ -20,10 +21,16 @@ import {
 } from 'antd';
 import OperateModal from '@/components/operate-modal';
 import { useTranslation } from '@/utils/i18n';
-import { AttrFieldType, Organization, UserItem } from '@/app/cmdb/types/assetManage';
+import {
+  AttrFieldType,
+  Organization,
+  UserItem,
+} from '@/app/cmdb/types/assetManage';
 import { deepClone } from '@/app/cmdb/utils/common';
 import useApiClient from '@/utils/request';
 import dayjs from 'dayjs';
+import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
+
 interface FieldModalProps {
   onSuccess: (instId?: string) => void;
   organizationList: Organization[];
@@ -62,10 +69,15 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
     const [instanceData, setInstanceData] = useState<any>({});
     const [selectedRows, setSelectedRows] = useState<any[]>([]);
     const [modelId, setModelId] = useState<string>('');
-    const [enabledFields, setEnabledFields] = useState<Record<string, boolean>>({});
+    const [enabledFields, setEnabledFields] = useState<Record<string, boolean>>(
+      {}
+    );
+    const [proxyOptions, setProxyOptions] = useState<
+      { proxy_id: string; proxy_name: string }[]
+    >([]);
     const [form] = Form.useForm();
     const { t } = useTranslation();
-    const { post } = useApiClient();
+    const { get, post } = useApiClient();
 
     useEffect(() => {
       if (groupVisible) {
@@ -74,6 +86,34 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
         form.setFieldsValue(instanceData);
       }
     }, [groupVisible, instanceData]);
+
+    useEffect(() => {
+      if (groupVisible && modelId === 'host') {
+        get('/cmdb/api/instance/list_proxys/', {})
+          .then((data: any[]) => {
+            setProxyOptions(data || []);
+          })
+          .catch(() => {
+            setProxyOptions([]);
+          });
+      }
+    }, [groupVisible, modelId]);
+
+    // 监听 ip_addr 和 cloud，自动填充 inst_name
+    const ipValue = Form.useWatch('ip_addr', form);
+    const cloudValue = Form.useWatch('cloud', form);
+    useEffect(() => {
+      if (modelId === 'host') {
+        const cloudName = proxyOptions.find(
+          (opt) => opt.proxy_id === cloudValue
+        )?.proxy_name;
+        if (ipValue && cloudName) {
+          form.setFieldsValue({
+            inst_name: `${ipValue || ''}[${cloudName || ''}]`,
+          });
+        }
+      }
+    }, [ipValue, cloudValue, modelId, proxyOptions]);
 
     useImperativeHandle(ref, () => ({
       showModal: ({
@@ -113,11 +153,11 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
     }));
 
     const handleFieldToggle = (fieldId: string, enabled: boolean) => {
-      setEnabledFields(prev => ({
+      setEnabledFields((prev) => ({
         ...prev,
-        [fieldId]: enabled
+        [fieldId]: enabled,
       }));
-      
+
       if (!enabled) {
         form.setFieldValue(fieldId, undefined);
       }
@@ -126,13 +166,18 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
     const renderFormLabel = (item: AttrFieldType) => {
       return (
         <div className="flex items-center">
-          {type === 'batchEdit' && item.editable && item.attr_id !== 'inst_name' && (
+          {type === 'batchEdit' && item.editable && !item.is_only ? (
             <Checkbox
               checked={enabledFields[item.attr_id]}
-              onChange={(e) => handleFieldToggle(item.attr_id, e.target.checked)}
-            />
+              onChange={(e) =>
+                handleFieldToggle(item.attr_id, e.target.checked)
+              }
+            >
+              <span>{item.attr_name}</span>
+            </Checkbox>
+          ) : (
+            <span className="ml-2">{item.attr_name}</span>
           )}
-          <span className="ml-2">{item.attr_name}</span>
           {item.is_required && type !== 'batchEdit' && (
             <span className="text-[#ff4d4f] ml-1">*</span>
           )}
@@ -141,23 +186,51 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
     };
 
     const renderFormField = (item: AttrFieldType) => {
-      const isEditable = type !== 'batchEdit' || enabledFields[item.attr_id];
-      const baseDisabled = !item.editable && type !== 'add';
-      const fieldDisabled = type === 'batchEdit' 
-        ? !isEditable 
-        : baseDisabled || (item.attr_id === 'inst_name' && type !== 'add');
+      const fieldDisabled =
+        type === 'batchEdit'
+          ? !enabledFields[item.attr_id]
+          : !item.editable && type !== 'add';
+
+      const hostDisabled = modelId === 'host' && item.attr_id === 'inst_name';
 
       const formField = (() => {
+        // 特殊处理-主机的云区域为下拉选项
+        if (item.attr_id === 'cloud') {
+          return (
+            <Select
+              disabled={fieldDisabled}
+              placeholder={t('common.pleaseSelect')}
+            >
+              {proxyOptions.map((opt) => (
+                <Select.Option key={opt.proxy_id} value={opt.proxy_id}>
+                  {opt.proxy_name}
+                </Select.Option>
+              ))}
+            </Select>
+          );
+        }
         switch (item.attr_type) {
           case 'user':
             return (
               <Select
                 showSearch
                 disabled={fieldDisabled}
+                placeholder={t('common.pleaseSelect')}
+                filterOption={(input, opt: any) => {
+                  if (typeof opt?.children?.props?.text === 'string') {
+                    return opt?.children?.props?.text
+                      ?.toLowerCase()
+                      .includes(input.toLowerCase());
+                  }
+                  return true;
+                }}
               >
-                {userList.map((opt) => (
+                {userList.map((opt: UserItem) => (
                   <Select.Option key={opt.id} value={opt.id}>
-                    {opt.username}
+                    <EllipsisWithTooltip
+                      text={`${opt.display_name} (${opt.username})`}
+                      className="whitespace-nowrap overflow-hidden text-ellipsis break-all"
+                    />
                   </Select.Option>
                 ))}
               </Select>
@@ -165,7 +238,17 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
           case 'enum':
             return (
               <Select
+                showSearch
                 disabled={fieldDisabled}
+                placeholder={t('common.pleaseSelect')}
+                filterOption={(input, opt: any) => {
+                  if (typeof opt?.children === 'string') {
+                    return opt?.children
+                      ?.toLowerCase()
+                      .includes(input.toLowerCase());
+                  }
+                  return true;
+                }}
               >
                 {item.option?.map((opt) => (
                   <Select.Option key={opt.id} value={opt.id}>
@@ -178,12 +261,13 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
             return (
               <Select
                 disabled={fieldDisabled}
+                placeholder={t('common.pleaseSelect')}
               >
                 {[
-                  { id: 1, name: 'Yes' },
-                  { id: 0, name: 'No' },
+                  { id: true, name: 'Yes' },
+                  { id: false, name: 'No' },
                 ].map((opt) => (
-                  <Select.Option key={opt.id} value={opt.id}>
+                  <Select.Option key={opt.id.toString()} value={opt.id}>
                     {opt.name}
                   </Select.Option>
                 ))}
@@ -192,6 +276,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
           case 'time':
             return (
               <DatePicker
+                placeholder={t('common.pleaseSelect')}
                 showTime
                 disabled={fieldDisabled}
                 format="YYYY-MM-DD HH:mm:ss"
@@ -206,10 +291,19 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
                 options={organizationList}
               />
             );
+          case 'int':
+            return (
+              <InputNumber
+                disabled={fieldDisabled}
+                style={{ width: '100%' }}
+                placeholder={t('common.pleaseInput')}
+              />
+            );
           default:
             return (
               <Input
-                disabled={fieldDisabled}
+                placeholder={t('common.pleaseInput')}
+                disabled={fieldDisabled || hostDisabled}
               />
             );
         }
@@ -232,33 +326,41 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
 
     const operateAttr = async (params: AttrFieldType, confirmType?: string) => {
       try {
-        if (type === 'batchEdit') {
-          const hasEnabledFields = Object.values(enabledFields).some(enabled => enabled);
+        const isBatchEdit = type === 'batchEdit';
+        if (isBatchEdit) {
+          const hasEnabledFields = Object.values(enabledFields).some(
+            (enabled) => enabled
+          );
           if (!hasEnabledFields) {
-            message.warning(t('common.inputMsg'));
+            message.warning(t('common.pleaseInput'));
             return;
           }
         }
         setConfirmLoading(true);
-        const formData = type === 'batchEdit'
-          ? Object.keys(params).reduce((acc, key) => {
+        let formData = null;
+        if (isBatchEdit) {
+          formData = Object.keys(params).reduce((acc, key) => {
             if (enabledFields[key]) {
               acc[key] = params[key];
             }
             return acc;
-          }, {} as any)
-          : params;
+          }, {} as any);
+        } else {
+          formData = params;
+        }   
         const msg: string = t(
           type === 'add' ? 'successfullyAdded' : 'successfullyModified'
         );
         const url: string =
-          type === 'add' ? `/cmdb/api/instance/` : `/cmdb/api/instance/batch_update/`;
+          type === 'add'
+            ? `/cmdb/api/instance/`
+            : `/cmdb/api/instance/batch_update/`;
         let requestParams: RequestParams = {
           model_id: modelId,
           instance_info: formData,
         };
         if (type !== 'add') {
-          if (type === 'batchEdit') {
+          if (isBatchEdit) {
             for (const key in formData) {
               if (
                 !formData[key] &&
@@ -307,13 +409,15 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
               >
                 {t('confirm')}
               </Button>
-              <Button
-                className="mr-[10px]"
-                loading={confirmLoading}
-                onClick={() => handleSubmit('associate')}
-              >
-                {t('Model.confirmAndAssociate')}
-              </Button>
+              {type === 'add' && (
+                <Button
+                  className="mr-[10px]"
+                  loading={confirmLoading}
+                  onClick={() => handleSubmit('associate')}
+                >
+                  {t('Model.confirmAndAssociate')}
+                </Button>
+              )}
               <Button onClick={handleCancel}>{t('cancel')}</Button>
             </div>
           }
@@ -332,7 +436,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
                       name={item.attr_id}
                       label={renderFormLabel({
                         ...item,
-                        attr_type: 'organization'
+                        attr_type: 'organization',
                       })}
                       rules={[
                         {
@@ -343,7 +447,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
                     >
                       {renderFormField({
                         ...item,
-                        attr_type: 'organization'
+                        attr_type: 'organization',
                       })}
                     </Form.Item>
                   </Col>

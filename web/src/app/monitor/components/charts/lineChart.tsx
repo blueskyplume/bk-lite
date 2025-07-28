@@ -26,13 +26,14 @@ import { ChartData, ListItem, TableDataItem } from '@/app/monitor/types';
 import { MetricItem, ThresholdField } from '@/app/monitor/types/monitor';
 import { LEVEL_MAP } from '@/app/monitor/constants/monitor';
 import useApiClient from '@/utils/request';
+import { isNumber } from 'lodash';
 
 interface LineChartProps {
   data: ChartData[];
   unit?: string;
   metric?: MetricItem;
   threshold?: ThresholdField[];
-  formID?: number,
+  formID?: number;
   showDimensionFilter?: boolean;
   showDimensionTable?: boolean;
   allowSelect?: boolean;
@@ -102,7 +103,7 @@ const LineChart: React.FC<LineChartProps> = ({
   }, [data]);
 
   useEffect(() => {
-    getEvent()
+    getEvent();
   }, [formID]);
 
   useEffect(() => {
@@ -188,57 +189,73 @@ const LineChart: React.FC<LineChartProps> = ({
       const _data = await get(`monitor/api/monitor_event/query/${formID}`, {
         params: {
           page: 1,
-          page_size: -1
-        }
+          page_size: -1,
+        },
       });
-      const time_intervals: TableDataItem[] = _data.results?.filter((item: any) => {
-        const times = timeToSecond(item.created_at);
-        if (times >= minTime && times <= maxTime) return true;
-        return false;
-      })
-      const intervals = Math.ceil((maxTime - minTime) / 60);
+      const time_intervals: TableDataItem[] =
+        maxTime === minTime // 折线图只存在一条数据时返回所有事件
+          ? _data.results
+          : _data.results?.filter(
+            (item: any) => {
+              const times = timeToSecond(item.created_at);
+              if (times >= minTime && times <= maxTime) {
+                return true;
+              }
+              return false;
+            }
+          );
+      const intervals = maxTime === minTime ? 120 : Math.ceil((maxTime - minTime) / 60);
       const lengths = intervals >= 120 ? 24 : Math.ceil(intervals / 5);
       const step = Math.ceil(_data.results?.length / lengths);
       setBoxItems(handleCutArray(cutArray(time_intervals.reverse(), step)));
     } catch (error) {
       console.log(error);
     }
-  }
+  };
 
   const cutArray = (array: TableDataItem[], subLength: number) => {
     let index = 0;
     const newArr = [];
     while (index < array.length) {
-      newArr.push(array.slice(index, index += subLength));
+      newArr.push(array.slice(index, (index += subLength)));
     }
     return newArr;
-  }
+  };
 
   // 对分割的列表进行数据处理
   const handleCutArray = (array: TableDataItem[]) => {
     if (!array) return [];
     const test = array.map((item) => {
-      return item.sort((prev: TableDataItem, next: TableDataItem) => {
-        let flag = null;
-        if (prev.value > next.value) {
-          flag = 1;
-        } else if (prev.value < next.value) {
-          flag = -1;
-        } else {
-          flag = timeToSecond(prev.created_at) > timeToSecond(next.created_at) ? 1 : -1;
-        }
-        return flag;
-      }).pop();
+      return item
+        .sort((prev: TableDataItem, next: TableDataItem) => {
+          let flag = null;
+          if (prev.value > next.value) {
+            flag = 1;
+          } else if (prev.value < next.value) {
+            flag = -1;
+          } else {
+            flag =
+              timeToSecond(prev.created_at) > timeToSecond(next.created_at)
+                ? 1
+                : -1;
+          }
+          return flag;
+        })
+        .pop();
     });
     return test;
-  }
+  };
 
   const timeToSecond = (time: string) => {
     return Math.floor(new Date(time).getTime() / 1000);
   };
 
   return (
-    <div className={`flex w-full h-full ${showDimensionFilter || showDimensionTable ? 'flex-row' : 'flex-col'}`}>
+    <div
+      className={`flex w-full h-full ${
+        showDimensionFilter || showDimensionTable ? 'flex-row' : 'flex-col'
+      }`}
+    >
       {!!data.length ? (
         <>
           <ResponsiveContainer className={chartLineStyle.chart}>
@@ -262,6 +279,19 @@ const LineChart: React.FC<LineChartProps> = ({
               <YAxis axisLine={false} tickLine={false} tick={renderYAxisTick} />
 
               {threshold.map((item, index) => {
+                const values = data.map((d: any) => {
+                  const targetKey = Object.keys(d || {}).find((key) =>
+                    key.includes('value')
+                  );
+                  return targetKey
+                    ? isNaN(d[targetKey])
+                      ? 0
+                      : d[targetKey]
+                    : 0;
+                });
+                const yMax = Math.max(...values);
+                const yMin = Math.min(...values);
+                const yMiddle = (yMax + yMin) / 2;
                 return (
                   <ReferenceLine
                     key={index}
@@ -273,7 +303,9 @@ const LineChart: React.FC<LineChartProps> = ({
                     <Label
                       value={`${item.value}`}
                       fill={`${LEVEL_MAP[item.level]}`}
-                      position="right"
+                      position="left"
+                      dx={30}
+                      dy={(item.value || 0) >= yMiddle ? 10 : -10}
                     ></Label>
                   </ReferenceLine>
                 );
@@ -314,15 +346,31 @@ const LineChart: React.FC<LineChartProps> = ({
               )}
             </AreaChart>
           </ResponsiveContainer>
-          {formID && <div className="flex w-[100%] pl-14 pr-[15px] justify-between">
-            {boxItems?.map((item, index) => {
-              return (
-                <Tip key={index} title={`${formatTime(Date.parse(item.created_at) / 1000, minTime, maxTime)} ${item.value}`}>
-                  <span className="flex-1 mr-1 h-2" style={{ backgroundColor: LEVEL_MAP[item.level] as string }}></span>
-                </Tip>
-              )
-            })}
-          </div>}
+          {formID && (
+            <div className="flex w-[100%] pl-14 pr-[15px] justify-between">
+              {boxItems?.map((item, index) => {
+                return (
+                  <Tip
+                    key={index}
+                    title={`${formatTime(
+                      Date.parse(item.created_at) / 1000,
+                      minTime,
+                      maxTime
+                    )} ${
+                      isNumber(item.value) ? item.value.toFixed(2) : item.value
+                    }`}
+                  >
+                    <span
+                      className="flex-1 mr-1 h-2"
+                      style={{
+                        backgroundColor: LEVEL_MAP[item.level] as string,
+                      }}
+                    ></span>
+                  </Tip>
+                );
+              })}
+            </div>
+          )}
           {showDimensionFilter && hasDimension && (
             <DimensionFilter
               data={data}

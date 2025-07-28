@@ -1,0 +1,91 @@
+{
+  "client_id": "cmdb",
+  "name": "CMDB",
+  "url": "/cmdb/assetSearch",
+  "description": "Platform for centralized management of all IT assets and resources of an enterprise, helping organizations effectively track asset lifecycle, optimize resource allocation and ensure system security",
+  "menus": [
+    {
+      "name": "Search",
+      "children": [
+        {
+          "id": "search",
+          "name": "Search",
+          "operation": ["View"]
+        }
+      ]
+    },
+    {
+      "name": "Asset",
+      "children": [
+        {
+          "id": "asset_info",
+          "name": "Asset Info",
+          "operation": [
+            "View",
+            "Add",
+            "Edit",
+            "Delete",
+            "Add Associate",
+            "Delete Associate"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Management",
+      "children": [
+        {
+          "id": "model_management",
+          "name": "Model Management",
+          "operation": [
+            "View",
+            "Add Model",
+            "Edit Model",
+            "Delete Model",
+            "Add Group",
+            "Edit Group",
+            "Delete Group"
+          ]
+        },
+        {
+        "id": "auto_collection",
+        "name": "Auto Collection",
+        "operation": [
+            "View",
+            "Add",
+            "Edit",
+            "Delete",
+            "Execute"
+        ]
+    },
+    {
+        "id": "soid_library",
+        "name": "SOID Library",
+        "operation": [
+            "View",
+            "Add",
+            "Edit",
+            "Delete"
+        ]
+        },
+        {
+          "id": "operation_log",
+          "name": "Operation Log",
+          "operation": ["View"]
+        }
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "name": "admin",
+      "role_name": "cmdb_admin",
+      "menus": []
+    },
+    {
+      "name": "normal",
+      "role_name": "cmdb_normal",
+      "menus": ["search-View", "asset_info-View"]
+    }
+  ]
+}

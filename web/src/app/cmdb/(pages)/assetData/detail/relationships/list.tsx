@@ -1,4 +1,17 @@
 'use client';
+
+import { useSearchParams } from 'next/navigation';
+import { getAssetColumns } from '@/app/cmdb/utils/common';
+import { Spin, Collapse, Button, Modal, message, Empty } from 'antd';
+import { CaretRightOutlined } from '@ant-design/icons';
+import { useTranslation } from '@/utils/i18n';
+import { AssoListProps } from '@/app/cmdb/types/assetData';
+import { useRelationships } from '@/app/cmdb/context/relationships';
+import CustomTable from '@/components/custom-table';
+import useApiClient from '@/utils/request';
+import assoListStyle from './index.module.scss';
+import SelectInstance from './selectInstance';
+import PermissionWrapper from '@/components/permission';
 import React, {
   useEffect,
   useState,
@@ -6,7 +19,6 @@ import React, {
   forwardRef,
   useImperativeHandle,
 } from 'react';
-import { useSearchParams } from 'next/navigation';
 import {
   CrentialsAssoInstItem,
   CrentialsAssoDetailItem,
@@ -16,17 +28,6 @@ import {
   RelationListInstItem,
   RelationInstanceRef,
 } from '@/app/cmdb/types/assetManage';
-import { getAssetColumns } from '@/app/cmdb/utils/common';
-import { Spin, Collapse, Button, Modal, message, Empty } from 'antd';
-import { CaretRightOutlined } from '@ant-design/icons';
-import { useTranslation } from '@/utils/i18n';
-import { AssoListProps } from '@/app/cmdb/types/assetData';
-import CustomTable from '@/components/custom-table';
-import useApiClient from '@/utils/request';
-import assoListStyle from './index.module.scss';
-import SelectInstance from './selectInstance';
-import PermissionWrapper from '@/components/permission';
-import { useRelationships } from '@/app/cmdb/context/relationships';
 
 const { confirm } = Modal;
 
@@ -46,16 +47,39 @@ const AssoList = forwardRef<AssoListRef, AssoListProps>(
     const instId: string = searchParams.get('inst_id') || '';
     const instanceRef = useRef<RelationInstanceRef>(null);
     const prevModelLenRef = useRef(0);
-    const { fetchAssoInstances, loading, selectedAssoId } = useRelationships();
+    const {
+      assoInstances,
+      loading,
+      selectedAssoId,
+      fetchAssoInstances,
+      setSelectedAssoId,
+    } = useRelationships();
 
     useEffect(() => {
       const prevLength = prevModelLenRef.current;
       const currentLength = modelList.length;
       if (prevLength === 0 && currentLength > 0) {
-        getInitData();
+        getInitData(assoInstances);
       }
       prevModelLenRef.current = currentLength;
-    }, [modelList]);
+    }, [modelList, assoInstances]);
+
+    const getInitData = async (data: CrentialsAssoInstItem[]) => {
+      setPageLoading(true);
+      try {
+        processedData(data);
+        await updateInstAttrList(data);
+        if (!data?.length) {
+          setInstIds([]);
+          setAssoCredentials([]);
+        }
+        if (selectedAssoId) {
+          scrollToElement(`collapse-${selectedAssoId}`);
+        }
+      } finally {
+        setPageLoading(false);
+      }
+    };
 
     const processedData = (assoInstancesList: any) => {
       if (loading || !assoInstancesList?.length) return [];
@@ -119,15 +143,20 @@ const AssoList = forwardRef<AssoListRef, AssoListProps>(
       setAssoCredentials(updatedItems);
     };
 
+    const scrollToElement = (elementId: string) => {
+      setTimeout(() => {
+        const element = document.getElementById(elementId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        setSelectedAssoId('');
+      }, 100);
+    };
+
     useEffect(() => {
       if (selectedAssoId && assoCredentials.length) {
         setActiveKey([...activeKey, selectedAssoId]);
-        setTimeout(() => {
-          const element = document.getElementById(`collapse-${selectedAssoId}`);
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-        }, 100);
+        scrollToElement(`collapse-${selectedAssoId}`);
       }
     }, [selectedAssoId]);
 
@@ -161,21 +190,6 @@ const AssoList = forwardRef<AssoListRef, AssoListProps>(
       window.open(url, '_blank', 'noopener,noreferrer');
     };
 
-    const getInitData = async () => {
-      setPageLoading(true);
-      try {
-        const data = await fetchAssoInstances(modelId, instId);
-        processedData(data);
-        await updateInstAttrList(data);
-        if (!data?.length) {
-          setInstIds([]);
-          setAssoCredentials([]);
-        }
-      } finally {
-        setPageLoading(false);
-      }
-    };
-
     const getModelAttrList = async (item: any, config: any) => {
       const responseData = await get(
         `/cmdb/api/model/${getAttrId(item)}/attr_list/`
@@ -194,7 +208,10 @@ const AssoList = forwardRef<AssoListRef, AssoListProps>(
           fixed: 'right',
           width: 120,
           render: (_: unknown, record: any) => (
-            <PermissionWrapper requiredPermissions={['Add']}>
+            <PermissionWrapper
+              requiredPermissions={['Delete Associate']}
+              instPermissions={record.permission}
+            >
               <Button
                 type="link"
                 onClick={() =>
@@ -210,12 +227,15 @@ const AssoList = forwardRef<AssoListRef, AssoListProps>(
 
       if (columns[0]) {
         columns[0].fixed = 'left';
-        columns[0].render = (_: unknown, record: any) => (
+        const originalRender = columns[0].render;
+        columns[0].render = (value: unknown, record: any) => (
           <a
             className="text-[var(--color-primary)]"
             onClick={() => linkToDetail(record, item)}
           >
-            {record[columns[0].dataIndex]}
+            {originalRender
+              ? originalRender(value, record)
+              : record[columns[0].dataIndex]}
           </a>
         );
       }
@@ -288,8 +308,9 @@ const AssoList = forwardRef<AssoListRef, AssoListProps>(
       setActiveKey(keys);
     };
 
-    const confirmRelate = () => {
-      getInitData();
+    const confirmRelate = async () => {
+      const data = await fetchAssoInstances(modelId, instId);
+      getInitData(data);
     };
 
     return (

@@ -1,0 +1,65 @@
+# ====================================
+# file 日志源（含字段映射）
+# ====================================
+[sources.file_{{ instance_id }}]
+type = "file"
+include = ["{{ file_path }}"]
+data_dir = "/opt/fusion-collectors"
+ignore_older = 86400  # 忽略24小时以前的日志，可按需调整
+# encoding = "utf-8"  # 如有乱码可手动开启
+
+# ====================================
+# enrich（字段补全）
+# ====================================
+[transforms.file_enrich_{{ instance_id }}]
+type = "remap"
+inputs = ["file_{{ instance_id }}"]
+source = '''
+.collect_type = "file"
+.instance_id = "{{ instance_id }}"
+.streams = ["default"]
+'''
+
+# ====================================
+# 日志数据流
+# ====================================
+
+[transforms.router_{{ instance_id }}]
+type = "route"
+inputs = ["file_enrich_{{ instance_id }}"]
+{% for route in streams %}
+route.{{ instance_id }}_{{ route.stream_id }} = '{{ route.condition }}'
+{% endfor %}
+
+{% for stream in streams %}
+[transforms.{{ instance_id }}_{{ stream.stream_id }}]
+type = "remap"
+inputs = ["router_{{ instance_id }}.{{ instance_id }}_{{ stream.stream_id }}"]
+source = '''
+.streams = push!(get!(.streams, []), "{{ stream.stream_id }}")
+'''
+{% endfor %}
+
+# ====================================
+# sinks
+# ====================================
+
+[sinks.vmlogs_{{ instance_id }}]
+type = "nats"
+inputs = [
+    {% for stream in streams %}
+    "{{ instance_id }}_{{ stream.stream_id }}",
+    {% endfor %}
+]
+subject = "vector"
+url = "nats://${NATS_SERVERS}"
+
+[sinks.vmlogs_{{ instance_id }}.auth]
+strategy = "user_password"
+
+[sinks.vmlogs_{{ instance_id }}.auth.user_password]
+user = "${NATS_USERNAME}"
+password = "${NATS_PASSWORD}"
+
+[sinks.vmlogs_{{ instance_id }}.encoding]
+codec = "json"

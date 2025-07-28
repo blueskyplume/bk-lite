@@ -22,6 +22,9 @@ interface EntityCardProps {
   index: number;
   online?: boolean;
   modelName?: string;
+  skillType?: string;
+  skill_type?: number;
+  permissions?: string[];
   onMenuClick: (action: string, entity: any) => void;
   redirectUrl: string;
   iconTypeMapping: [string, string];
@@ -37,6 +40,9 @@ const EntityCard: React.FC<EntityCardProps> = ({
   index,
   online,
   modelName,
+  skillType,
+  skill_type,
+  permissions,
   onMenuClick,
   redirectUrl,
   iconTypeMapping
@@ -47,13 +53,17 @@ const EntityCard: React.FC<EntityCardProps> = ({
   const menu = (
     <Menu className={`${styles.menuContainer}`}>
       <Menu.Item key={`edit-${id}`}>
-        <PermissionWrapper requiredPermissions={['Edit']}>
-          <span className="block" onClick={() => onMenuClick('edit', { id, name, introduction, created_by, team_name, team, online })}>{t('common.edit')}</span>
+        <PermissionWrapper
+          requiredPermissions={['Edit']}
+          instPermissions={permissions}>
+          <span className="block" onClick={() => onMenuClick('edit', { id, name, introduction, created_by, team_name, team, online, skill_type })}>{t('common.edit')}</span>
         </PermissionWrapper>
       </Menu.Item>
       <Menu.Item key={`delete-${id}`}>
-        <PermissionWrapper requiredPermissions={['Delete']}>
-          <span className="block" onClick={() => onMenuClick('delete', { id, name, introduction, created_by, team_name, team, online })}>{t('common.delete')}</span>
+        <PermissionWrapper 
+          requiredPermissions={['Delete']} 
+          instPermissions={permissions}>
+          <span className="block" onClick={() => onMenuClick('delete', { id, name, introduction, created_by, team_name, team, online, skill_type })}>{t('common.delete')}</span>
         </PermissionWrapper>
       </Menu.Item>
     </Menu>
@@ -97,6 +107,9 @@ const EntityCard: React.FC<EntityCardProps> = ({
                   )}
                   {modelName !== undefined && modelName && (
                     <Tag className="font-mini px-[2px] leading-inherit mr-2" color="blue">{modelName}</Tag>
+                  )}
+                  {skillType !== undefined && skillType && (
+                    <Tag className="font-mini px-[2px] leading-inherit mr-2" color="purple">{skillType}</Tag>
                   )}
                 </div>
                 <div className="flex items-end justify-end text-[var(--color-text-4)] font-mini w-full text-right overflow-hidden">

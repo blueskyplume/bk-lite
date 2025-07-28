@@ -5,20 +5,23 @@ from apps.opspilot.models import Bot, FileKnowledge, LLMSkill, QuotaRule, TeamTo
 
 def get_quota_client(request):
     teams = request.user.group_list
-    current_team = request.COOKIES.get("current_team")
+    current_team = int(request.COOKIES.get("current_team", 0))
     if not current_team:
         current_team = teams[0]
-    client = QuotaUtils(request.user.username, current_team)
+    client = QuotaUtils(request.user.username, current_team, request.user.is_superuser)
     return client
 
 
 class QuotaUtils(object):
-    def __init__(self, username, team):
+    def __init__(self, username, team, is_superuser=False):
         self.username = username
-        self.team = team
+        self.team = int(team)
+        self.is_superuser = is_superuser
         self.quota_list = self.get_quota_list()
 
     def get_quota_list(self):
+        if self.is_superuser:
+            return []
         quota_list = QuotaRule.objects.filter(
             Q(target_type="user", target_list__contains=self.username)
             | Q(target_type="group", target_list__contains=self.team)
@@ -38,7 +41,7 @@ class QuotaUtils(object):
             file_list = FileKnowledge.objects.filter(knowledge_document__created_by=self.username)
         else:
             file_size_list = file_size_map["shared"]
-            file_list = FileKnowledge.objects.filter(knowledge_document__knowledge_base__team=self.team)
+            file_list = FileKnowledge.objects.filter(knowledge_document__knowledge_base__team__contains=self.team)
         used_file_size_list = [i.file.size for i in file_list if i.file] + [0]
         used_file_size = sum(used_file_size_list) / 1024 / 1024
         return (
@@ -56,10 +59,10 @@ class QuotaUtils(object):
             skill_count_map[type_map[quota["rule_type"]]].append(quota["skill_count"])
         if skill_count_map["private"]:
             skill_count_list = skill_count_map["private"]
-            skill_count = LLMSkill.objects.filter(created_by=self.username).count()
+            skill_count = LLMSkill.objects.filter(created_by=self.username, is_template=False).count()
         else:
             skill_count_list = skill_count_map["shared"]
-            skill_count = LLMSkill.objects.filter(team__contains=self.team).count()
+            skill_count = LLMSkill.objects.filter(team__contains=self.team, is_template=False).count()
 
         return (
             min(skill_count_list) if skill_count_list else 0,
@@ -121,7 +124,7 @@ class QuotaUtils(object):
         unit_map = {"thousand": 1000, "million": 1000000}
         llm_model_list = []
         for quota in quota_list:
-            token_config = quota["token_set"]
+            token_config = quota.token_set
             for llm_model_name, value in token_config.items():
                 if llm_model_name == llm_model:
                     llm_model_list.append(int(value["value"]) * unit_map.get(value["unit"], 1))

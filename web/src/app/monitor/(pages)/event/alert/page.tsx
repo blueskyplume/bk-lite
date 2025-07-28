@@ -6,11 +6,11 @@ import {
   Checkbox,
   Space,
   Tag,
-  Modal,
   message,
   Tabs,
   Spin,
   Tooltip,
+  Popconfirm,
 } from 'antd';
 import useApiClient from '@/utils/request';
 import { useTranslation } from '@/utils/i18n';
@@ -19,6 +19,7 @@ import {
   deepClone,
   getRandomColor,
   getEnumValueUnit,
+  getRecentTimeRange,
 } from '@/app/monitor/utils/common';
 import {
   ColumnItem,
@@ -28,17 +29,20 @@ import {
   UserItem,
   TabItem,
   TimeSelectorDefaultValue,
+  TimeValuesProps,
 } from '@/app/monitor/types';
-import { MetricItem, ObectItem } from '@/app/monitor/types/monitor';
+import { MetricItem, ObjectItem } from '@/app/monitor/types/monitor';
 import { AlertOutlined } from '@ant-design/icons';
 import { FiltersConfig } from '@/app/monitor/types/monitor';
 import CustomTable from '@/components/custom-table';
+import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import TimeSelector from '@/components/time-selector';
 import Permission from '@/components/permission';
 import StackedBarChart from '@/app/monitor/components/charts/stackedBarChart';
 import AlertDetail from './alertDetail';
 import Collapse from '@/components/collapse';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
+import { useAlarmTabs } from '@/app/monitor/hooks/event';
 import dayjs, { Dayjs } from 'dayjs';
 import { useCommon } from '@/app/monitor/context/common';
 import alertStyle from './index.module.scss';
@@ -47,13 +51,19 @@ import {
   useLevelList,
   useStateMap,
 } from '@/app/monitor/constants/monitor';
+import useMonitorApi from '@/app/monitor/api/index';
 
 const Alert: React.FC = () => {
-  const { get, patch, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const {
+    getMonitorAlert,
+    getMonitorMetrics,
+    getMonitorObject,
+    patchMonitorAlert,
+  } = useMonitorApi();
   const { t } = useTranslation();
   const STATE_MAP = useStateMap();
   const LEVEL_LIST = useLevelList();
-  const { confirm } = Modal;
   const { convertToLocalizedTime } = useLocalizedTime();
   const commonContext = useCommon();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -70,9 +80,10 @@ const Alert: React.FC = () => {
     pageSize: 20,
   });
   const [frequence, setFrequence] = useState<number>(0);
-  const beginTime: number = dayjs().subtract(10080, 'minute').valueOf();
-  const lastTime: number = dayjs().valueOf();
-  const [timeRange, setTimeRange] = useState<number[]>([beginTime, lastTime]);
+  const [timeValues, setTimeValues] = useState<TimeValuesProps>({
+    timeRange: [],
+    originValue: 10080,
+  });
   const timeDefaultValue =
     useRef<TimeSelectorDefaultValue>({
       selectValue: 10080,
@@ -87,20 +98,12 @@ const Alert: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('activeAlarms');
   const [chartData, setChartData] = useState<Record<string, any>[]>([]);
   const [pageLoading, setPageLoading] = useState<boolean>(false);
-  const [objects, setObjects] = useState<ObectItem[]>([]);
-  const [groupObjects, setGroupObjects] = useState<ObectItem[]>([]);
+  const [objects, setObjects] = useState<ObjectItem[]>([]);
+  const [groupObjects, setGroupObjects] = useState<ObjectItem[]>([]);
   const [metrics, setMetrics] = useState<MetricItem[]>([]);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const tabs: TabItem[] = [
-    {
-      label: t('monitor.events.activeAlarms'),
-      key: 'activeAlarms',
-    },
-    {
-      label: t('monitor.events.historicalAlarms'),
-      key: 'historicalAlarms',
-    },
-  ];
+  const tabs: TabItem[] = useAlarmTabs();
   const columns: ColumnItem[] = [
     {
       title: t('monitor.events.level'),
@@ -125,19 +128,15 @@ const Alert: React.FC = () => {
     },
     {
       title: t('monitor.events.alertName'),
-      dataIndex: 'title',
-      key: 'title',
+      dataIndex: 'content',
+      key: 'content',
       width: 120,
-      ellipsis: true,
-      render: (_, record) => <>{record.content || '--'}</>,
     },
     {
       title: t('monitor.asset'),
-      dataIndex: 'asset',
-      key: 'asset',
+      dataIndex: 'monitor_instance_name',
+      key: 'monitor_instance_name',
       width: 200,
-      ellipsis: true,
-      render: (_, record) => <>{record.monitor_instance_name || '--'}</>,
     },
     {
       title: t('monitor.events.assetType'),
@@ -186,7 +185,12 @@ const Alert: React.FC = () => {
             >
               {operator.slice(0, 1).toLocaleUpperCase()}
             </span>
-            <span className="user-name">{operator}</span>
+            <span className="user-name">
+              <EllipsisWithTooltip
+                className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
+                text={operator}
+              />
+            </span>
           </div>
         ) : (
           <>--</>
@@ -208,14 +212,22 @@ const Alert: React.FC = () => {
           >
             {t('common.detail')}
           </Button>
-          <Permission requiredPermissions={['Operate']}>
-            <Button
-              type="link"
-              disabled={record.status !== 'new'}
-              onClick={() => showAlertCloseConfirm(record)}
+          <Permission
+            requiredPermissions={['Operate']}
+            instPermissions={record.permission}
+          >
+            <Popconfirm
+              title={t('monitor.events.closeTitle')}
+              description={t('monitor.events.closeContent')}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+              okButtonProps={{ loading: confirmLoading }}
+              onConfirm={() => alertCloseConfirm(record.id)}
             >
-              {t('common.close')}
-            </Button>
+              <Button type="link" disabled={record.status !== 'new'}>
+                {t('common.close')}
+              </Button>
+            </Popconfirm>
           </Permission>
         </>
       ),
@@ -236,7 +248,7 @@ const Alert: React.FC = () => {
     };
   }, [
     frequence,
-    timeRange,
+    timeValues,
     activeTab,
     filters.level,
     filters.state,
@@ -250,7 +262,7 @@ const Alert: React.FC = () => {
     getAssetInsts('refresh');
   }, [
     isLoading,
-    timeRange,
+    timeValues,
     activeTab,
     filters.level,
     filters.state,
@@ -264,7 +276,7 @@ const Alert: React.FC = () => {
     getChartData('refresh');
   }, [
     isLoading,
-    timeRange,
+    timeValues,
     filters.state,
     activeTab,
     filters.level,
@@ -288,56 +300,43 @@ const Alert: React.FC = () => {
   };
 
   const getMetrics = async () => {
-    const data = await get(`/monitor/api/metrics/`);
+    const data = await getMonitorMetrics();
     setMetrics(data);
   };
 
   const getObjects = async () => {
-    const data: ObectItem[] = await get('/monitor/api/monitor_object/', {
-      params: {
-        add_policy_count: true,
-      },
+    const data: ObjectItem[] = await getMonitorObject({
+      add_policy_count: true,
     });
-    const groupedData = data.reduce(
-      (acc, item) => {
-        if (!acc[item.type]) {
-          acc[item.type] = {
-            label: item.display_type,
-            title: item.type,
-            options: [],
-          };
-        }
-        acc[item.type].options.push({
-          label: item.display_name,
-          value: item.id,
-        });
-        return acc;
-      },
-      {} as Record<string, any>
-    );
+    const groupedData = data.reduce((acc, item) => {
+      if (!acc[item.type]) {
+        acc[item.type] = {
+          label: item.display_type,
+          title: item.type,
+          options: [],
+        };
+      }
+      acc[item.type].options.push({
+        label: item.display_name,
+        value: item.id,
+      });
+      return acc;
+    }, {} as Record<string, any>);
     setGroupObjects(Object.values(groupedData));
     setObjects(data);
   };
 
-  const showAlertCloseConfirm = (row: TableDataItem) => {
-    confirm({
-      title: t('monitor.events.closeTitle'),
-      content: t('monitor.events.closeContent'),
-      centered: true,
-      onOk() {
-        return new Promise(async (resolve) => {
-          try {
-            await patch(`/monitor/api/monitor_alert/${row.id}/`, {
-              status: 'closed',
-            });
-            message.success(t('monitor.events.successfullyClosed'));
-            onRefresh();
-          } finally {
-            resolve(true);
-          }
-        });
-      },
-    });
+  const alertCloseConfirm = async (id: string | number) => {
+    setConfirmLoading(true);
+    try {
+      await patchMonitorAlert(id, {
+        status: 'closed',
+      });
+      message.success(t('monitor.events.successfullyClosed'));
+      onRefresh();
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
   const clearTimer = () => {
@@ -346,6 +345,7 @@ const Alert: React.FC = () => {
   };
 
   const getParams = () => {
+    const recentTimeRange = getRecentTimeRange(timeValues);
     const params = {
       status_in: filters.state,
       level_in: filters.level.join(','),
@@ -353,8 +353,8 @@ const Alert: React.FC = () => {
       content: searchText,
       page: pagination.current,
       page_size: pagination.pageSize,
-      created_at_after: dayjs(timeRange[0]).toISOString(),
-      created_at_before: dayjs(timeRange[1]).toISOString(),
+      created_at_after: dayjs(recentTimeRange[0]).toISOString(),
+      created_at_before: dayjs(recentTimeRange[1]).toISOString(),
     };
     return params;
   };
@@ -402,7 +402,7 @@ const Alert: React.FC = () => {
     }
     try {
       setTableLoading(type !== 'timer');
-      const data = await get('/monitor/api/monitor_alert/', { params });
+      const data = await getMonitorAlert(params);
       setTableData(data.results);
       setPagination((pre) => ({
         ...pre,
@@ -445,9 +445,7 @@ const Alert: React.FC = () => {
     }
     try {
       setChartLoading(type !== 'timer');
-      const data = await get('/monitor/api/monitor_alert/', {
-        params: chartParams,
-      });
+      const data = await getMonitorAlert(chartParams);
       setChartData(
         processDataForStackedBarChart(
           (data.results || []).filter((item: TableDataItem) => !!item.level)
@@ -484,8 +482,11 @@ const Alert: React.FC = () => {
     });
   };
 
-  const onTimeChange = (val: number[]) => {
-    setTimeRange(val);
+  const onTimeChange = (val: number[], originValue: number | null) => {
+    setTimeValues({
+      timeRange: val,
+      originValue,
+    });
   };
 
   const processDataForStackedBarChart = (
@@ -702,7 +703,7 @@ const Alert: React.FC = () => {
                   <TimeSelector
                     defaultValue={timeDefaultValue}
                     onlyRefresh={activeTab === 'activeAlarms'}
-                    onChange={(value) => onTimeChange(value)}
+                    onChange={onTimeChange}
                     onFrequenceChange={onFrequenceChange}
                     onRefresh={onRefresh}
                   />

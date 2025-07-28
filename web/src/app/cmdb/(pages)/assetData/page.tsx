@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { KeepAlive } from 'react-activation';
 import {
   Button,
   Space,
@@ -13,12 +14,13 @@ import {
   CascaderProps,
   Tree,
   Input,
+  Empty,
 } from 'antd';
 import CustomTable from '@/components/custom-table';
 import SearchFilter from './list/searchFilter';
 import ImportInst from './list/importInst';
 import SelectInstance from './detail/relationships/selectInstance';
-import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { DownOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'next/navigation';
 import assetDataStyle from './index.module.scss';
 import FieldModal from './list/fieldModal';
@@ -43,6 +45,7 @@ import type { MenuProps } from 'antd';
 import { useRouter } from 'next/navigation';
 import PermissionWrapper from '@/components/permission';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
+import { useSession } from 'next-auth/react';
 
 interface ModelTabs {
   key: string;
@@ -69,7 +72,7 @@ interface FieldConfig {
   list: Array<any>;
 }
 
-const AssetData = () => {
+const AssetDataContent = () => {
   const { t } = useTranslation();
   const { get, del, post, isLoading } = useApiClient();
   const router = useRouter();
@@ -79,7 +82,8 @@ const AssetData = () => {
     searchParams.get('classificationId') || '';
   const commonContext = useCommon();
   const authContext = useAuth();
-  const token = authContext?.token || null;
+  const { data: session } = useSession();
+  const token = session?.user?.token || authContext?.token || null;
   const tokenRef = useRef(token);
   const authList = useRef(commonContext?.authOrganizations || []);
   const organizationList: Organization[] = authList.current;
@@ -107,6 +111,9 @@ const AssetData = () => {
   const [organization, setOrganization] = useState<string[]>([]);
   const [selectedTreeKeys, setSelectedTreeKeys] = useState<string[]>([]);
   const [expandedTreeKeys, setExpandedTreeKeys] = useState<string[]>([]);
+  const [proxyOptions, setProxyOptions] = useState<
+    { proxy_id: string; proxy_name: string }[]
+  >([]);
   const [pagination, setPagination] = useState<TablePaginationConfig>({
     current: 1,
     total: 0,
@@ -114,7 +121,21 @@ const AssetData = () => {
   });
   const [treeSearchText, setTreeSearchText] = useState('');
   const [filteredTreeData, setFilteredTreeData] = useState<any[]>([]);
-  const [modelInstCount, setModelInstCount] = useState<Record<string, number>>({});
+  const [modelInstCount, setModelInstCount] = useState<Record<string, number>>(
+    {}
+  );
+
+  useEffect(() => {
+    if (modelId === 'host') {
+      get('/cmdb/api/instance/list_proxys/', {})
+        .then((data: any[]) => {
+          setProxyOptions(data || []);
+        })
+        .catch(() => {
+          setProxyOptions([]);
+        });
+    }
+  }, [modelId]);
 
   const handleExport = async (keys: string[]) => {
     try {
@@ -198,6 +219,7 @@ const AssetData = () => {
 
   const getModelGroup = async () => {
     try {
+      setLoading(true);
       const [modeldata, groupData, assoType, instCount] = await Promise.all([
         get('/cmdb/api/model/'),
         get('/cmdb/api/classification/'),
@@ -238,17 +260,24 @@ const AssetData = () => {
       setModelId(defaultModelId);
       setSelectedTreeKeys([defaultModelId]);
       getInitData(defaultModelId);
+      router.push(
+        `/cmdb/assetData?modelId=${defaultModelId}&classificationId=${defaultGroupId}`
+      );
     } catch {
       setLoading(false);
     }
   };
 
-  const getTableParams = () => {
+  const getTableParams = (overrideQueryList?: unknown) => {
+    const activeQueryList =
+      overrideQueryList !== undefined ? overrideQueryList : queryList;
     const conditions = organization?.length
       ? [{ field: 'organization', type: 'list[]', value: organization }]
       : [];
     return {
-      query_list: queryList ? [queryList, ...conditions] : conditions,
+      query_list: activeQueryList
+        ? [activeQueryList, ...conditions]
+        : conditions,
       page: pagination.current,
       page_size: pagination.pageSize,
       order: '',
@@ -257,8 +286,8 @@ const AssetData = () => {
     };
   };
 
-  const getInitData = (id: string) => {
-    const tableParmas = getTableParams();
+  const getInitData = (id: string, overrideQueryList?: unknown) => {
+    const tableParmas = getTableParams(overrideQueryList);
     const getAttrList = get(`/cmdb/api/model/${id}/attr_list/`);
     const getInstList = post('/cmdb/api/instance/search/', {
       ...tableParmas,
@@ -380,8 +409,14 @@ const AssetData = () => {
     },
   ];
 
-  const updateFieldList = (id?: string) => {
-    fetchData();
+  const updateFieldList = async (id?: string) => {
+    await fetchData();
+    try {
+      const instCount = await get('/cmdb/api/instance/model_inst_count/');
+      setModelInstCount(instCount);
+    } catch {
+      console.error('Failed to fetch model instance count');
+    }
     if (id) {
       showInstanceModal({
         _id: id,
@@ -410,14 +445,14 @@ const AssetData = () => {
     setQueryList(condition);
   };
 
-  const checkDetail = (row = { _id: '', inst_name: '' }) => {
+  const checkDetail = (row = { _id: '', inst_name: '', ip_addr: '' }) => {
     const modelItem = modelList.find((item) => item.key === modelId);
     router.push(
       `/cmdb/assetData/detail/baseInfo?icn=${modelItem?.icn || ''}&model_name=${
         modelItem?.label || ''
       }&model_id=${modelId}&classification_id=${groupId}&inst_id=${
         row._id
-      }&inst_name=${row.inst_name}`
+      }&${row.inst_name ? `inst_name=${row.inst_name}` : `ip_addr=${row.ip_addr}`}`
     );
   };
 
@@ -436,45 +471,53 @@ const AssetData = () => {
     });
   };
 
-  const renderModelTitle = useCallback((modelName: string, modelId: string) => (
-    <div className='flex items-center'>
-      <EllipsisWithTooltip text={modelName} className={assetDataStyle.treeLabel} />
-      <span className="ml-1 text-gray-400">
-        ({modelInstCount[modelId] || 0})
-      </span>
-    </div>
-  ), [modelInstCount]);
+  const renderModelTitle = useCallback(
+    (modelName: string, modelId: string) => (
+      <div className="flex items-center">
+        <EllipsisWithTooltip
+          text={modelName}
+          className={assetDataStyle.treeLabel}
+        />
+        <span className="ml-1 text-gray-400">
+          ({modelInstCount[modelId] || 0})
+        </span>
+      </div>
+    ),
+    [modelInstCount]
+  );
 
-  const filterTreeNodes = useCallback((nodes: any[], searchText: string) => {
-    if (!searchText) return nodes;
+  const filterTreeNodes = useCallback(
+    (nodes: any[], searchText: string) => {
+      if (!searchText) return nodes;
 
-    return nodes.reduce((filtered: any[], node) => {
-      const matchesSearch = node.content
-        .toLowerCase()
-        .includes(searchText.toLowerCase());
-        
-      if (node.children) {
-        const filteredChildren = filterTreeNodes(node.children, searchText);
-        if (filteredChildren.length > 0 || matchesSearch) {
-          filtered.push({
-            ...node,
-            children: filteredChildren.map(child => ({
-              ...child,
-              title: renderModelTitle(child.content, child.key)
-            }))
-          });
+      return nodes.reduce((filtered: any[], node) => {
+        const matchesSearch = node.content
+          .toLowerCase()
+          .includes(searchText.toLowerCase());
+
+        if (node.children) {
+          const filteredChildren = filterTreeNodes(node.children, searchText);
+          if (filteredChildren.length > 0 || matchesSearch) {
+            filtered.push({
+              ...node,
+              children: filteredChildren.map((child) => ({
+                ...child,
+                title: renderModelTitle(child.content, child.key),
+              })),
+            });
+          }
+        } else if (matchesSearch) {
+          filtered.push(node);
         }
-      } else if (matchesSearch) {
-        filtered.push(node);
-      }
 
-      return filtered;
-    }, []);
-  }, [renderModelTitle]);
+        return filtered;
+      }, []);
+    },
+    [renderModelTitle]
+  );
 
   const handleTreeSearch = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const searchText = e.target.value;
+    (searchText: string) => {
       setTreeSearchText(searchText);
 
       const treeData = modelGroup.map((group) => ({
@@ -527,40 +570,27 @@ const AssetData = () => {
   const onSelectUnified = (selectedKeys: React.Key[]) => {
     if (!selectedKeys.length) return;
     const key = selectedKeys[0] as string;
-    if (key.startsWith('group:')) {
-      const groupIdSelected = key.split(':')[1];
-      setGroupId(groupIdSelected);
-      const group = modelGroup.find(
-        (item) => item.classification_id === groupIdSelected
-      );
-      if (group && group.list.length) {
-        const firstModelKey = group.list[0].model_id;
-        setSelectedTreeKeys([firstModelKey]);
-        setModelId(firstModelKey);
+    if (key === modelId) return;
+    if (key.startsWith('group:')) return;
+
+    setQueryList(null);
+    setSelectedTreeKeys([key]);
+    setModelId(key);
+    modelGroup.forEach((group) => {
+      if (group.list.some((item) => item.model_id === key)) {
+        setGroupId(group.classification_id);
         const newModelList = group.list.map((item) => ({
           key: item.model_id,
           label: item.model_name,
           icn: item.icn,
         }));
         setModelList(newModelList);
-        getInitData(firstModelKey);
+        router.push(
+          `/cmdb/assetData?modelId=${key}&classificationId=${group.classification_id}`
+        );
       }
-    } else {
-      setSelectedTreeKeys([key]);
-      setModelId(key);
-      modelGroup.forEach((group) => {
-        if (group.list.some((item) => item.model_id === key)) {
-          setGroupId(group.classification_id);
-          const newModelList = group.list.map((item) => ({
-            key: item.model_id,
-            label: item.model_name,
-            icn: item.icn,
-          }));
-          setModelList(newModelList);
-        }
-      });
-      getInitData(key);
-    }
+    });
+    getInitData(key, null);
   };
 
   useEffect(() => {
@@ -577,7 +607,7 @@ const AssetData = () => {
           title: t('action'),
           key: 'action',
           dataIndex: 'action',
-          width: 200,
+          width: 230,
           fixed: 'right',
           render: (_: unknown, record: any) => (
             <>
@@ -588,7 +618,10 @@ const AssetData = () => {
               >
                 {t('detail')}
               </Button>
-              <PermissionWrapper requiredPermissions={['Associate']}>
+              <PermissionWrapper
+                requiredPermissions={['Add Associate']}
+                instPermissions={record.permission}
+              >
                 <Button
                   type="link"
                   className="mr-[10px]"
@@ -597,7 +630,10 @@ const AssetData = () => {
                   {t('Model.association')}
                 </Button>
               </PermissionWrapper>
-              <PermissionWrapper requiredPermissions={['Edit']}>
+              <PermissionWrapper
+                requiredPermissions={['Edit']}
+                instPermissions={record.permission}
+              >
                 <Button
                   type="link"
                   className="mr-[10px]"
@@ -606,7 +642,10 @@ const AssetData = () => {
                   {t('edit')}
                 </Button>
               </PermissionWrapper>
-              <PermissionWrapper requiredPermissions={['Delete']}>
+              <PermissionWrapper
+                requiredPermissions={['Delete']}
+                instPermissions={record.permission}
+              >
                 <Button type="link" onClick={() => showDeleteConfirm(record)}>
                   {t('delete')}
                 </Button>
@@ -616,11 +655,17 @@ const AssetData = () => {
         },
       ];
       setColumns(tableColumns);
-      setCurrentColumns(
-        tableColumns.filter(
-          (item) => displayFieldKeys.includes(item.key) || item.key === 'action'
-        )
-      );
+      const actionCol = tableColumns.find(col => col.key === 'action');
+      const ordered = [
+        ...tableColumns
+          .filter(col => displayFieldKeys.includes(col.key as string))
+          .sort((a, b) =>
+            displayFieldKeys.indexOf(a.key as string) -
+            displayFieldKeys.indexOf(b.key as string)
+          ),
+        ...(actionCol ? [actionCol] : []),
+      ];
+      setCurrentColumns(ordered);
     }
   }, [propertyList, displayFieldKeys]);
 
@@ -656,35 +701,47 @@ const AssetData = () => {
       <div className={assetDataStyle.assetData}>
         <div className={`${assetDataStyle.groupSelector}`}>
           <div className={assetDataStyle.treeSearchWrapper}>
-            <Input
+            <Input.Search
               placeholder={t('searchTxt')}
               value={treeSearchText}
-              onChange={handleTreeSearch}
               allowClear
-              prefix={<SearchOutlined className="text-gray-400" />}
+              enterButton
+              onSearch={handleTreeSearch}
+              onChange={(e) => setTreeSearchText(e.target.value)}
             />
           </div>
           <div className={assetDataStyle.treeWrapper}>
-            <Tree
-              showLine
-              selectedKeys={selectedTreeKeys}
-              expandedKeys={expandedTreeKeys}
-              onExpand={(keys) => setExpandedTreeKeys(keys as string[])}
-              onSelect={onSelectUnified}
-              treeData={filteredTreeData}
-            />
+            {filteredTreeData.length > 0 ? (
+              <Tree
+                showLine
+                selectedKeys={selectedTreeKeys}
+                expandedKeys={expandedTreeKeys}
+                onExpand={(keys) => setExpandedTreeKeys(keys as string[])}
+                onSelect={onSelectUnified}
+                treeData={filteredTreeData}
+              />
+            ) : (
+              <div className="flex justify-center items-center h-full">
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={t('common.noData')}
+                />
+              </div>
+            )}
           </div>
         </div>
         <div className={assetDataStyle.assetList}>
           <div className="flex justify-between mb-4">
             <Space>
               <Cascader
-                placeholder={t('Model.selectOrganazationPlaceholder')}
+                placeholder={t('common.pleaseSelect')}
                 options={organizationList}
                 value={organization}
                 onChange={selectOrganization}
               />
               <SearchFilter
+                key={modelId}
+                proxyOptions={proxyOptions}
                 userList={userList}
                 attrList={propertyList.filter(
                   (item) => item.attr_type !== 'organization'
@@ -695,13 +752,12 @@ const AssetData = () => {
             </Space>
             <Space>
               <PermissionWrapper requiredPermissions={['Add']}>
-                <Dropdown
-                  menu={{ items: addInstItems }}
-                  placement="bottom"
-                  arrow
-                >
-                  <Button icon={<PlusOutlined />} type="primary">
-                    {t('common.addNew')}
+                <Dropdown menu={{ items: addInstItems }} placement="bottom">
+                  <Button type="primary">
+                    <Space>
+                      {t('common.addNew')}
+                      <DownOutlined />
+                    </Space>
                   </Button>
                 </Dropdown>
               </PermissionWrapper>
@@ -709,17 +765,25 @@ const AssetData = () => {
                 menu={{ items: exportItems }}
                 disabled={exportLoading}
                 placement="bottom"
-                arrow
               >
-                <Button>{t('export')}</Button>
+                <Button>
+                  <Space>
+                    {t('export')}
+                    <DownOutlined />
+                  </Space>
+                </Button>
               </Dropdown>
               <Dropdown
                 menu={{ items: batchOperateItems }}
                 disabled={!selectedRowKeys.length}
                 placement="bottom"
-                arrow
               >
-                <Button>{t('more')}</Button>
+                <Button>
+                  <Space>
+                    {t('more')}
+                    <DownOutlined />
+                  </Space>
+                </Button>
               </Dropdown>
             </Space>
           </div>
@@ -758,6 +822,14 @@ const AssetData = () => {
         </div>
       </div>
     </Spin>
+  );
+};
+
+const AssetData = () => {
+  return (
+    <KeepAlive id="assetData" name="assetData">
+      <AssetDataContent />
+    </KeepAlive>
   );
 };
 

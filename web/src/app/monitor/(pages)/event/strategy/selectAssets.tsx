@@ -5,11 +5,14 @@ import React, {
   forwardRef,
   useImperativeHandle,
   useEffect,
+  useMemo,
 } from 'react';
 import { Button, Input, Tabs, Tree } from 'antd';
 import OperateModal from '@/app/monitor/components/operate-drawer';
 import { useTranslation } from '@/utils/i18n';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
+import { convertGroupTreeToTreeSelectData } from '@/utils';
 import CustomTable from '@/components/custom-table';
 import {
   ColumnItem,
@@ -22,17 +25,9 @@ import {
 import { CloseOutlined } from '@ant-design/icons';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
 import selectInstanceStyle from './selectInstance.module.scss';
-
-const convertCascaderToTreeData = (cascaderData: any) => {
-  return cascaderData.map((item: any) => {
-    const { label, value, children } = item;
-    return {
-      title: label,
-      key: value,
-      children: children ? convertCascaderToTreeData(children) : [],
-    };
-  });
-};
+import { getBaseInstanceColumn } from '@/app/monitor/utils/common';
+import { ObjectItem } from '@/app/monitor/types/monitor';
+import { useUserInfoContext } from '@/context/userInfo';
 
 const filterTreeData = (treeData: any, searchText: string) => {
   if (!searchText) return treeData;
@@ -90,13 +85,12 @@ const getParentKeys = (
 };
 
 const SelectAssets = forwardRef<ModalRef, ModalConfig>(
-  (
-    { onSuccess, organizationList, monitorObject, form: { type, values } },
-    ref
-  ) => {
+  ({ onSuccess, monitorObject, objects }, ref) => {
     const { t } = useTranslation();
-    const { get } = useApiClient();
+    const { getInstanceList } = useMonitorApi();
+    const { isLoading } = useApiClient();
     const { convertToLocalizedTime } = useLocalizedTime();
+    const { groupTree } = useUserInfoContext();
     const [groupVisible, setGroupVisible] = useState<boolean>(false);
     const [pagination, setPagination] = useState<Pagination>({
       current: 1,
@@ -112,6 +106,7 @@ const SelectAssets = forwardRef<ModalRef, ModalConfig>(
     const [searchText, setSearchText] = useState<string>('');
     const [selectedTreeKeys, setSelectedTreeKeys] = useState<string[]>([]);
     const [treeSearchText, setTreeSearchText] = useState<string>('');
+    const [rowId, setRowId] = useState<number>(0);
 
     const tabs: TabItem[] = [
       {
@@ -123,31 +118,49 @@ const SelectAssets = forwardRef<ModalRef, ModalConfig>(
         key: 'organization',
       },
     ];
-    const columns: ColumnItem[] = [
-      {
-        title: t('common.name'),
-        dataIndex: 'instance_name',
-        key: 'instance_name',
-        ellipsis: true,
-      },
-      {
-        title: t('monitor.views.reportTime'),
-        dataIndex: 'time',
-        key: 'time',
-        render: (_, { time }) => (
-          <>
-            {time ? convertToLocalizedTime(new Date(time * 1000) + '') : '--'}
-          </>
-        ),
-      },
-    ];
+
+    const columns = useMemo(() => {
+      const columnItems: ColumnItem[] = [
+        {
+          title: t('monitor.views.reportTime'),
+          dataIndex: 'time',
+          width: 160,
+          key: 'time',
+          render: (_, { time }) => (
+            <>
+              {time ? convertToLocalizedTime(new Date(time * 1000) + '') : '--'}
+            </>
+          ),
+        },
+      ];
+      const row =
+        objects.find((item: ObjectItem) => item.id === +monitorObject) || {};
+      return [
+        ...getBaseInstanceColumn({
+          objects,
+          row,
+          t,
+        }),
+        ...columnItems,
+      ];
+    }, [objects, monitorObject, t]);
+
+    const treeData = useMemo(() => {
+      return convertGroupTreeToTreeSelectData(groupTree);
+    }, [groupTree]);
+
+    const filteredTreeData = useMemo(() => {
+      return filterTreeData(treeData, treeSearchText);
+    }, [treeData, treeSearchText]);
 
     useEffect(() => {
-      fetchData();
+      if (!isLoading) {
+        fetchData();
+      }
     }, [pagination.current, pagination.pageSize]);
 
     useImperativeHandle(ref, () => ({
-      showModal: ({ title }) => {
+      showModal: ({ title, form: { type, values, id } }) => {
         // 开启弹窗的交互
         setPagination((prev: Pagination) => ({
           ...prev,
@@ -156,6 +169,7 @@ const SelectAssets = forwardRef<ModalRef, ModalConfig>(
         setTableData([]);
         setGroupVisible(true);
         setTitle(title);
+        setRowId(id);
         setActiveTab(type || 'instance');
         if (type === 'instance' || !type) {
           fetchData();
@@ -184,30 +198,25 @@ const SelectAssets = forwardRef<ModalRef, ModalConfig>(
       onChange: onSelectChange,
     };
 
-    const treeData = convertCascaderToTreeData(organizationList);
-    const filteredTreeData = filterTreeData(treeData, treeSearchText);
-
     const handleSubmit = async () => {
       handleCancel();
-      onSuccess({
-        type: activeTab,
-        values: activeTab === 'instance' ? selectedRowKeys : selectedTreeKeys,
-      });
+      onSuccess(
+        {
+          type: activeTab,
+          values: activeTab === 'instance' ? selectedRowKeys : selectedTreeKeys,
+        },
+        rowId
+      );
     };
 
     const fetchData = async (type?: string) => {
       try {
         setTableLoading(true);
-        const data = await get(
-          `/monitor/api/monitor_instance/${monitorObject}/list/`,
-          {
-            params: {
-              page: pagination.current,
-              page_size: pagination.pageSize,
-              name: type === 'clear' ? '' : searchText,
-            },
-          }
-        );
+        const data = await getInstanceList(monitorObject, {
+          page: pagination.current,
+          page_size: pagination.pageSize,
+          name: type === 'clear' ? '' : searchText,
+        });
         setTableData(data?.results || []);
         setPagination((prev: Pagination) => ({
           ...prev,

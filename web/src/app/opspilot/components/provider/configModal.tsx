@@ -3,8 +3,10 @@ import { Form, Input as AntdInput, Switch, message, Select } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { useUserInfoContext } from '@/context/userInfo';
 import { Model, ModelConfig } from '@/app/opspilot/types/provider';
-import { MODEL_TYPE_OPTIONS } from '@/app/opspilot/constants/provider';
+import { MODEL_TYPE_OPTIONS, CONFIG_MAP } from '@/app/opspilot/constants/provider';
 import OperateModal from '@/components/operate-modal';
+import EditablePasswordField from '@/components/dynamic-form/editPasswordField';
+import GroupTreeSelect from '@/components/group-tree-select';
 
 interface ProviderModalProps {
   visible: boolean;
@@ -27,19 +29,19 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
 }) => {
   const [form] = Form.useForm();
   const { t } = useTranslation();
-  const { groups, selectedGroup } = useUserInfoContext();
+  const { selectedGroup } = useUserInfoContext();
 
   React.useEffect(() => {
     if (!visible) return;
     if (mode === 'edit' && model) {
-      const configField = getConfigField(filterType);
-      const config = model[configField] as ModelConfig | undefined;
+      const configField = CONFIG_MAP[filterType];
+      const config = model[configField as keyof Model] as ModelConfig | undefined;
       form.setFieldsValue({
         name: model.name || '',
-        modelName: model.llm_config?.model || '',
+        modelName: (model[configField as keyof Model] as ModelConfig)?.model || '',
         type: model.llm_model_type || '',
         team: model.team,
-        apiKey: model.llm_config?.openai_api_key || '',
+        apiKey: filterType === 'llm_model' ? model.llm_config?.openai_api_key || '' : config?.api_key || '',
         url: filterType === 'llm_model' ? model.llm_config?.openai_base_url || '' : config?.base_url || '',
         enabled: model.enabled || false,
         consumer_team: model.consumer_team ?? '',
@@ -52,16 +54,6 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
       });
     }
   }, [visible]);
-
-  const getConfigField = (type: string) => {
-    const configMap: Record<string, keyof Model> = {
-      llm_model: 'llm_config',
-      embed_provider: 'embed_config',
-      rerank_provider: 'rerank_config',
-      ocr_provider: 'ocr_config',
-    };
-    return configMap[type];
-  };
 
   const handleOk = () => {
     form.validateFields()
@@ -91,7 +83,7 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
         >
           <AntdInput placeholder={`${t('common.input')}${t('provider.form.name')}`} />
         </Form.Item>
-        {filterType === 'llm_model' && (<Form.Item
+        {filterType !== 'ocr_provider' && (<Form.Item
           name="modelName"
           label={t('provider.form.modelName')}
           rules={[{ required: true, message: `${t('common.input')}${t('provider.form.modelName')}` }]}
@@ -119,15 +111,16 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
         >
           <AntdInput placeholder={`${t('common.inputMsg')} ${t('provider.form.url')}`} />
         </Form.Item>
-        {filterType === 'llm_model' && (
-          <Form.Item
-            name="apiKey"
-            label={t('provider.form.key')}
-            rules={[{ required: true, message: `${t('common.inputMsg')}${t('provider.form.key')}` }]}
-          >
-            <AntdInput.Password visibilityToggle={false} />
-          </Form.Item>
-        )}
+        <Form.Item
+          name="apiKey"
+          label={t('provider.form.key')}
+          rules={[{ required: true, message: `${t('common.inputMsg')}${t('provider.form.key')}` }]}
+        >
+          <EditablePasswordField
+            value={form.getFieldValue('apiKey')}
+            onChange={(value) => form.setFieldsValue({ apiKey: value })}
+          />
+        </Form.Item>
         <Form.Item
           name="enabled"
           label={t('provider.form.enabled')}
@@ -141,27 +134,22 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
           rules={[{ required: true, message: `${t('common.selectMsg')}${t('provider.form.group')}` }]}
           initialValue={selectedGroup ? [selectedGroup?.id] : []}
         >
-          <Select
-            mode="multiple"
+          <GroupTreeSelect
+            value={form.getFieldValue('team') || []}
+            onChange={(value) => form.setFieldsValue({ team: value })}
             placeholder={`${t('common.selectMsg')}${t('provider.form.group')}`}
-          >
-            {groups.map(group => (
-              <Select.Option key={group.id} value={group.id}>
-                {group.name}
-              </Select.Option>
-            ))}
-          </Select>
+            multiple={true}
+          />
         </Form.Item>
         <Form.Item
           name="consumer_team"
           label={t('provider.form.consumerTeam')}>
-          <Select placeholder={`${t('common.selectMsg')}${t('provider.form.consumerTeam')}`}>
-            {groups.map(group => (
-              <Select.Option key={group.id} value={group.id}>
-                {group.name}
-              </Select.Option>
-            ))}
-          </Select>
+          <GroupTreeSelect
+            value={form.getFieldValue('consumer_team') ? [form.getFieldValue('consumer_team')] : []}
+            onChange={(value) => form.setFieldsValue({ consumer_team: value[0] || '' })}
+            placeholder={`${t('common.selectMsg')}${t('provider.form.consumerTeam')}`}
+            multiple={false}
+          />
         </Form.Item>
       </Form>
     </OperateModal>

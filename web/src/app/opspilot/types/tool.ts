@@ -8,6 +8,7 @@ export interface Tool {
   tagList: string[];
   is_build_in: boolean;
   params: any;
+  permissions?: string[];
 }
 
 export interface FormValues {
@@ -20,6 +21,7 @@ export interface SelectTool {
   id: number;
   name: string;
   icon: string;
+  kwargs?: { key: string; value: string }[];
 }
 
 export interface TagOption {

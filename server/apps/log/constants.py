@@ -1,0 +1,6 @@
+# victoriametrics服务信息
+import os
+
+VICTORIALOGS_HOST = os.getenv("VICTORIALOGS_HOST")
+VICTORIALOGS_USER = os.getenv("VICTORIALOGS_USER")
+VICTORIALOGS_PWD = os.getenv("VICTORIALOGS_PWD")

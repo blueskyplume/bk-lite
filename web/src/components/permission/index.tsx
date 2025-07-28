@@ -4,6 +4,7 @@ import usePermissions from '@/hooks/usePermissions';
 
 interface PermissionWrapperProps {
   requiredPermissions: string[];
+  instPermissions?: string[];
   fallback?: React.ReactNode;
   tooltip?: string;
   className?: string;
@@ -11,14 +12,16 @@ interface PermissionWrapperProps {
 
 const PermissionWrapper: React.FC<React.PropsWithChildren<PermissionWrapperProps>> = ({
   requiredPermissions,
+  instPermissions,
   fallback = null,
   tooltip = "暂无权限",
   className,
   children
 }) => {
   const { hasPermission } = usePermissions();
+  const instancePermissions = instPermissions || ['Operate'];
 
-  if (hasPermission(requiredPermissions)) {
+  if (hasPermission(requiredPermissions) && instancePermissions.includes('Operate')) {
     return <span className={className}>{children}</span>;
   }
 

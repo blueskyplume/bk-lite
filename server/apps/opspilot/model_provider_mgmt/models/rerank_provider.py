@@ -10,7 +10,7 @@ class RerankModelChoices(models.TextChoices):
 
 
 class RerankProvider(models.Model, EncryptMixin):
-    name = models.CharField(max_length=255, unique=True, verbose_name="名称")
+    name = models.CharField(max_length=255, verbose_name="名称")
     rerank_model_type = models.CharField(max_length=255, choices=RerankModelChoices.choices, verbose_name="模型类型")
     rerank_config = models.JSONField(
         verbose_name="Rerank配置",
@@ -21,13 +21,19 @@ class RerankProvider(models.Model, EncryptMixin):
     )
     enabled = models.BooleanField(default=True, verbose_name="是否启用")
     team = models.JSONField(default=list)
+    is_build_in = models.BooleanField(default=False, verbose_name="是否内置")
 
     def save(self, *args, **kwargs):
+        if "api_key" in self.rerank_config:
+            self.decrypt_field("api_key", self.rerank_config)
+            self.encrypt_field("api_key", self.rerank_config)
         super().save(*args, **kwargs)
 
     @cached_property
     def decrypted_rerank_config_config(self):
         rerank_config_decrypted = self.rerank_config.copy()
+        if "api_key" in rerank_config_decrypted:
+            self.decrypt_field("api_key", rerank_config_decrypted)
         return rerank_config_decrypted
 
     def __str__(self):

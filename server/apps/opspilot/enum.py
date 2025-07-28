@@ -9,3 +9,10 @@ class ChannelChoices(models.TextChoices):
     DING_TALK = ("ding_talk", _("Ding Talk"))
     WEB = ("web", _("Web"))
     GITLAB = ("gitlab", _("GitLab"))
+
+
+class SkillTypeChoices(models.IntegerChoices):
+    BASIC_TOOL = 1, _("Basic Tool")
+    KNOWLEDGE_TOOL = 2, _("Knowledge Tool")
+    PLAN_EXECUTE = 3, _("Plan Execute")
+    LATS = 4, _("Lats")

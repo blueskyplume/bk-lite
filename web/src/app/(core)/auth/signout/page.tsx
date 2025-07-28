@@ -1,41 +1,79 @@
-import { authOptions } from "@/constants/authOptions";
-import { getServerSession } from "next-auth";
-import { signOut } from "next-auth/react";
-import { redirect } from "next/navigation";
+'use client';
 
-export default async function SignoutPage() {
-  const session = await getServerSession(authOptions);
-  const federatedLogout = async () => {
+import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { signOut, useSession } from "next-auth/react";
+import { clearAuthToken } from '@/utils/crossDomainAuth';
+
+export default function SignoutPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSignout = async () => {
     try {
-      const response = await fetch("/api/auth/federated-logout");
-      const data = await response.json();
-      if (response.ok) {
-        await signOut({ redirect: false });
-        window.location.href = data.url;
-        return;
-      }
-      throw new Error(data.error);
-    } catch (error) {
-      console.log(error)
-      alert(error);
+      setIsLoading(true);
+      
+      // Call logout API for server-side cleanup
+      await fetch("/api/auth/federated-logout", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      // Clear authentication token
+      clearAuthToken();
+      
+      // Use NextAuth's signOut to clear client session
       await signOut({ redirect: false });
-      window.location.href = "/";
+      
+      // Get callbackUrl parameter and build login page URL
+      const callbackUrl = searchParams.get('callbackUrl') || '/';
+      const loginUrl = `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+      
+      // Redirect to login page
+      window.location.href = loginUrl;
+    } catch (error) {
+      console.error("Logout error:", error);
+      // Even if API call fails, still clear token and redirect
+      clearAuthToken();
+      await signOut({ redirect: false });
+      
+      const callbackUrl = searchParams.get('callbackUrl') || '/';
+      const loginUrl = `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+      window.location.href = loginUrl;
+    } finally {
+      setIsLoading(false);
     }
-  } 
-  if (session) {
+  };
+  
+  if (status === 'loading') {
     return (
-      <div className="flex flex-col space-y-3 justify-center items-center h-screen">
-        <div className="text-xl font-bold">Signout</div>
-        <div>Are you sure you want to sign out?</div>
-        <div>
-          <button
-            onClick={() => federatedLogout()}
-            className="bg-sky-500 hover:bg-sky-700 px-5 py-2 text-sm leading-5 rounded-full font-semibold text-white">
-            Signout of keycloak
-          </button>
-        </div>
+      <div className="flex justify-center items-center h-screen">
+        Loading...
       </div>
-    )
+    );
   }
-  return redirect("/api/auth/signin")
+
+  if (!session) {
+    router.push("/api/auth/signin");
+    return null;
+  }
+
+  return (
+    <div className="flex flex-col space-y-3 justify-center items-center h-screen">
+      <div className="text-xl font-bold">Signout</div>
+      <div>Are you sure you want to sign out?</div>
+      <div>
+        <button
+          onClick={handleSignout}
+          disabled={isLoading}
+          className="bg-sky-500 hover:bg-sky-700 px-5 py-2 text-sm leading-5 rounded-full font-semibold text-white disabled:opacity-50">
+          {isLoading ? "Signing out..." : "Sign out"}
+        </button>
+      </div>
+    </div>
+  );
 }

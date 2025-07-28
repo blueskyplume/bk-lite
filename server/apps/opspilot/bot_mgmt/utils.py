@@ -4,7 +4,7 @@ from wechatpy import WeChatClient as WeChatAccountClient
 from wechatpy.enterprise import WeChatClient
 
 from apps.core.backends import cache
-from apps.core.logger import logger
+from apps.core.logger import opspilot_logger as logger
 from apps.opspilot.bot_mgmt.services.ding_talk_client import DingTalkClient
 from apps.opspilot.enum import ChannelChoices
 from apps.opspilot.models import BotChannel, ChannelGroup, ChannelUser, SkillRequestLog, UserGroup
@@ -152,6 +152,8 @@ def get_client_ip(request):
 
 
 def insert_skill_log(current_ip, skill_id, response_detail, request_detail, state=True, user_message=""):
+    if skill_id is None:
+        return
     SkillRequestLog.objects.create(
         skill_id=skill_id,
         response_detail=response_detail,

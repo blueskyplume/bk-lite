@@ -64,7 +64,7 @@ WORKLOAD_NAME_DICT = {
     "prometheus_remote_write_kube_daemonset_created": "daemonset",
     "prometheus_remote_write_kube_statefulset_created": "statefulset",
     "prometheus_remote_write_kube_job_info": "job_name",
-    "kube_cronjob_labels": "cronjob",
+    "prometheus_remote_write_kube_cronjob_info": "cronjob",
     "prometheus_remote_write_kube_replicaset_created": "replicaset",
 }
 # 统计副本数量的对象
@@ -109,3 +109,43 @@ VMWARE_COLLECT_MAP = {
 # "network_interfaces_info_gauge"
 NETWORK_COLLECT = ["network_system_info_gauge", "network_interfaces_info_gauge"]
 NETWORK_INTERFACES_RELATIONS = "network_topo_info_gauge"
+
+PROTOCOL_METRIC_MAP = {
+    "mysql": ["mysql_info_gauge"],
+}
+
+# aliyun
+ALIYUN_COLLECT_CLUSTER = [
+    "aliyun_ecs_info_gauge", "aliyun_bucket_info_gauge", "aliyun_mysql_info_gauge",
+    "aliyun_pgsql_info_gauge", "aliyun_redis_info_gauge", "aliyun_mongodb_info_gauge",
+    "aliyun_kafka_info_gauge", "aliyun_clb_info_gauge"
+]
+
+HOST_COLLECT_METRIC = ["host_info_gauge"]
+
+DB_COLLECT_METRIC_MAP = {
+    "es": ["es_info_gauge"],
+    "redis": ["redis_info_gauge"],
+    "mongodb": ["mongodb_info_gauge"],
+    "postgresql": ["postgresql_info_gauge"],
+}
+
+MIDDLEWARE_METRIC_MAP = {
+    "nginx" : ["nginx_info_gauge"],
+    "zookeeper": ["zookeeper_info_gauge"],
+    "kafka": ["kafka_info_gauge"],
+    "etcd": ["etcd_info_gauge"],
+    "rabbitmq": ["rabbitmq_info_gauge"],
+    "tomcat": ["tomcat_info_gauge"],
+    "apache": ["apache_info_gauge"],
+    "activemq": ["activemq_info_gauge"],
+}
+
+# Tencent cloud
+QCLOUD_COLLECT_CLUSTER = [
+    "qcloud_cvm_info_gauge","qcloud_rocketmq_info_gauge","qcloud_mysql_info_gauge",
+    "qcloud_redis_info_gauge","qcloud_mongodb_info_gauge","qcloud_pgsql_info_gauge",
+    "qcloud_pulsar_cluster_info_gauge","qcloud_cmq_info_gauge","qcloud_cmq_topic_info_gauge",
+    "qcloud_clb_info_gauge","qcloud_eip_info_gauge","qcloud_bucket_info_gauge","qcloud_filesystem_info_gauge",
+    "qcloud_domain_info_gauge"
+]

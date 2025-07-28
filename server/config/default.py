@@ -18,12 +18,5 @@ include(
     "components/nats.py",
     "components/unfold.py",
     "components/extra.py",
+    "components/mlflow.py",
 )
-
-
-CELERY_BEAT_SCHEDULE = {
-    'sync_periodic_update_task_status': {
-        'task': 'apps.cmdb.celery_tasks.sync_periodic_update_task_status',
-        'schedule': crontab(minute='*/5'),
-    },
-}

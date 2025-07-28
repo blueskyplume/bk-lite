@@ -10,65 +10,40 @@ SIDECAR_STATUS_ENUM = {
     NOT_INSTALLED: "未安装",
 }
 
-# 本服务的地址
-LOCAL_HOST = os.getenv("WEB_SERVER_URL")
+# 节点服务地址key
+NODE_SERVER_URL_KEY = "NODE_SERVER_URL"
 
 LINUX_OS = "linux"
 WINDOWS_OS = "windows"
 
-W_SIDECAR_DOWNLOAD_URL = f"{LOCAL_HOST}/openapi/sidecar/download_file/?file_name=sidecar_windows.zip"
-L_SIDECAR_DOWNLOAD_URL = f"{LOCAL_HOST}/openapi/sidecar/download_file/?file_name=sidecar_linux.tar.gz"
-L_INSTALL_DOWNLOAD_URL = f"{LOCAL_HOST}/openapi/sidecar/download_file/?file_name=install_sidecar.sh"
+# 控制器下发目录
+CONTROLLER_INSTALL_DIR = {
+    LINUX_OS: {"storage_dir": "/tmp", "install_dir": "/opt"},
+    WINDOWS_OS: {"storage_dir": "/tmp", "install_dir": "C:\\gse"},
+}
 
-default_sidecar_mode = os.getenv("SIDECAR_INPUT_MODE", "telegraf")
-TELEGRAF_CONFIG = """
-[global_tags]
-    agent_id="${node.ip}-${node.cloud_region}"
+# 采集器下发目录
+COLLECTOR_INSTALL_DIR = {
+    LINUX_OS: "/opt/fusion-collectors/bin",
+    WINDOWS_OS: "C:\\gse\\fusion-collectors\\bin",
+}
 
-[agent]
-    interval = "10s"
-    round_interval = true
-    metric_batch_size = 1000
-    metric_buffer_limit = 10000
-    collection_jitter = "0s"
-    flush_interval = "30s"
-    flush_jitter = "0s"
-    precision = "0s"
-    hostname = "${node.ip}"
-    omit_hostname = false
+# 设置权限并运行命令
+RUN_COMMAND = {
+    LINUX_OS: "chmod -R +x /opt/fusion-collectors/* && cd /opt/fusion-collectors && ./install.sh {server_url}/node_mgmt/open_api/node {server_token} {cloud} {group} {node_name} {node_id}",
+    WINDOWS_OS: "powershell -command \"Set-ExecutionPolicy Unrestricted -Force; & '{}\\install.ps1' -ServerUrl {} -ServerToken {} -Cloud {} -Group {} -NodeName {} -NodeId {}\"",
+}
 
-[[inputs.internal]]
-    tags = { "instance_id"="${node.ip}-${node.cloud_region}","instance_type"="internal","instance_name"="${node.name}" }
-"""
+# 卸载命令
+UNINSTALL_COMMAND = {
+    LINUX_OS: "cd /opt/fusion-collectors && ./uninstall.sh",
+    WINDOWS_OS: "powershell -command \"Remove-Item -Path {} -Recurse\"",
+}
 
-if default_sidecar_mode == "telegraf":
-    TELEGRAF_CONFIG += """
-[[outputs.kafka]]
-brokers = ["${KAFKA_HOST}:${KAFKA_PORT}"]
-topic = "${KAFKA_METRICS_TOPIC}"
-sasl_username = "${KAFKA_USERNAME}"
-sasl_password = "${KAFKA_PASSWORD}"
-sasl_mechanism = "PLAIN"
-max_message_bytes = 10000000
-compression_codec=1
-"""
+# 控制器目录删除命令
+CONTROLLER_DIR_DELETE_COMMAND = {
+    LINUX_OS: "rm -rf /opt/fusion-collectors",
+    WINDOWS_OS: "powershell -command \"Remove-Item -Path {} -Recurse\"",
+}
 
-if default_sidecar_mode == "nats":
-    TELEGRAF_CONFIG += """
-[[outputs.nats]]
-servers = ["${NATS_SERVERS}"]
-username = "${NATS_USERNAME}"
-password = "${NATS_PASSWORD}"
-subject = "metrics.${node.ip_filter}"
-data_format = "influx"
-"""
-
-if default_sidecar_mode == "vm":
-    TELEGRAF_CONFIG += """
-[[outputs.influxdb]]
-  urls = ["${VM_SERVERS}"]
-  database = "victoriametrics"
-  skip_database_creation = true
-  exclude_retention_policy_tag = true
-  content_encoding = "gzip"
-"""  
+CACHE_TIMEOUT = 60 * 5  # 5分钟

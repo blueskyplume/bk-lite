@@ -20,6 +20,14 @@ export const useStudioApi = () => {
   };
 
   /**
+   * Fetches bot detail information including permissions.
+   * @param botId - The ID of the bot.
+   */
+  const fetchBotDetail = async (botId: string | null): Promise<any> => {
+    return get(`/opspilot/bot_mgmt/bot/${botId}/`);
+  };
+
+  /**
    * Updates a channel's configuration.
    * @param config - The updated channel configuration.
    */
@@ -40,12 +48,17 @@ export const useStudioApi = () => {
    * @param botId - The ID of the bot.
    */
   const fetchInitialData = async (botId: string | null): Promise<any> => {
-    return Promise.all([
+    const [rasaModelsData, skillsResponse, channelsData, botData] = await Promise.all([
       get('/opspilot/bot_mgmt/rasa_model/'),
       get('/opspilot/model_provider_mgmt/llm/'),
       get('/opspilot/bot_mgmt/bot/get_bot_channels/', { params: { bot_id: botId } }),
       get(`/opspilot/bot_mgmt/bot/${botId}`)
     ]);
+
+    // Filter out template skills (is_template: true)
+    const skillsData = skillsResponse.filter((skill: any) => !skill.is_template);
+
+    return [rasaModelsData, skillsData, channelsData, botData];
   };
 
   /**
@@ -100,6 +113,7 @@ export const useStudioApi = () => {
   return {
     fetchLogs,
     fetchChannels,
+    fetchBotDetail,
     updateChannel,
     deleteStudio,
     fetchInitialData,

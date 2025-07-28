@@ -1,43 +1,24 @@
-import asyncio
 import datetime
 import hashlib
 import json
-import re
 import time
 
 from django.conf import settings
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
-from django.http import FileResponse, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, JsonResponse
+from django.utils.translation import gettext as _
 from django_minio_backend import MinioBackend
-from langserve import RemoteRunnable
 
 from apps.base.models import UserAPISecret
-from apps.core.logger import logger
+from apps.core.logger import opspilot_logger as logger
 from apps.core.utils.exempt import api_exempt
 from apps.opspilot.bot_mgmt.services.skill_excute_service import SkillExecuteService
 from apps.opspilot.bot_mgmt.utils import get_client_ip, insert_skill_log, set_time_range
 from apps.opspilot.model_provider_mgmt.services.llm_service import llm_service
 from apps.opspilot.models import Bot, BotChannel, BotConversationHistory, LLMSkill, TokenConsumption
-
-
-def generate_stream_error(message):
-    """通用的流式错误生成函数"""
-
-    def generator():
-        error_chunk = {
-            "choices": [{"delta": {"content": message}, "index": 0, "finish_reason": "stop"}],
-            "id": "error",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-        }
-        yield f"data: {json.dumps(error_chunk)}\n\n"
-
-    response = StreamingHttpResponse(generator(), content_type="text/event-stream")
-    # 添加必要的头信息以防止缓冲
-    response["Cache-Control"] = "no-cache"
-    response["X-Accel-Buffering"] = "no"
-    return response
+from apps.opspilot.quota_rule_mgmt.quota_utils import QuotaUtils
+from apps.opspilot.utils.sse_chat import generate_stream_error, stream_chat
 
 
 @api_exempt
@@ -96,25 +77,37 @@ def validate_openai_token(token):
     user = UserAPISecret.objects.filter(api_secret=token).first()
     if not user:
         return False, {"choices": [{"message": {"role": "assistant", "content": "No authorization"}}]}
-    return True, user.team
+    return True, user
+
+
+def validate_remaining_token(skill_obj: LLMSkill):
+    try:
+        current_team = skill_obj.team[0]
+        remaining_token = QuotaUtils.get_remaining_token(current_team, skill_obj.llm_model.name)
+    except Exception as e:
+        logger.exception(e)
+        remaining_token = 1
+    if remaining_token <= 0:
+        raise Exception(_("Token used up"))
 
 
 def get_skill_and_params(kwargs, team):
     """Get skill object and prepare parameters for LLM invocation"""
     skill_id = kwargs.get("model")
-    skill_obj = LLMSkill.objects.filter(name=skill_id, team__contains=team).first()
+    skill_obj = LLMSkill.objects.filter(name=skill_id, team__contains=int(team)).first()
 
     if not skill_obj:
         return None, None, {"choices": [{"message": {"role": "assistant", "content": "No skill"}}]}
+    validate_remaining_token(skill_obj)
     num = kwargs.get("conversation_window_size") or skill_obj.conversation_window_size
-    chat_history = [{"text": i["content"], "event": i["role"]} for i in kwargs.get("messages", [])[-1 * num :]]
+    chat_history = [{"message": i["content"], "event": i["role"]} for i in kwargs.get("messages", [])[-1 * num :]]
 
     params = {
         "llm_model": skill_obj.llm_model_id,
-        "skill_prompt": kwargs.get("prompt", "") or skill_obj.skill_prompt,
+        "skill_prompt": kwargs.get("prompt", "") or kwargs.get("skill_prompt", "") or skill_obj.skill_prompt,
         "temperature": kwargs.get("temperature") or skill_obj.temperature,
         "chat_history": chat_history,
-        "user_message": chat_history[-1]["text"],
+        "user_message": chat_history[-1]["message"],
         "conversation_window_size": kwargs.get("conversation_window_size") or skill_obj.conversation_window_size,
         "enable_rag": kwargs.get("enable_rag") or skill_obj.enable_rag,
         "rag_score_threshold": [
@@ -124,9 +117,16 @@ def get_skill_and_params(kwargs, team):
         "enable_rag_knowledge_source": skill_obj.enable_rag_knowledge_source,
         "show_think": skill_obj.show_think,
         "tools": skill_obj.tools,
+        "skill_type": skill_obj.skill_type,
+        "group": skill_obj.team[0],
     }
 
     return skill_obj, params, None
+
+
+def invoke_chat(params, skill_obj, kwargs, current_ip, user_message):
+    return_data, _ = get_chat_msg(current_ip, kwargs, params, skill_obj, user_message)
+    return JsonResponse(return_data)
 
 
 def format_knowledge_sources(content, skill_obj, doc_map=None, title_map=None):
@@ -139,28 +139,18 @@ def format_knowledge_sources(content, skill_obj, doc_map=None, title_map=None):
     return content
 
 
-def get_knowledge_sources(content, skill_obj, doc_map=None, title_map=None):
-    if not skill_obj.enable_rag_knowledge_source:
-        return ""
-    knowledge_titles = {doc_map.get(k, {}).get("name") for k in title_map.keys()}
-    last_content = content.strip().split("\n")[-1]
-    if "引用知识" not in last_content and knowledge_titles:
-        return f'\n引用知识: {", ".join(knowledge_titles)}'
-    return ""
-
-
-def invoke_chat(params, skill_obj, kwargs, current_ip, user_message):
+def get_chat_msg(current_ip, kwargs, params, skill_obj, user_message):
     data, doc_map, title_map = llm_service.invoke_chat(params)
-    content = format_knowledge_sources(data["content"], skill_obj, doc_map, title_map)
+    content = format_knowledge_sources(data["message"], skill_obj, doc_map, title_map)
     return_data = {
         "id": skill_obj.name,
         "object": "chat.completion",
         "created": int(time.time()),
         "model": kwargs["model"],
         "usage": {
-            "prompt_tokens": data["input_tokens"],
-            "completion_tokens": data["output_tokens"],
-            "total_tokens": data["input_tokens"] + data["output_tokens"],
+            "prompt_tokens": data["prompt_tokens"],
+            "completion_tokens": data["completion_tokens"],
+            "total_tokens": data["prompt_tokens"] + data["completion_tokens"],
             "completion_tokens_details": {
                 "reasoning_tokens": 0,
                 "accepted_prediction_tokens": 0,
@@ -177,7 +167,7 @@ def invoke_chat(params, skill_obj, kwargs, current_ip, user_message):
         ],
     }
     insert_skill_log(current_ip, skill_obj.id, return_data, kwargs, user_message=user_message)
-    return JsonResponse(return_data)
+    return return_data, content
 
 
 @api_exempt
@@ -195,117 +185,29 @@ def openai_completions(request):
             return generate_stream_error(msg["choices"][0]["message"]["content"])
         else:
             return JsonResponse(msg)
-    team = msg
-    skill_obj, params, error = get_skill_and_params(kwargs, team)
-    if error:
-        if skill_obj:
-            user_message = params.get("user_message")
-            insert_skill_log(current_ip, skill_obj.id, error, kwargs, False, user_message)
+    user = msg
+    try:
+        skill_obj, params, error = get_skill_and_params(kwargs, user.team)
+        if error:
+            if skill_obj:
+                user_message = params.get("user_message")
+                insert_skill_log(current_ip, skill_obj.id, error, kwargs, False, user_message)
+            if stream_mode:
+                return generate_stream_error(error["choices"][0]["message"]["content"])
+            else:
+                return JsonResponse(error)
+    except Exception as e:
         if stream_mode:
-            return generate_stream_error(error["choices"][0]["message"]["content"])
+            return generate_stream_error(str(e))
         else:
-            return JsonResponse(error)
+            return JsonResponse({"choices": [{"message": {"role": "assistant", "content": str(e)}}]})
+    params["user_id"] = user.username
+    params["enable_km_route"] = skill_obj.enable_km_route
+    params["km_llm_model"] = skill_obj.km_llm_model
     user_message = params.get("user_message")
     if not stream_mode:
         return invoke_chat(params, skill_obj, kwargs, current_ip, user_message)
-    return stream_chat(params, skill_obj, kwargs, current_ip, user_message)
-
-
-def stream_chat(params, skill_obj, kwargs, current_ip, user_message):
-    show_think = params.pop("show_think", True)
-    try:
-        doc_map, title_map, team_info, chat_kwargs = llm_service.format_stream_chat_params(params)
-    except Exception as e:
-        logger.exception(e)
-        return generate_stream_error(str(e))
-
-    chat_server = RemoteRunnable(settings.OPENAI_CHAT_SERVICE_URL.rstrip("/") + "/stream")
-
-    async def generate_stream_async(token_data):
-        chat_content = ""
-        input_tokens = output_tokens = 0
-        async for result in chat_server.astream(chat_kwargs):
-            if isinstance(result, str):
-                result = json.loads(result)
-            if not result["result"]:
-                raise Exception(result["message"])
-            data = result["data"]
-            input_tokens += data["input_tokens"]
-            output_tokens += data["output_tokens"]
-            content = data["content"]
-            if not show_think:
-                # TODO
-                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-            stream_chunk = {
-                "choices": [{"delta": {"content": content}, "index": 0, "finish_reason": None}],
-                "id": skill_obj.name,
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-            }
-            chat_content += content
-            yield f"data: {json.dumps(stream_chunk)}\n\n"
-
-        # Final chunk indicating completion
-        source_content = get_knowledge_sources(chat_content, skill_obj, doc_map, title_map)
-        if source_content:
-            final_chunk = {
-                "choices": [{"delta": {"content": source_content}, "index": 0, "finish_reason": "stop"}],
-                "id": skill_obj.name,
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-            }
-            yield f"data: {json.dumps(final_chunk)}\n\n"
-            chat_content += source_content
-        token_data["input_tokens"] = input_tokens
-        token_data["output_tokens"] = output_tokens
-        token_data["chat_content"] = chat_content
-
-    def generate_stream():
-        # 将异步生成器转换为同步生成器
-        token_data = {"input_tokens": 0, "output_tokens": 0, "chat_content": ""}
-        loop = asyncio.new_event_loop()
-        async_gen = generate_stream_async(token_data)
-        while True:
-            try:
-                chunk = loop.run_until_complete(async_gen.__anext__())
-                yield chunk
-            except StopAsyncIteration:
-                break
-        used_token = token_data["input_tokens"] + token_data["output_tokens"]
-        return_data = {
-            "id": skill_obj.name,
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": kwargs["model"],
-            "usage": {
-                "prompt_tokens": token_data["input_tokens"],
-                "completion_tokens": token_data["output_tokens"],
-                "total_tokens": used_token,
-                "completion_tokens_details": {
-                    "reasoning_tokens": 0,
-                    "accepted_prediction_tokens": 0,
-                    "rejected_prediction_tokens": 0,
-                },
-            },
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": token_data["chat_content"]},
-                    "logprobs": None,
-                    "finish_reason": "stop",
-                    "index": 0,
-                }
-            ],
-        }
-
-        team_info.used_token += used_token
-        team_info.save()
-        insert_skill_log(current_ip, skill_obj.id, return_data, kwargs, user_message=user_message)
-
-    response = StreamingHttpResponse(generate_stream(), content_type="text/event-stream")
-    # 添加必要的头信息以防止缓冲
-    response["Cache-Control"] = "no-cache"
-    response["X-Accel-Buffering"] = "no"
-    return response
+    return stream_chat(params, skill_obj.name, kwargs, current_ip, user_message)
 
 
 @api_exempt

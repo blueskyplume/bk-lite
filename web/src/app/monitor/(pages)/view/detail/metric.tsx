@@ -7,7 +7,12 @@ import TimeSelector from '@/components/time-selector';
 import LineChart from '@/app/monitor/components/charts/lineChart';
 import Collapse from '@/components/collapse';
 import useApiClient from '@/utils/request';
-import { TableDataItem, TimeSelectorDefaultValue } from '@/app/monitor/types';
+import useMonitorApi from '@/app/monitor/api';
+import {
+  TableDataItem,
+  TimeSelectorDefaultValue,
+  TimeValuesProps,
+} from '@/app/monitor/types';
 import {
   MetricItem,
   GroupInfo,
@@ -16,14 +21,15 @@ import {
   IntergrationItem,
   ViewDetailProps,
 } from '@/app/monitor/types/monitor';
-import { COLLECT_TYPE_MAP } from '@/app/monitor/constants/monitor';
 import { useTranslation } from '@/utils/i18n';
 import {
   deepClone,
   findUnitNameById,
   mergeViewQueryKeyValues,
   renderChart,
+  getRecentTimeRange,
 } from '@/app/monitor/utils/common';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
 import dayjs, { Dayjs } from 'dayjs';
 import Icon from '@/components/icon';
 
@@ -34,14 +40,22 @@ const MetricViews: React.FC<ViewDetailProps> = ({
   instanceName,
   idValues,
 }) => {
-  const { get, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const {
+    getMonitorPlugin,
+    getMonitorMetrics,
+    getMetricsGroup,
+    getInstanceQuery,
+  } = useMonitorApi();
   const { t } = useTranslation();
+  const { getCollectType } = useObjectConfigInfo();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [metricId, setMetricId] = useState<number | null>();
-  const beginTime: number = dayjs().subtract(15, 'minute').valueOf();
-  const lastTime: number = dayjs().valueOf();
-  const [timeRange, setTimeRange] = useState<number[]>([beginTime, lastTime]);
+  const [timeValues, setTimeValues] = useState<TimeValuesProps>({
+    timeRange: [],
+    originValue: 15,
+  });
   const [timeDefaultValue, setTimeDefaultValue] =
     useState<TimeSelectorDefaultValue>({
       selectValue: 15,
@@ -69,21 +83,19 @@ const MetricViews: React.FC<ViewDetailProps> = ({
       }, frequence);
     }
     return () => clearTimer();
-  }, [frequence, timeRange, metricId, activeTab]);
+  }, [frequence, timeValues, metricId, activeTab]);
 
   useEffect(() => {
     handleSearch('refresh');
-  }, [timeRange]);
+  }, [timeValues]);
 
   const initPage = async () => {
     setLoading(true);
-    const responseData = await get('/monitor/api/monitor_plugin/', {
-      params: {
-        monitor_object_id: monitorObjectId,
-      },
+    const responseData = await getMonitorPlugin({
+      monitor_object_id: monitorObjectId,
     });
     const _plugins = responseData.map((item: IntergrationItem) => ({
-      label: COLLECT_TYPE_MAP[item.name || ''],
+      label: getCollectType(monitorObjectName, item.name as string),
       value: item.id,
     }));
     setPlugins(_plugins);
@@ -103,8 +115,8 @@ const MetricViews: React.FC<ViewDetailProps> = ({
       monitor_object_id: monitorObjectId,
       monitor_plugin_id: tab,
     };
-    const getGroupList = get(`/monitor/api/metrics_group/`, { params });
-    const getMetrics = get('/monitor/api/metrics/', { params });
+    const getGroupList = getMetricsGroup(params);
+    const getMetrics = getMonitorMetrics(params);
     setLoading(true);
     try {
       Promise.all([getGroupList, getMetrics])
@@ -151,8 +163,9 @@ const MetricViews: React.FC<ViewDetailProps> = ({
         ])
       ),
     };
-    const startTime = timeRange.at(0);
-    const endTime = timeRange.at(1);
+    const recentTimeRange = getRecentTimeRange(timeValues);
+    const startTime = recentTimeRange.at(0);
+    const endTime = recentTimeRange.at(1);
     const MAX_POINTS = 100; // 最大数据点数
     const DEFAULT_STEP = 360; // 默认步长
     if (startTime && endTime) {
@@ -171,9 +184,7 @@ const MetricViews: React.FC<ViewDetailProps> = ({
   const fetchViewData = async (data: IndexViewItem[], groupId: number) => {
     const metricList = data.find((item) => item.id === groupId)?.child || [];
     const requestQueue = metricList.map((item) =>
-      get(`/monitor/api/metrics_instance/query_range/`, {
-        params: getParams(item),
-      }).then((response) => ({
+      getInstanceQuery(getParams(item)).then((response) => ({
         id: item.id,
         data: response.data.result || [],
       }))
@@ -207,8 +218,11 @@ const MetricViews: React.FC<ViewDetailProps> = ({
     }
   };
 
-  const onTimeChange = (val: number[]) => {
-    setTimeRange(val);
+  const onTimeChange = (val: number[], originValue: number | null) => {
+    setTimeValues({
+      timeRange: val,
+      originValue,
+    });
   };
 
   const clearTimer = () => {
@@ -286,12 +300,15 @@ const MetricViews: React.FC<ViewDetailProps> = ({
       selectValue: 0,
     }));
     const _times = arr.map((item) => dayjs(item).valueOf());
-    setTimeRange(_times);
+    setTimeValues({
+      timeRange: _times,
+      originValue: 0,
+    });
   };
 
   const linkToSearch = (row: TableDataItem) => {
     const _row = {
-      monitor_object: monitorObjectName,
+      monitor_object: monitorObjectId + '',
       instance_id: instanceId as string,
       metric_id: row.name,
     };
@@ -340,7 +357,7 @@ const MetricViews: React.FC<ViewDetailProps> = ({
         ></Select>
         <TimeSelector
           defaultValue={timeDefaultValue}
-          onChange={(value) => onTimeChange(value)}
+          onChange={onTimeChange}
           onFrequenceChange={onFrequenceChange}
           onRefresh={onRefresh}
         />
@@ -396,18 +413,28 @@ const MetricViews: React.FC<ViewDetailProps> = ({
                           </Tooltip>
                         </span>
                         <div className="text-[var(--color-text-3)]">
-                          <SearchOutlined
-                            className="cursor-pointer"
-                            onClick={() => {
-                              linkToSearch(item);
-                            }}
-                          />
-                          <BellOutlined
-                            className="ml-[6px] cursor-pointer"
-                            onClick={() => {
-                              linkToPolicy(item);
-                            }}
-                          />
+                          <Tooltip
+                            placement="topRight"
+                            title={t('monitor.views.quickSearch')}
+                          >
+                            <SearchOutlined
+                              className="cursor-pointer"
+                              onClick={() => {
+                                linkToSearch(item);
+                              }}
+                            />
+                          </Tooltip>
+                          <Tooltip
+                            placement="topRight"
+                            title={t('monitor.events.createPolicy')}
+                          >
+                            <BellOutlined
+                              className="ml-[6px] cursor-pointer"
+                              onClick={() => {
+                                linkToPolicy(item);
+                              }}
+                            />
+                          </Tooltip>
                         </div>
                       </div>
                       <div className="h-[200px] mt-[10px]">

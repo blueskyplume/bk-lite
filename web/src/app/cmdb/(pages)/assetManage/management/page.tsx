@@ -19,32 +19,49 @@ import ModelModal from './list/modelModal';
 import { useRouter } from 'next/navigation';
 import useApiClient from '@/utils/request';
 import { useTranslation } from '@/utils/i18n';
-import { useCommon } from '@/app/cmdb/context/common';
 import PermissionWrapper from '@/components/permission';
 
 const AssetManage = () => {
   const { get, del, isLoading } = useApiClient();
   const { confirm } = Modal;
   const { t } = useTranslation();
-  const commonContext = useCommon();
   const router = useRouter();
   const groupRef = useRef<any>(null);
   const modelRef = useRef<any>(null);
-  const permissionGroupsInfo = useRef(
-    commonContext?.permissionGroupsInfo || null
-  );
-  const isAdmin = permissionGroupsInfo.current?.is_all;
   const [modelGroup, setModelGroup] = useState<GroupItem[]>([]);
   const [groupList, setGroupList] = useState<GroupItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [searchText, setSearchText] = useState<string>('');
   const [dragItem, setDragItem] = useState<any>({});
   const [dragOverItem, setDragOverItem] = useState<any>({});
+  const [rawModelGroup, setRawModelGroup] = useState<GroupItem[]>([]);
 
   useEffect(() => {
     if (isLoading) return;
     getModelGroup();
   }, [get, isLoading]);
+
+  useEffect(() => {
+    if (!searchText.trim()) {
+      setModelGroup(rawModelGroup);
+      return;
+    }
+    const lower = searchText.toLowerCase();
+    const filtered = rawModelGroup.reduce((acc: GroupItem[], group) => {
+      if (group.classification_name.toLowerCase().includes(lower)) {
+        acc.push({ ...group, count: group.list.length });
+      } else {
+        const matched = group.list.filter((m) =>
+          m.model_name.toLowerCase().includes(lower)
+        );
+        if (matched.length) {
+          acc.push({ ...group, list: matched, count: matched.length });
+        }
+      }
+      return acc;
+    }, []);
+    setModelGroup(filtered);
+  }, [searchText, rawModelGroup]);
 
   const showDeleteConfirm = (row: GroupItem) => {
     confirm({
@@ -96,22 +113,21 @@ const AssetManage = () => {
   const onSearchTxtChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchText(e.target.value);
   };
-
-  const onTxtPressEnter = () => {
-    getModelGroup();
-  };
-
-  const onTxtClear = () => {
-    getModelGroup();
+  const onSearchTxtEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    setSearchText((e.target as HTMLInputElement).value);
   };
 
   const linkToDetail = (model: ModelItem) => {
+    const permissionStr = Array.isArray(model.permission)
+      ? model.permission.join(',')
+      : model.permission || '';
     const params = new URLSearchParams({
       model_id: model.model_id,
       model_name: model.model_name,
       icn: model.icn,
       classification_id: model.classification_id,
       is_pre: model.is_pre,
+      permission: permissionStr,
     }).toString();
     router.push(`/cmdb/assetManage/management/detail/attributes?${params}`);
   };
@@ -146,7 +162,7 @@ const AssetManage = () => {
       const [modeldata, groupData, instCount] = await Promise.all([
         get('/cmdb/api/model/'),
         get('/cmdb/api/classification/'),
-        get('/cmdb/api/instance/model_inst_count/')
+        get('/cmdb/api/instance/model_inst_count/'),
       ]);
       const groups = deepClone(groupData).map((item: GroupItem) => ({
         ...item,
@@ -164,10 +180,9 @@ const AssetManage = () => {
           target.count++;
         }
       });
-      setGroupList(groupData);
+      setRawModelGroup(groups);
       setModelGroup(groups);
-    } catch (error) {
-      console.error(error);
+      setGroupList(groupData);
     } finally {
       setLoading(false);
     }
@@ -192,8 +207,8 @@ const AssetManage = () => {
               value={searchText}
               allowClear
               onChange={onSearchTxtChange}
-              onPressEnter={onTxtPressEnter}
-              onClear={onTxtClear}
+              onPressEnter={onSearchTxtEnter}
+              onClear={() => setSearchText('')}
             />
           </div>
           <div className="right-side">
@@ -224,30 +239,31 @@ const AssetManage = () => {
                     <span className="border-l-[4px] border-[var(--color-primary)] px-[4px] py-[1px] font-[600]">
                       {item.classification_name}（{item.count}）
                     </span>
-                    {isAdmin ||
-                      (!item.is_pre && (
-                        <div className={assetManageStyle.groupOperate}>
+                    {!item.is_pre && (
+                      <div className={assetManageStyle.groupOperate}>
+                        <PermissionWrapper
+                          requiredPermissions={['Edit Group']}
+                          instPermissions={item.permission}
+                        >
+                          <EditTwoTone
+                            className="edit mr-[6px] cursor-pointer"
+                            onClick={() => showGroupModal('edit', item)}
+                          />
+                        </PermissionWrapper>
+
+                        {!item.list.length && (
                           <PermissionWrapper
-                            requiredPermissions={['Edit Group']}
+                            requiredPermissions={['Delete Group']}
+                            instPermissions={item.permission}
                           >
-                            <EditTwoTone
-                              className="edit mr-[6px] cursor-pointer"
-                              onClick={() => showGroupModal('edit', item)}
+                            <DeleteTwoTone
+                              className="delete cursor-pointer"
+                              onClick={() => showDeleteConfirm(item)}
                             />
                           </PermissionWrapper>
-
-                          {!item.list.length && (
-                            <PermissionWrapper
-                              requiredPermissions={['Delete Group']}
-                            >
-                              <DeleteTwoTone
-                                className="delete cursor-pointer"
-                                onClick={() => showDeleteConfirm(item)}
-                              />
-                            </PermissionWrapper>
-                          )}
-                        </div>
-                      ))}
+                        )}
+                      </div>
+                    )}
                   </div>
                   <ul className={assetManageStyle.modelList}>
                     {item.list.map((model, index) => (
@@ -291,13 +307,15 @@ const AssetManage = () => {
                           <HolderOutlined
                             className={`${assetManageStyle.dragHander} cursor-move`}
                           />
-                          <Image
-                            src={getIconUrl(model)}
-                            className="block w-auto h-10"
-                            alt={t('picture')}
-                            width={100}
-                            height={40}
-                          />
+                          <div style={{ width: 40 }}>
+                            <Image
+                              src={getIconUrl(model)}
+                              className="block w-auto h-10"
+                              alt={t('picture')}
+                              width={40}
+                              height={40}
+                            />
+                          </div>
                           <div className="flex flex-col pl-[10px]">
                             <span className="text-[14px] pb-[4px] font-[600]">
                               {model.model_name}

@@ -8,17 +8,9 @@ import { useTranslation } from '@/utils/i18n';
 import { useClientData } from '@/context/client';
 import { useTheme } from '@/context/theme';
 import { useLocale } from '@/context/locale';
-import { CLIENT_TAGS_MAP } from '@/app/ops-console/constants/client';
+import { ClientData } from '@/types/index';
 import OperateModal from '@/components/operate-modal'
 import { useUserInfoContext } from '@/context/userInfo';
-
-
-interface CardData {
-  name: string;
-  description: string;
-  url: string;
-  client_id: string;
-}
 
 const ControlPage = () => {
   const { t } = useTranslation();
@@ -176,7 +168,7 @@ const ControlPage = () => {
               </div>
             ))
           ) : (
-            clientData.filter(cardData => cardData.client_id !== "ops-console").map((cardData: CardData, index: number) => (
+            clientData.filter(cardData => cardData.name !== "ops-console").map((cardData: ClientData, index: number) => (
               <div
                 key={index}
                 className="bg-[var(--color-bg)] p-4 rounded shadow-md flex flex-col justify-between relative h-[190px]"
@@ -197,14 +189,14 @@ const ControlPage = () => {
                 </div>
                 <div className="flex flex-col items-start">
                   <div className="flex items-center mb-2">
-                    <Icon type={cardData.client_id} className="text-6xl mb-2 mr-2" />
-                    <h2 className="text-xl font-bold mb-2">{cardData.name}</h2>
+                    <Icon type={cardData.icon || cardData.name} className="text-6xl mb-2 mr-2" />
+                    <h2 className="text-xl font-bold mb-2">{cardData.display_name}</h2>
                   </div>
                   <div className="flex items-center flex-wrap">
                     {
-                      CLIENT_TAGS_MAP[cardData.client_id]?.map((tag: string) => (
+                      cardData.tags?.map((tag: string) => (
                         <Tag key={tag} color={getRandomColor()} className="mb-1 mr-1 font-mini">
-                          {t(`opsConsole.${tag}`)}
+                          {tag}
                         </Tag>
                       ))
                     }

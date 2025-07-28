@@ -1,4 +1,4 @@
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.utils.translation import gettext as _
 from django_filters import filters
 from django_filters.rest_framework import FilterSet
@@ -6,9 +6,11 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.decorators.api_perminssion import HasRole
-from apps.core.logger import logger
+from apps.core.logger import opspilot_logger as logger
+from apps.core.mixinx import EncryptMixin
 from apps.core.utils.viewset_utils import AuthViewSet
+from apps.opspilot.bot_mgmt.views import validate_remaining_token
+from apps.opspilot.enum import SkillTypeChoices
 from apps.opspilot.knowledge_mgmt.models import KnowledgeBase
 from apps.opspilot.model_provider_mgmt.models import LLMModel, LLMSkill
 from apps.opspilot.model_provider_mgmt.models.llm_skill import SkillRequestLog, SkillTools
@@ -18,12 +20,13 @@ from apps.opspilot.model_provider_mgmt.serializers.llm_serializer import (
     SkillRequestLogSerializer,
     SkillToolsSerializer,
 )
-from apps.opspilot.model_provider_mgmt.services.llm_service import llm_service
 from apps.opspilot.quota_rule_mgmt.quota_utils import get_quota_client
+from apps.opspilot.utils.sse_chat import stream_chat
 
 
 class LLMFilter(FilterSet):
     name = filters.CharFilter(field_name="name", lookup_expr="icontains")
+    is_template = filters.NumberFilter(field_name="is_template", lookup_expr="exact")
 
 
 class LLMViewSet(AuthViewSet):
@@ -32,17 +35,32 @@ class LLMViewSet(AuthViewSet):
     filterset_class = LLMFilter
     permission_key = "skill"
 
+    @action(methods=["GET"], detail=False)
+    def get_template_list(self, request):
+        skill_list = LLMSkill.objects.filter(is_template=True)
+        serializer = self.get_serializer(skill_list, many=True)
+        return Response(serializer.data)
+
     def create(self, request, *args, **kwargs):
         params = request.data
-        client = get_quota_client(request)
-        skill_count, used_skill_count, __ = client.get_skill_quota()
-        if skill_count != -1 and skill_count <= used_skill_count:
-            return JsonResponse({"result": False, "message": _("Skill count exceeds quota limit.")})
+        if not request.user.is_superuser:
+            client = get_quota_client(request)
+            skill_count, used_skill_count, __ = client.get_skill_quota()
+            if skill_count != -1 and skill_count <= used_skill_count:
+                return JsonResponse({"result": False, "message": _("Skill count exceeds quota limit.")})
         validate_msg = self._validate_name(params["name"], request.user.group_list, params["team"])
         if validate_msg:
             message = _(f"A skill with the same name already exists in group {validate_msg}.")
             return JsonResponse({"result": False, "message": message})
+        params["team"] = params.get("team", []) or [int(request.COOKIES.get("current_team"))]
         params["enable_conversation_history"] = True
+        params[
+            "skill_prompt"
+        ] = """你是关于专业机器人，请按照以下要求进行回复
+1、请根据用户的问题，从知识库检索关联的知识进行总结回复
+2、请根据用户需求，从工具中选取适当的工具进行执行
+3、回复的语句请保证准确，不要杜撰
+4、请按照要点有条理的梳理答案"""
         serializer = self.get_serializer(data=params)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
@@ -51,6 +69,14 @@ class LLMViewSet(AuthViewSet):
 
     def update(self, request, *args, **kwargs):
         instance: LLMSkill = self.get_object()
+        if not request.user.is_superuser:
+            current_team = request.COOKIES.get("current_team", "0")
+            has_permission = self.get_has_permission(request.user, instance, current_team)
+            if not has_permission:
+                return JsonResponse(
+                    {"result": False, "message": _("You do not have permission to update this instance")}
+                )
+
         params = request.data
         validate_msg = self._validate_name(
             params["name"], request.user.group_list, params["team"], exclude_id=instance.id
@@ -62,6 +88,13 @@ class LLMViewSet(AuthViewSet):
             params.pop("team", [])
         if "llm_model" in params:
             params["llm_model_id"] = params.pop("llm_model")
+        if "km_llm_model" in params:
+            params["km_llm_model_id"] = params.pop("km_llm_model")
+        for tool in params.get("tools", []):
+            for i in tool.get("kwargs", []):
+                if i["type"] == "password":
+                    EncryptMixin.decrypt_field("value", i)
+                    EncryptMixin.encrypt_field("value", i)
         for key in params.keys():
             if hasattr(instance, key):
                 setattr(instance, key, params[key])
@@ -74,8 +107,30 @@ class LLMViewSet(AuthViewSet):
         instance.save()
         return JsonResponse({"result": True})
 
+    @staticmethod
+    def _create_error_stream_response(error_message):
+        """
+        创建错误的流式响应
+        用于在流式模式下返回错误信息
+        """
+        import json
+
+        def error_generator():
+            error_data = {"result": False, "message": error_message, "error": True}
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        response = StreamingHttpResponse(error_generator(), content_type="text/event-stream")
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response["X-Accel-Buffering"] = "no"  # Nginx
+        # response["Pragma"] = "no-cache"
+        # response["Expires"] = "0"
+        # response["X-Buffering"] = "no"  # Apache
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Headers"] = "Cache-Control"
+        return response
+
     @action(methods=["POST"], detail=False)
-    @HasRole()
     def execute(self, request):
         """
         {
@@ -87,18 +142,51 @@ class LLMViewSet(AuthViewSet):
             "rag_score_threshold": [{"knowledge_base": 1, "score": 0.7}], # RAG分数阈值
             "chat_history": "abc", # 对话历史
             "conversation_window_size": 10, # 对话窗口大小
-            "show_think": True # 是否展示think的内容
+            "show_think": True, # 是否展示think的内容
+            "group": 1,
+            "enable_rag_strict_mode": False,
+            "skill_name": "test"
         }
         """
         params = request.data
         params["username"] = request.user.username
         params["user_id"] = request.user.id
+        skill_type = SkillTypeChoices.KNOWLEDGE_TOOL
+        if params.get("tools"):
+            skill_type = SkillTypeChoices.BASIC_TOOL
         try:
-            return_data = llm_service.chat(params)
+            # 获取客户端IP
+            skill_obj = LLMSkill.objects.get(id=int(params["skill_id"]))
+            if not request.user.is_superuser:
+                current_team = request.COOKIES.get("current_team", "0")
+                has_permission = self.get_has_permission(request.user, skill_obj, current_team)
+                if not has_permission:
+                    return self._create_error_stream_response(_("You do not have permission to update this agent."))
+
+            current_ip = request.META.get("HTTP_X_FORWARDED_FOR")
+            if current_ip:
+                current_ip = current_ip.split(",")[0].strip()
+            else:
+                current_ip = request.META.get("REMOTE_ADDR", "")
+
+            # 验证配额限制（如果不是超级用户）
+            if not request.user.is_superuser:
+                validate_remaining_token(skill_obj)
+                # 这里可以添加具体的配额检查逻辑
+            params["skill_type"] = skill_type
+            params["tools"] = params.get("tools", [])
+            params["group"] = params["group"] if params.get("group") else skill_obj.team[0]
+            params["enable_km_route"] = (
+                params["enable_km_route"] if params.get("enable_km_route") else skill_obj.enable_km_route
+            )
+            params["km_llm_model"] = params["km_llm_model"] if params.get("km_llm_model") else skill_obj.km_llm_model
+            # 调用stream_chat函数返回流式响应
+            return stream_chat(params, skill_obj.name, {}, current_ip, params["user_message"])
+        except LLMSkill.DoesNotExist:
+            return self._create_error_stream_response(_("Skill not found."))
         except Exception as e:
             logger.exception(e)
-            return JsonResponse({"result": False, "message": str(e)})
-        return JsonResponse({"result": True, "data": return_data})
+            return self._create_error_stream_response(str(e))
 
 
 class LLMModelViewSet(AuthViewSet):
@@ -109,13 +197,7 @@ class LLMModelViewSet(AuthViewSet):
 
     @action(methods=["POST"], detail=False)
     def search_by_groups(self, request):
-        group_id = request.data.get("group_id", "")
-        if not group_id:
-            return JsonResponse({"result": False, "message": _("No Group ID")})
-        teams = [i["id"] for i in request.user.group_list]
-        if group_id not in teams:
-            return JsonResponse({"result": False, "message": _("Group does not exist.")})
-        model_list = LLMModel.objects.filter(team__contains=group_id).values_list("name", flat=True)
+        model_list = LLMModel.objects.all().values_list("name", flat=True)
         return JsonResponse({"result": True, "data": list(model_list)})
 
     def create(self, request, *args, **kwargs):

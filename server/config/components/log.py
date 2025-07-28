@@ -1,5 +1,6 @@
 import os
-from config.components.base import DEBUG, APP_CODE, BASE_DIR
+
+from config.components.base import APP_CODE, BASE_DIR, DEBUG
 
 if DEBUG:
     log_dir = os.path.join(os.path.dirname(BASE_DIR), "logs", APP_CODE)
@@ -14,11 +15,14 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "simple": {"format": "%(levelname)s %(message)s \n"},
+        "simple": {
+            "format": "%(levelname)s [%(asctime)s] [%(name)s] [%(filename)s:%(funcName)s:%(lineno)d] %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
         "verbose": {
             "format": "%(levelname)s [%(asctime)s] %(pathname)s "
-                      "%(lineno)d %(funcName)s %(process)d %(thread)d "
-                      "\n \t %(message)s \n",
+            "%(lineno)d %(funcName)s %(process)d %(thread)d "
+            "\n \t %(message)s \n",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
@@ -39,6 +43,49 @@ LOGGING = {
             "formatter": "verbose",
             "filename": os.path.join(log_dir, "db.log"),
         },
+        "alert": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "alert.log"),
+            "maxBytes": 100 * 1024 * 1024,  # 添加文件大小限制
+            "backupCount": 5,               # 添加备份文件数量
+            "encoding": "utf-8",            # 添加编码格式
+        },
+        "cmdb": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "cmdb.log"),
+        },
+        "operation_analysis": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "operation_analysis.log"),
+        },
+        "monitor": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "monitor.log"),
+        },
+        "node": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "node.log"),
+        },
+        "ops-console": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "ops-console.log"),
+        },
+        "system-manager": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "system-manager.log"),
+        },
+        "opspilot": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "verbose",
+            "filename": os.path.join(log_dir, "opspilot.log"),
+        },
     },
     "loggers": {
         "django": {"handlers": ["null"], "level": "INFO", "propagate": True},
@@ -50,6 +97,14 @@ LOGGING = {
         },
         "django.db.backends": {"handlers": ["db"], "level": "INFO", "propagate": True},
         "app": {"handlers": ["root", "console"], "level": "DEBUG", "propagate": True},
+        "cmdb": {"handlers": ["cmdb", "console"], "level": "DEBUG", "propagate": True},
+        "operation_analysis": {"handlers": ["operation_analysis", "console"], "level": "DEBUG", "propagate": True},
+        "monitor": {"handlers": ["monitor", "console"], "level": "DEBUG", "propagate": True},
+        "node": {"handlers": ["node", "console"], "level": "DEBUG", "propagate": True},
+        "ops-console": {"handlers": ["ops-console", "console"], "level": "DEBUG", "propagate": True},
+        "system-manager": {"handlers": ["system-manager", "console"], "level": "DEBUG", "propagate": True},
+        "opspilot": {"handlers": ["opspilot", "console"], "level": "DEBUG", "propagate": True},
+        "alert": {"handlers": ["alert", "console"], "level": "DEBUG", "propagate": True},
         "celery": {"handlers": ["root"], "level": "INFO", "propagate": True},
     },
 }

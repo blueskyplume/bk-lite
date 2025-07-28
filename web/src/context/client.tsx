@@ -4,10 +4,10 @@ import { ClientData } from '@/types/index';
 
 interface ClientDataContextType {
   clientData: ClientData[];
-  myClientData: ClientData[];
   loading: boolean;
   getAll: () => Promise<ClientData[]>;
   reset: () => void;
+  refresh: () => Promise<ClientData[]>;
 }
 
 const ClientDataContext = createContext<ClientDataContextType | undefined>(undefined);
@@ -15,7 +15,6 @@ const ClientDataContext = createContext<ClientDataContextType | undefined>(undef
 export const ClientProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { get, isLoading: apiLoading } = useApiClient();
   const [clientData, setClientData] = useState<ClientData[]>([]);
-  const [myClientData, setMyClientData] = useState<ClientData[]>([]);
   const [loading, setLoading] = useState(true);
   const initializedRef = useRef(false);
 
@@ -34,14 +33,6 @@ export const ClientProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       if (data) {
         setClientData(data);
       }
-      const myClientData = await get('/core/api/get_my_client/', {
-        params: {
-          client_id: process.env.NEXT_PUBLIC_CLIENT_ID || ''
-        }
-      });
-      if (myClientData) {
-        setMyClientData(myClientData);
-      }
       initializedRef.current = true;
     } catch (err) {
       console.error('Failed to fetch client data:', err);
@@ -59,18 +50,30 @@ export const ClientProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       await initialize();
     }
     return [...clientData];
-  }, [initialize, clientData, loading, apiLoading]);
+  }, [initialize, loading, apiLoading, clientData]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await get('/core/api/get_client/');
+      if (data) {
+        setClientData(data);
+      }
+      return data || [];
+    } catch (err) {
+      console.error('Failed to refresh client data:', err);
+      return [];
+    }
+  }, [get]);
 
   const reset = useCallback(() => {
     setClientData([]);
-    setMyClientData([]);
     setLoading(true);
     initializedRef.current = false;
   }, []);
 
   return (
     <ClientDataContext.Provider
-      value={{ clientData, myClientData, loading, getAll, reset }}
+      value={{ clientData, loading, getAll, reset, refresh }}
     >
       {children}
     </ClientDataContext.Provider>

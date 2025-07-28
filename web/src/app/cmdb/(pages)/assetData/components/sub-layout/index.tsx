@@ -40,7 +40,6 @@ const SideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
   layoutType = 'sideMenu',
   taskProgressComponent,
   pagePathName,
-  relationData,
   onBackButtonClick,
 }) => {
   const router = useRouter();
@@ -102,7 +101,7 @@ const SideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
               {topSection}
             </div>
           )}
-          <div className="w-full flex grow flex-1 h-full">
+          <div className="w-full flex grow flex-1 h-full overflow-hidden">
             {showSideMenu && menuItems.length > 0 && (
               <SideMenu
                 menuItems={menuItems}
@@ -110,7 +109,6 @@ const SideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
                 showProgress={showProgress}
                 taskProgressComponent={taskProgressComponent}
                 onBackButtonClick={onBackButtonClick}
-                relationData={relationData}
               >
                 {intro}
               </SideMenu>

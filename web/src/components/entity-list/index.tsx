@@ -16,6 +16,7 @@ const EntityList = <T,>({
   filterOptions = [],
   filter = false,
   filterLoading = false,
+  search = true,
   operateSection,
   menuActions,
   singleAction,
@@ -24,6 +25,8 @@ const EntityList = <T,>({
   onCardClick,
   changeFilter,
   infoText,
+  nameField = 'name',
+  descSlot,
 }: EntityListProps<T>) => {
   const { t } = useTranslation();
   const [searchTerm, setSearchTerm] = useState('');
@@ -43,11 +46,36 @@ const EntityList = <T,>({
   };
 
   const filteredItems = useMemo(() => {
-    return data.filter((item) => (item as any).name?.toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [data, searchTerm]);
+    return data.filter((item) => (item as any)[nameField]?.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [data, searchTerm, nameField]);
+
+  const renderAddButton = useCallback(() => {
+    if (!openModal) return null;
+    
+    return (
+      <PermissionWrapper
+        requiredPermissions={['Add']}
+        className="shadow-md p-4 rounded-xl flex items-center justify-center cursor-pointer bg-[var(--color-bg)]"
+      >
+        <div
+          className={`w-full h-full flex items-center justify-center ${styles.addNew}`}
+          onClick={(e) => {
+            e.preventDefault();
+            openModal();
+          }}
+        >
+          <div className="text-center">
+            <div className="text-2xl">+</div>
+            <div className="mt-2">{t('common.addNew')}</div>
+          </div>
+        </div>
+      </PermissionWrapper>
+    );
+  }, [openModal, t]);
 
   const renderCard = useCallback((item: T) => {
-    const { id, name, description, icon, tagList } = item as any;
+    const { id, description, icon, tagList } = item as any;
+    const name = (item as any)[nameField];
     const singleButtonAction = singleAction ? singleAction(item) : null;
     const isSingleButtonAction = singleButtonAction && singleActionType === 'button';
     const isSingleIconAction = singleActionType === 'icon' && singleButtonAction;
@@ -61,7 +89,7 @@ const EntityList = <T,>({
         onMouseLeave={() => setHoveredCard((current) => (current === id ? null : current))}
       >
         {menuActions && (
-          <div className="absolute right-2 z-10 top-6" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute right-2 z-1 top-6" onClick={(e) => e.stopPropagation()}>
             <Dropdown overlay={menuActions(item) as React.ReactElement} trigger={['click']} placement="bottomRight">
               <div className="cursor-pointer">
                 <Icon type="sangedian-copy" className="text-xl" />
@@ -93,6 +121,11 @@ const EntityList = <T,>({
           <p
             className={`text-xs mt-3 text-sm max-h-[66px] ${(isSingleButtonAction && hoveredCard === id) ? 'line-clamp-2' : 'line-clamp-3'} ${styles.desc}`}>{description}</p>
         </div>
+        {descSlot && (
+          <div className="mt-2">
+            {descSlot(item)}
+          </div>
+        )}
         {(tagList && tagList.length > 0) || infoText ? (
           <div className="mt-2 flex justify-between items-end">
             <div>
@@ -120,7 +153,7 @@ const EntityList = <T,>({
         )}
       </div>
     );
-  }, [hoveredCard]);
+  }, [hoveredCard, nameField]);
 
   return (
     <div className="w-full h-full">
@@ -138,14 +171,14 @@ const EntityList = <T,>({
             loading={filterLoading}
             onChange={handleFilter}
           />)}
-          <Search
+          {search && (<Search
             size={searchSize}
             allowClear
             enterButton
             placeholder={`${t('common.search')}...`}
             className="w-60"
             onSearch={handleSearch}
-          />
+          />)}
         </Space.Compact>
         {operateSection && <>{operateSection}</>}
       </div>
@@ -156,25 +189,16 @@ const EntityList = <T,>({
       ) : (
         <>
           {filteredItems.length === 0 ? (
-            <Empty description={t('common.noData')} />
+            openModal ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-6">
+                {renderAddButton()}
+              </div>
+            ) : (
+              <Empty description={t('common.noData')} />
+            )
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-6">
-              {openModal && (
-                <PermissionWrapper
-                  requiredPermissions={['Add']}
-                  className="shadow-md p-4 rounded-xl flex items-center justify-center cursor-pointer bg-[var(--color-bg)]"
-                >
-                  <div
-                    className="w-full h-full flex items-center justify-center"
-                    onClick={() => openModal()}
-                  >
-                    <div className="text-center">
-                      <div className="text-2xl">+</div>
-                      <div className="mt-2">{t('common.addNew')}</div>
-                    </div>
-                  </div>
-                </PermissionWrapper>
-              )}
+              {openModal && renderAddButton()}
               {filteredItems.map((item) => renderCard(item))}
             </div>
           )}

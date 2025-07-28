@@ -1,6 +1,38 @@
 # 模型分类标签
 import os
 
+from enum import Enum
+
+class BaseEnum(str, Enum):
+    """
+    枚举基类
+    """
+    def __new__(cls, value, chinese):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.chinese = chinese
+        return obj
+
+    def __str__(self):
+        return self.chinese
+
+    def __repr__(self):
+        return self.chinese
+
+    @classmethod
+    def get_value_choices(cls):
+        """获取枚举值列表"""
+        return [(item.value, item.value) for item in cls]
+
+    @classmethod
+    def get_chinese_by_value(cls, value):
+        """根据value获取中文描述"""
+        for item in cls:
+            if item.value == value:
+                return item.chinese
+        return None
+
+
 CLASSIFICATION = "classification"
 
 # 模型标签
@@ -14,6 +46,14 @@ MODEL_ASSOCIATION = "model_association"
 
 # 实例关联标签
 INSTANCE_ASSOCIATION = "instance_association"
+
+
+class ModelConstraintKey(BaseEnum):
+    """模型约束键"""
+    unique = ("is_only", "唯一键")
+    required = ("is_required", "必填项")
+    editable = ("editable", "可编辑")
+
 
 # 模型间的关联类型
 ASSOCIATION_TYPE = [
@@ -103,6 +143,15 @@ SUBORDINATE_MODEL = "subordinate_model"
 # 加密的属性列表
 ENCRYPTED_KEY = {"password", "secret_key", "encryption_key"}
 
+# ===================
+
+OPERATOR_INSTANCE = "资产实例"
+OPERATOR_MODEL = "模型管理"
+OPERATOR_COLLECT_TASK = "采集任务"
+
+
+# ===================
+
 
 # ====== 配置采集 ======
 
@@ -138,6 +187,11 @@ class CollectPluginTypes(object):
     K8S = "k8s"
     CLOUD = "cloud"
     PROTOCOL = "protocol"
+    HOST = "host"
+    DB = "db"
+    MIDDLEWARE = "middleware"
+    IP = "ip"
+    OTHER = "other"
 
     CHOICE = (
         (VM, "VM采集"),
@@ -145,6 +199,11 @@ class CollectPluginTypes(object):
         (K8S, "K8S采集"),
         (CLOUD, "云采集"),
         (PROTOCOL, "协议采集"),
+        (HOST, "主机采集"),
+        (DB, "数据库采集"),
+        (MIDDLEWARE, "中间件采集"),
+        (IP, "IP采集"),
+        (OTHER, "其他采集"),
     )
 
 
@@ -209,6 +268,60 @@ COLLECT_OBJ_TREE = [
             {"id": "network_topo", "model_id": "network_topo", "name": "网络拓扑", "task_type": CollectPluginTypes.SNMP,
              "type": CollectDriverTypes.PROTOCOL}
         ],
+    },
+    {
+        "id": "databases",
+        "name": "数据库",
+        "children": [
+            {"id": "mysql", "model_id": "mysql", "name": "Mysql", "task_type": CollectPluginTypes.PROTOCOL,
+             "type": CollectDriverTypes.PROTOCOL},
+            {
+                "id": "redis",
+                "model_id": "redis",
+                "name": "Redis",
+                "task_type": CollectPluginTypes.DB,
+                "type": CollectDriverTypes.JOB,
+            }
+        ],
+    },
+    {
+        "id": "cloud",
+        "name": "云平台",
+        "children": [
+            {"id": "aliyun", "model_id": "aliyun_account", "name": "阿里云", "task_type": CollectPluginTypes.CLOUD,
+             "type": CollectDriverTypes.PROTOCOL},
+            {
+                "id": "qcloud", "model_id": "qcloud", "name": "腾讯云", "task_type": CollectPluginTypes.CLOUD,
+                "type": CollectDriverTypes.PROTOCOL
+            },
+        ],
+    },
+    {
+        "id": "host_manage",
+        "name": "主机管理",
+        "children": [
+            {"id": "host", "model_id": "host", "name": "主机", "task_type": CollectPluginTypes.HOST,
+             "type": CollectDriverTypes.JOB}
+        ],
+    },
+    {
+        "id": "middleware",
+        "name": "中间件",
+        "children": [
+            {"id": "nginx", "model_id": "nginx", "name": "Nginx", "task_type": CollectPluginTypes.MIDDLEWARE,
+             "type": CollectDriverTypes.JOB},
+            {"id": "zookeeper", "model_id": "zookeeper", "name": "Zookeeper",
+             "task_type": CollectPluginTypes.MIDDLEWARE,
+             "type": CollectDriverTypes.JOB},
+            {"id": "kafka", "model_id": "kafka", "name": "Kafka", "task_type": CollectPluginTypes.MIDDLEWARE,
+             "type": CollectDriverTypes.JOB},
+            {"id": "etcd", "model_id": "etcd", "name": "Etcd", "task_type": CollectPluginTypes.MIDDLEWARE,
+             "type": CollectDriverTypes.JOB},
+            {"id": "rabbitmq", "model_id": "rabbitmq", "name": "RabbitMQ", "task_type": CollectPluginTypes.MIDDLEWARE,
+             "type": CollectDriverTypes.JOB},
+            {"id": "tomcat", "model_id": "tomcat", "name": "Tomcat", "task_type": CollectPluginTypes.MIDDLEWARE,
+             "type": CollectDriverTypes.JOB},
+        ],
     }
 
 ]
@@ -218,3 +331,9 @@ COLLECT_OBJ_TREE = [
 VICTORIAMETRICS_HOST = os.getenv("VICTORIAMETRICS_HOST", "")
 
 STARGAZER_URL = os.getenv("STARGAZER_URL", "http://stargazer:8083")
+# ===== 实例权限 =====
+PERMISSION_INSTANCES = "instances"  # 实例
+PERMISSION_TASK = "task"  # 采集任务
+PERMISSION_MODEL = "model"  # 模型
+OPERATE = "Operate"
+VIEW = "View"

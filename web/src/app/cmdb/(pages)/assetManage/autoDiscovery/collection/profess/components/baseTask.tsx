@@ -94,7 +94,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
     },
     ref
   ) => {
-    const { id: modelId } = modelItem;
+    const { model_id: modelId } = modelItem;
     const { t } = useTranslation();
     const { post, get } = useApiClient();
     const form = Form.useFormInstance();
@@ -126,9 +126,17 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
     const [instLoading, setInstLoading] = useState(false);
     const [ipRangeOrg, setIpRangeOrg] = useState<string[]>([]);
     const [selectedInstIds, setSelectedInstIds] = useState<number[]>([]);
+    const [instPagination, setInstPagination] = useState({
+      current: 1,
+      pageSize: 10,
+      total: 0,
+    });
     const dropdownItems = {
       items: NETWORK_DEVICE_OPTIONS,
     };
+
+    const isHost = nodeId === 'host_manage';
+    const isCommonSelectInstNode = ['databases', 'cloud', 'host_manage'].includes(nodeId as string);
 
     const instColumns = [
       {
@@ -145,6 +153,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
       },
     ];
 
+
     useEffect(() => {
       if (selectedData.length && instData.length) {
         const selectedInsts = instData.filter((item) =>
@@ -155,15 +164,20 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
       }
     }, [selectedData, instData]);
 
-    const fetchInstData = async (modelId: string) => {
+    const fetchInstData = async (modelId: string, page = 1, pageSize = 10) => {
       try {
         setInstLoading(true);
         const res = await post('/cmdb/api/instance/search/', {
           model_id: modelId,
-          page: 1,
-          page_size: 10000,
+          page,
+          page_size: pageSize,
         });
         setInstData(res.insts || []);
+        setInstPagination((prev) => ({
+          ...prev,
+          current: page,
+          total: res.count || 0,
+        }));
       } catch (error) {
         console.error('Failed to fetch instances:', error);
       } finally {
@@ -171,16 +185,17 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
       }
     };
 
+    const handleOpenDrawer = () => {
+      setInstVisible(true);
+      if (isCommonSelectInstNode) {
+        fetchInstData(modelId);
+      }
+    };
+
     const handleMenuClick = ({ key }: { key: string }) => {
       setRelateType(key);
       setInstVisible(true);
       fetchInstData(key);
-
-      const data = instData.filter((item) =>
-        selectedData.some((d) => d._id === item._id)
-      );
-      setSelectedRows(data);
-      setSelectedKeys(data.map((item) => item._id));
     };
 
     const handleRowSelect = (
@@ -378,7 +393,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
               label={t('Collection.taskNameLabel')}
               rules={rules.taskName}
             >
-              <Input placeholder={t('Collection.taskNamePlaceholder')} />
+              <Input placeholder={t('common.pleaseInput')} />
             </Form.Item>
 
             {/* 扫描周期 */}
@@ -401,7 +416,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                         <TimePicker
                           className="w-40 ml-2"
                           format="HH:mm"
-                          placeholder={t('Collection.selectTime')}
+                          placeholder={t('common.pleaseSelect')}
                         />
                       </Form.Item>
                     </Radio>
@@ -419,7 +434,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                           <InputNumber
                             className="w-20"
                             min={5}
-                            placeholder={t('common.inputMsg')}
+                            placeholder={t('common.pleaseInput')}
                           />
                         </Form.Item>
                         {t('Collection.executeInterval')}
@@ -434,13 +449,13 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
             </Form.Item>
 
             {/* 实例选择 */}
-            {['vmware', 'k8s'].includes(nodeId as string) && (
+            {['vmware', 'k8s', 'cloud'].includes(nodeId as string) && (
               <Form.Item label={instPlaceholder} required>
                 <Space>
                   <Form.Item name="instId" rules={rules.instId} noStyle>
                     <Select
-                      style={{ width: '420px' }}
-                      placeholder={instPlaceholder}
+                      style={{ width: '400px' }}
+                      placeholder={t('common.pleaseSelect')}
                       options={instOptions}
                       loading={instOptLoading}
                       showSearch
@@ -461,8 +476,9 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
             )}
 
             {/* ip选择 */}
-            {nodeId && ['network_topo', 'network'].includes(nodeId) && (
+            {nodeId && ['network_topo', 'network', 'databases', 'host_manage'].includes(nodeId) && (
               <>
+                { !isHost && 
                 <Radio.Group
                   value={collectionType}
                   className="ml-8 mb-6"
@@ -471,8 +487,9 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                   <Radio value="ip">{t('Collection.chooseIp')}</Radio>
                   <Radio value="asset">{t('Collection.chooseAsset')}</Radio>
                 </Radio.Group>
+                }
 
-                {collectionType === 'ip' ? (
+                {collectionType === 'ip' && !isHost ? (
                   <>
                     {/* IP范围 */}
                     <Form.Item
@@ -500,7 +517,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                       ]}
                     >
                       <Cascader
-                        placeholder={t('Model.selectOrganazationPlaceholder')}
+                        placeholder={t('common.pleaseSelect')}
                         options={organizationList}
                         value={ipRangeOrg}
                         onChange={(value) => setIpRangeOrg(value)}
@@ -518,13 +535,19 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                   >
                     <div>
                       <Space>
-                        <Dropdown
-                          menu={{ ...dropdownItems, onClick: handleMenuClick }}
-                        >
-                          <Button type="primary">
-                            {t('common.select')} <DownOutlined />
+                        {isCommonSelectInstNode ? (
+                          <Button type="primary" onClick={handleOpenDrawer}>
+                            {t('common.select')}
                           </Button>
-                        </Dropdown>
+                        ) : (
+                          <Dropdown
+                            menu={{ ...dropdownItems, onClick: handleMenuClick }}
+                          >
+                            <Button type="primary">
+                              {t('common.select')} <DownOutlined />
+                            </Button>
+                          </Dropdown>
+                        )}
                         <Button
                           onClick={handleBatchDelete}
                           disabled={displaySelectedKeys.length === 0}
@@ -551,9 +574,8 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                 )}
               </>
             )}
-
             {/* 接入点 */}
-            {nodeId !== 'k8s' && (
+            { nodeId !== 'k8s'  && (
               <Form.Item
                 label={t('Collection.accessPoint')}
                 name="accessPointId"
@@ -561,15 +583,12 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                 rules={[
                   {
                     required: true,
-                    message:
-                      t('common.selectMsg') + t('Collection.accessPoint'),
+                    message: t('required'),
                   },
                 ]}
               >
                 <Select
-                  placeholder={
-                    t('common.selectMsg') + t('Collection.accessPoint')
-                  }
+                  placeholder={t('common.pleaseSelect')}
                   options={accessPoints}
                   loading={accessPointLoading}
                 />
@@ -609,7 +628,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
                   rules={rules.timeout}
                 >
                   <InputNumber
-                    className="w-28"
+                    className="w-40"
                     min={timeoutProps.min}
                     addonAfter={timeoutProps.addonAfter}
                   />
@@ -637,7 +656,7 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
         />
 
         <Drawer
-          title={`选择${dropdownItems.items.find((item) => item.key === relateType)?.label || '资产'}`}
+          title={isCommonSelectInstNode ? t('Collection.chooseAsset') : `选择${dropdownItems.items.find((item) => item.key === relateType)?.label || '资产'}`}
           width={620}
           open={instVisible}
           onClose={handleDrawerClose}
@@ -657,11 +676,14 @@ const BaseTaskForm = forwardRef<BaseTaskRef, BaseTaskFormProps>(
           <CustomTable
             columns={instColumns}
             dataSource={instData}
-            rowKey="_id"
-            pagination={{ pageSize: 10 }}
-            scroll={{ y: 400 }}
             size="middle"
             loading={instLoading}
+            rowKey="_id"
+            scroll={{ y: 'calc(100vh - 280px)' }}
+            pagination={{
+              ...instPagination,
+              onChange: (page, pageSize) => fetchInstData(isCommonSelectInstNode ? modelId : relateType, page, pageSize),
+            }}
             rowSelection={{
               type: 'checkbox',
               selectedRowKeys: selectedKeys,

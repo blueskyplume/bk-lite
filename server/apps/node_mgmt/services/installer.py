@@ -1,7 +1,22 @@
+from apps.node_mgmt.constants import NODE_SERVER_URL_KEY
+from apps.node_mgmt.models import SidecarEnv
 from apps.node_mgmt.models.installer import ControllerTask, ControllerTaskNode, CollectorTaskNode, CollectorTask
+from apps.node_mgmt.utils.installer import get_install_command
+from apps.node_mgmt.utils.token_auth import generate_token
 
 
 class InstallerService:
+
+    @staticmethod
+    def get_install_command(os, package_name, cloud_region_id, organizations, node_name):
+        """获取安装命令"""
+        # 获取安装命令所需参数
+        sidecar_token = generate_token({"username": "admin"})
+        obj = SidecarEnv.objects.filter(cloud_region=cloud_region_id, key=NODE_SERVER_URL_KEY).first()
+        server_url = obj.value if obj else "null"
+        groups = ",".join([ str(i) for i in organizations])
+        return get_install_command(os, package_name, cloud_region_id, sidecar_token, server_url, groups, node_name)
+
     @staticmethod
     def install_controller(cloud_region_id, work_node, package_version_id, nodes):
         """安装控制器"""
@@ -17,12 +32,13 @@ class InstallerService:
             creates.append(ControllerTaskNode(
                 task_id=task_obj.id,
                 ip=node["ip"],
+                node_name=node["node_name"],
                 os=node["os"],
                 organizations=node["organizations"],
                 port=node["port"],
                 username=node["username"],
                 password=node["password"],
-                result={"status": "waiting", "message": ""},
+                status="waiting",
             ))
         ControllerTaskNode.objects.bulk_create(creates, batch_size=100)
         return task_obj.id
@@ -45,7 +61,7 @@ class InstallerService:
                 port=node["port"],
                 username=node["username"],
                 password=node["password"],
-                result={"status": "waiting", "message": ""},
+                status="waiting",
             ))
         ControllerTaskNode.objects.bulk_create(creates, batch_size=100)
         return task_obj.id
@@ -61,6 +77,7 @@ class InstallerService:
                 os=task_node.os,
                 organizations=task_node.organizations,
                 port=task_node.port,
+                status=task_node.status,
                 result=task_node.result,
             ))
         return result
@@ -79,7 +96,6 @@ class InstallerService:
                 task_id=task_obj.id,
                 node_id=node_id,
                 status="waiting",
-                result={"status": "waiting", "message": ""},
             ))
         CollectorTaskNode.objects.bulk_create(creates, batch_size=100)
         return task_obj.id

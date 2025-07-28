@@ -8,6 +8,24 @@ declare module "next-auth" {
     username?: string;
     roles?: string[];
     zoneinfo?: string;
+    temporary_pwd?: boolean;
+    enable_otp?: boolean;
+    qrcode?: boolean;
+    user?: User;
+  }
+
+  interface User {
+    id: string;
+    username?: string;
+    locale?: string;
+    token?: string;
+    temporary_pwd?: boolean;
+    enable_otp?: boolean;
+    qrcode?: boolean;
+    wechatWorkId?: string;
+    provider?: string;
+    wechatOpenId?: string;
+    wechatUnionId?: string;
   }
 }
 
@@ -22,5 +40,14 @@ declare module "next-auth/jwt" {
     username?: string;
     roles?: string[];
     zoneinfo?: string;
+    id?: string;
+    token?: string;
+    temporary_pwd?: boolean;
+    enable_otp?: boolean;
+    qrcode?: boolean;
+    wechatWorkId?: string;
+    provider?: string;
+    wechatOpenId?: string;
+    wechatUnionId?: string;
   }
 }

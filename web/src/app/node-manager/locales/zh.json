@@ -12,6 +12,7 @@
     "refSuccess": "刷新成功",
     "success": "成功",
     "quesuccess": "查询成功",
+    "deleteSuccess": "删除成功！",
     "applysuccess": "应用成功!",
     "unapply": "解绑",
     "search": "搜索...",
@@ -25,13 +26,28 @@
     "download": "下载",
     "successfulDownloaded": "下载成功！",
     "operationSuccessful": "操作成功！",
-    "name": "名称"
+    "name": "名称",
+    "bulkOperation": "批量操作",
+    "createdBy": "创建者",
+    "createdAt": "创建时间",
+    "updatedBy": "更新人",
+    "updatedAt": "更新时间",
+    "inputPassword": "请输入密码",
+    "reset": "重置",
+    "deleteTips": "您确定要修改此项吗？"
   },
   "node-manager": {
     "cloudregion": {
       "editform": {
         "title": "编辑云区域",
         "Introduction": "简介"
+      },
+      "addform": {
+        "title": "新增云区域"
+      },
+      "deleteform": {
+        "title": "删除云区域",
+        "deleteInfo": "您确定要删除此云区域吗?"
       },
       "node": {
         "node": "节点",
@@ -47,6 +63,7 @@
         "startCollector": "开启采集器",
         "restartCollector": "重启采集器",
         "uninstallCollector": "卸载采集器",
+        "stopCollector": "停止采集器",
         "installCollector": "安装采集器",
         "config": "配置",
         "btntext1": "如果您没有所需的配置文件，请单击",
@@ -81,7 +98,6 @@
         "loginPort": "登录端口",
         "loginPassword": "登录密码",
         "toInstall": "安装",
-        "autoInstall": "自动安装采集器",
         "manuallyInstall": "手动安装sidecar",
         "sidecarVersion": "控制器版本",
         "sidecarVersionDes": "请选择远程安装的控制器版本。",
@@ -90,22 +106,35 @@
         "viewLog": "查看错误日志",
         "viewGuide": "查看指引",
         "installing": "安装中",
+        "uninstalling": "卸载中",
         "successInstall": "安装成功",
+        "successUninstall": "卸载成功",
         "failInstall": "安装失败",
+        "failUninstall": "卸载失败",
         "installingTips": "仍有节点正在安装中，返回后可在列表中查看安装正常的节点。",
         "installationGuide": "安装指引",
         "log": "日志",
-        "downloadTips": "1、选择适用的版本下载控制器安装包和配置文件模板",
+        "downloadTips": "1、根据节点名称和组织，选择适用的版本下载控制器安装包和配置文件模板",
         "scriptTips": "2、执行如下脚本，进行控制器安装",
         "finishTips": "3、手动安装后，可在节点列表中查看控制器正常的节点",
         "uninstallSidecarTips": "确定卸载这些sidecar吗？",
         "restartSidecarTips": "确定重启这些sidecar吗？",
         "version": "版本号",
         "downloadPackage": "下载安装包",
-        "downloadTemplate": "下载模板"
+        "downloadTemplate": "下载模板",
+        "telegrafConfigTips": "开启Telegraf探针时，自动初始化并绑定对应配置文件，后续如需修改，请前往“配置列表”中修改。",
+        "configuration": "配置文件",
+        "active": "活跃",
+        "inactive": "不活跃",
+        "unknown": "未知的",
+        "stop": "停止",
+        "nodeName": "节点名称",
+        "deleteNodeTips": "自动安装的节点，建议通过卸载控制器进行删除，手动删除节点后，若后续该节点sidecar正常上报，则会自动更新在该列表中。"
       },
       "Configuration": {
         "system": "操作系统",
+        "linux": "Linux",
+        "windows": "Windows",
         "collector": "采集器",
         "count": "节点总数",
         "ip": "IP",
@@ -120,13 +149,19 @@
         "parameterdes": "参数说明",
         "varconfig": "这些变量可用于配置中",
         "subconfiguration": "子配置",
-        "configurationList": "配置文件列表"
+        "configurationList": "配置文件列表",
+        "collectionType": "采集类型",
+        "configurationType": "配置类型"
       },
       "variable": {
         "value": "数值",
+        "valueType": "类型",
+        "string": "字符串",
+        "password": "密码",
         "desc": "描述",
         "deletevariable": "删除变量",
-        "deleteinfo": "您确定要删除此变量吗？"
+        "deleteinfo": "您确定要删除此变量吗？",
+        "variableNameTips": "仅允许字符 A-Z, a-z, 0-9, 和 _"
       }
     },
     "collector": {
@@ -148,8 +183,9 @@
       "deleteInfo": "您确定要删除此采集器吗？",
       "editInfo": "您确定要修改此采集器吗？",
       "single": "单选Windows/Linux",
-      "updatedBy": "更新人",
-      "updatedAt": "更新时间"
+      "executeFilePath": "执行文件路径",
+      "executeParameters": "执行参数",
+      "clickUpload": "点击上传"
     }
   }
 }

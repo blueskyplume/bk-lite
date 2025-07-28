@@ -1,12 +1,10 @@
 from apps.opspilot.knowledge_mgmt.models.knowledge_document import DocumentStatus
-from apps.opspilot.models import KnowledgeDocument, OCRProvider
+from apps.opspilot.models import KnowledgeDocument
 
 
 class KnowledgeDocumentUtils(object):
     @staticmethod
-    def get_new_document(kwargs, username, ocr_model=None):
-        if not ocr_model:
-            ocr_model = OCRProvider.objects.first()
+    def get_new_document(kwargs, username, domain="domain.com", ocr_model=None):
         return KnowledgeDocument.objects.create(
             knowledge_base_id=kwargs["knowledge_base_id"],
             name=kwargs["name"],
@@ -15,4 +13,5 @@ class KnowledgeDocumentUtils(object):
             train_status=DocumentStatus.PENDING,
             enable_ocr_parse=True,
             ocr_model=ocr_model,
+            domain=domain,
         )

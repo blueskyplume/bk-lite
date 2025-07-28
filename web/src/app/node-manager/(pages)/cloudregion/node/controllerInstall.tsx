@@ -6,8 +6,16 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
-import { Spin, Button, Form, Select, Input, Segmented, message } from 'antd';
-import type { FormInstance } from 'antd';
+import {
+  Spin,
+  Button,
+  Form,
+  Select,
+  Input,
+  Segmented,
+  message,
+  InputNumber,
+} from 'antd';
 import useApiClient from '@/utils/request';
 import { useTranslation } from '@/utils/i18n';
 import { ModalRef, TableDataItem } from '@/app/node-manager/types';
@@ -16,7 +24,6 @@ import {
   ControllerInstallProps,
 } from '@/app/node-manager/types/cloudregion';
 import controllerInstallSyle from './index.module.scss';
-import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'next/navigation';
 import {
   useInstallWays,
@@ -28,22 +35,15 @@ import {
   EditOutlined,
   PlusCircleOutlined,
   MinusCircleOutlined,
+  ArrowLeftOutlined,
 } from '@ant-design/icons';
-import { cloneDeep, uniqueId } from 'lodash';
+import { cloneDeep, isNumber, uniqueId } from 'lodash';
 const { Option } = Select;
-import useApiCloudRegion from '@/app/node-manager/api/cloudregion';
-import useCloudId from '@/app/node-manager/hooks/useCloudid';
+import useApiCloudRegion from '@/app/node-manager/api/cloudRegion';
+import useCloudId from '@/app/node-manager/hooks/useCloudRegionId';
 import ControllerTable from './controllerTable';
 import ManualInstall from './manualInstall';
 import { useUserInfoContext } from '@/context/userInfo';
-
-const INFO_ITEM = {
-  ip: null,
-  organizations: [],
-  port: null,
-  username: null,
-  password: null,
-};
 
 const ControllerInstall: React.FC<ControllerInstallProps> = ({
   cancel,
@@ -52,18 +52,29 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
   const { t } = useTranslation();
   const { isLoading } = useApiClient();
   const commonContext = useUserInfoContext();
-  const { getnodelist, getPackages, installController } = useApiCloudRegion();
+  const INFO_ITEM = {
+    ip: null,
+    organizations: [commonContext.selectedGroup?.id],
+    port: 22,
+    username: 'root',
+    password: null,
+    node_name: null,
+  };
+  const { getPackages, installController } = useApiCloudRegion();
   const cloudId = useCloudId();
   const searchParams = useSearchParams();
   const [form] = Form.useForm();
-  const instRef = useRef<ModalRef>(null);
-  const tableFormRef = useRef<FormInstance>(null);
+  const installWays = useInstallWays();
   const name = searchParams.get('name') || '';
+  const groupList = (commonContext?.groups || []).map((item) => ({
+    label: item.name,
+    value: item.id,
+  }));
+  const instRef = useRef<ModalRef>(null);
   const [pageLoading, setPageLoading] = useState<boolean>(false);
   const [confirmLoading, setConfirmLoading] = useState<boolean>(false);
   const [installMethod, setInstallMethod] = useState<string>('remoteInstall');
   const [showInstallTable, setShowInstallTable] = useState<boolean>(false);
-  const [nodeList, setNodeList] = useState<TableDataItem[]>([]);
   const [taskId, setTaskId] = useState<number | null>(null);
   const [sidecarVersionList, setSidecarVersionList] = useState<TableDataItem[]>(
     []
@@ -74,17 +85,6 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
       id: '0',
     },
   ]);
-  const currentTableData = useRef<TableDataItem[]>([
-    {
-      ...cloneDeep(INFO_ITEM),
-      id: '0',
-    },
-  ]);
-  const installWays = useInstallWays();
-  const groupList = (commonContext?.groups || []).map((item) => ({
-    label: item.name,
-    value: item.id,
-  }));
 
   const tableColumns = useMemo(() => {
     const columns: any = [
@@ -95,11 +95,28 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
         key: 'ip',
         render: (value: string, row: TableDataItem) => {
           return (
-            <>
-              <Form.Item name={`ip-${row.id}`}>
-                <Input onBlur={(e) => handleInputBlur(e, row, 'ip')}></Input>
-              </Form.Item>
-            </>
+            <Input
+              defaultValue={row.ip}
+              value={row.ip}
+              placeholder={t('common.inputMsg')}
+              onChange={(e) => handleInputChange(e, row, 'ip')}
+            />
+          );
+        },
+      },
+      {
+        title: t('node-manager.cloudregion.node.nodeName'),
+        dataIndex: 'node_name',
+        width: 100,
+        key: 'node_name',
+        render: (value: string, row: TableDataItem) => {
+          return (
+            <Input
+              defaultValue={row.node_name}
+              value={row.node_name}
+              placeholder={t('common.inputMsg')}
+              onChange={(e) => handleInputChange(e, row, 'node_name')}
+            />
           );
         },
       },
@@ -118,24 +135,21 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
         key: 'organizations',
         render: (value: string, row: TableDataItem) => {
           return (
-            <>
-              <Form.Item name={`organizations-${row.id}`}>
-                <Select
-                  mode="multiple"
-                  maxTagCount="responsive"
-                  value={row.organizations}
-                  onChange={(group) =>
-                    handleSelectChange(group, row, 'organizations')
-                  }
-                >
-                  {groupList.map((item) => (
-                    <Option value={item.value} key={item.value}>
-                      {item.label}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </>
+            <Select
+              mode="multiple"
+              maxTagCount="responsive"
+              defaultValue={row.organizations}
+              value={row.organizations}
+              onChange={(group) =>
+                handleSelectChange(group, row, 'organizations')
+              }
+            >
+              {groupList.map((item) => (
+                <Option value={item.value} key={item.value}>
+                  {item.label}
+                </Option>
+              ))}
+            </Select>
           );
         },
       },
@@ -154,11 +168,14 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
         key: 'port',
         render: (value: string, row: TableDataItem) => {
           return (
-            <>
-              <Form.Item name={`port-${row.id}`}>
-                <Input onBlur={(e) => handleInputBlur(e, row, 'port')}></Input>
-              </Form.Item>
-            </>
+            <InputNumber
+              className="w-full"
+              min={1}
+              precision={0}
+              value={row.port}
+              defaultValue={row.port}
+              onChange={(e) => handlePortChange(e, row, 'port')}
+            />
           );
         },
       },
@@ -177,13 +194,11 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
         key: 'username',
         render: (value: string, row: TableDataItem) => {
           return (
-            <>
-              <Form.Item name={`username-${row.id}`}>
-                <Input
-                  onBlur={(e) => handleInputBlur(e, row, 'username')}
-                ></Input>
-              </Form.Item>
-            </>
+            <Input
+              defaultValue={row.username}
+              value={row.username}
+              onChange={(e) => handleInputChange(e, row, 'username')}
+            />
           );
         },
       },
@@ -202,13 +217,12 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
         key: 'password',
         render: (value: string, row: TableDataItem) => {
           return (
-            <>
-              <Form.Item name={`password-${row.id}`}>
-                <Input.Password
-                  onBlur={(e) => handleInputBlur(e, row, 'password')}
-                ></Input.Password>
-              </Form.Item>
-            </>
+            <Input.Password
+              defaultValue={row.password}
+              value={row.password}
+              placeholder={t('common.inputMsg')}
+              onChange={(e) => handleInputChange(e, row, 'password')}
+            />
           );
         },
       },
@@ -224,7 +238,7 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
               <Button
                 type="link"
                 icon={<PlusCircleOutlined />}
-                onClick={() => addInfoItem(index)}
+                onClick={() => addInfoItem(row)}
               ></Button>
               {!!index && (
                 <Button
@@ -241,7 +255,7 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
     return installMethod === 'remoteInstall'
       ? columns
       : [...columns.slice(0, 3), columns[columns.length - 1]];
-  }, [installMethod]);
+  }, [installMethod, tableData]);
 
   const isRemote = useMemo(() => {
     return installMethod === 'remoteInstall';
@@ -249,7 +263,7 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
 
   useEffect(() => {
     if (!isLoading) {
-      initPage();
+      getSidecarList();
     }
   }, [isLoading]);
 
@@ -257,28 +271,28 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
     form.resetFields();
   }, [name]);
 
-  useEffect(() => {
-    if (tableData?.length && tableFormRef.current) {
-      const obj = tableFormRef.current.getFieldsValue() || {};
-      setTimeout(() => {
-        tableFormRef.current?.setFieldsValue(cloneDeep(obj));
-      });
+  const validateTableData = useCallback(() => {
+    if (
+      tableData.every((item) =>
+        Object.values(item).every((tex) =>
+          isNumber(tex) ? !!tex : !!tex?.length
+        )
+      )
+    ) {
+      return Promise.resolve();
     }
+    return Promise.reject(new Error(t('common.valueValidate')));
   }, [tableData]);
 
   const handleBatchEdit = useCallback(
     (row: TableDataItem) => {
-      const data = cloneDeep(currentTableData.current);
-      const obj: any = {};
+      const data = cloneDeep(tableData);
       data.forEach((item) => {
         item[row.field] = row.value;
-        obj[`${row.field}-${item.id}`] = row.value;
       });
-      tableFormRef.current?.setFieldsValue(obj);
-      currentTableData.current = data;
       setTableData(data);
     },
-    [currentTableData]
+    [tableData]
   );
 
   const batchEditModal = (field: string) => {
@@ -296,7 +310,6 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
       sidecar_package: null,
       executor_package: null,
     });
-    tableFormRef.current?.resetFields();
     const data = [
       {
         ...cloneDeep(INFO_ITEM),
@@ -304,39 +317,49 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
       },
     ];
     setTableData(data);
-    currentTableData.current = data;
   };
 
-  const addInfoItem = (index: number) => {
-    const data = cloneDeep(currentTableData.current);
+  const addInfoItem = (row: TableDataItem) => {
+    const data = cloneDeep(tableData);
+    const index = data.findIndex((item) => item.id === row.id);
     data.splice(index + 1, 0, {
       ...cloneDeep(INFO_ITEM),
       id: uniqueId(),
     });
-    currentTableData.current = data;
     setTableData(data);
   };
 
   const deleteInfoItem = (row: TableDataItem) => {
-    const data = cloneDeep(currentTableData.current);
+    const data = cloneDeep(tableData);
     const index = data.findIndex((item) => item.id === row.id);
     if (index != -1) {
       data.splice(index, 1);
-      currentTableData.current = data;
       setTableData(data);
     }
   };
 
-  const handleInputBlur = (
+  const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement>,
     row: TableDataItem,
     key: string
   ) => {
-    const data = cloneDeep(currentTableData.current);
+    const data = cloneDeep(tableData);
     const index = data.findIndex((item) => item.id === row.id);
     if (index !== -1) {
       data[index][key] = e.target.value;
-      currentTableData.current = data;
+      if (key === 'ip' && e.target.value) {
+        data[index].node_name = e.target.value + '-' + cloudId;
+      }
+      setTableData(data);
+    }
+  };
+
+  const handlePortChange = (value: number, row: TableDataItem, key: string) => {
+    const data = cloneDeep(tableData);
+    const index = data.findIndex((item) => item.id === row.id);
+    if (index !== -1) {
+      data[index][key] = value;
+      setTableData(data);
     }
   };
 
@@ -345,43 +368,22 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
     row: TableDataItem,
     key: string
   ) => {
-    const data = cloneDeep(currentTableData.current);
+    const data = cloneDeep(tableData);
     const index = data.findIndex((item) => item.id === row.id);
     if (index !== -1) {
       data[index][key] = value;
-      currentTableData.current = data;
       setTableData(data);
     }
   };
 
-  const initPage = () => {
-    setPageLoading(true);
-    Promise.all([getNodes(), getSidecarList()]).finally(() => {
-      setPageLoading(false);
-    });
-  };
-
-  const getNodes = async () => {
-    const data = await getnodelist({
-      cloud_region_id: Number(cloudId),
-      operating_system: config.os,
-    });
-    setNodeList(data);
-  };
-
   const getSidecarList = async () => {
-    const data = await getPackages({ os: config.os });
-    setSidecarVersionList(data);
-  };
-
-  const validateTableData = async () => {
-    const data = cloneDeep(currentTableData.current);
-    if (
-      data.every((item) => Object.values(item).every((tex) => !!tex?.length))
-    ) {
-      return Promise.resolve();
+    setPageLoading(true);
+    try {
+      const data = await getPackages({ os: config.os, object: 'Controller' });
+      setSidecarVersionList(data);
+    } finally {
+      setPageLoading(false);
     }
-    return Promise.reject(new Error(t('common.valueValidate')));
   };
 
   const goBack = () => {
@@ -391,18 +393,19 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
   const handleCreate = () => {
     setConfirmLoading(false);
     form.validateFields().then((values) => {
-      const nodes = currentTableData.current.map((item) => ({
+      const nodes = tableData.map((item) => ({
         ip: item.ip,
         os: config.os,
         organizations: item.organizations,
-        port: +item.port,
+        port: item.port,
         username: item.username,
         password: item.password,
+        node_name: item.node_name,
       }));
       const params = {
-        cloud_region_id: +cloudId,
+        cloud_region_id: cloudId,
         nodes,
-        work_node: values.work_node || '',
+        work_node: name,
         package_id: values.sidecar_package || '',
       };
       create(params);
@@ -433,7 +436,7 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
         <ControllerTable
           config={{
             taskId,
-            type: 'controller',
+            type: 'installController',
             groupList,
           }}
           cancel={cancelInstall}
@@ -468,36 +471,6 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
                 <>
                   <Form.Item<ControllerInstallFields>
                     required
-                    label={t('node-manager.cloudregion.node.defaultNode')}
-                  >
-                    <Form.Item
-                      name="work_node"
-                      noStyle
-                      rules={[
-                        { required: true, message: t('common.required') },
-                      ]}
-                    >
-                      <Select
-                        style={{
-                          width: 300,
-                        }}
-                        showSearch
-                        allowClear
-                        placeholder={t('common.pleaseSelect')}
-                      >
-                        {nodeList.map((item) => (
-                          <Option value={item.id} key={item.id}>
-                            {item.name}
-                          </Option>
-                        ))}
-                      </Select>
-                    </Form.Item>
-                    <div className={controllerInstallSyle.description}>
-                      {t('node-manager.cloudregion.node.defaultNodeDes')}
-                    </div>
-                  </Form.Item>
-                  <Form.Item<ControllerInstallFields>
-                    required
                     label={t('node-manager.cloudregion.node.sidecarVersion')}
                   >
                     <Form.Item
@@ -517,7 +490,7 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
                       >
                         {sidecarVersionList.map((item) => (
                           <Option value={item.id} key={item.id}>
-                            {item.name}
+                            {item.version}
                           </Option>
                         ))}
                       </Select>
@@ -531,13 +504,11 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
                     label={t('node-manager.cloudregion.node.installInfo')}
                     rules={[{ required: true, validator: validateTableData }]}
                   >
-                    <Form ref={tableFormRef} component={false}>
-                      <CustomTable
-                        rowKey="id"
-                        columns={tableColumns}
-                        dataSource={tableData}
-                      />
-                    </Form>
+                    <CustomTable
+                      rowKey="id"
+                      columns={tableColumns}
+                      dataSource={tableData}
+                    />
                   </Form.Item>
                 </>
               ) : (
@@ -558,7 +529,9 @@ const ControllerInstall: React.FC<ControllerInstallProps> = ({
                 loading={confirmLoading}
                 onClick={handleCreate}
               >
-                {`${t('node-manager.cloudregion.node.toInstall')} (${tableData.length})`}
+                {`${t('node-manager.cloudregion.node.toInstall')} (${
+                  tableData.length
+                })`}
               </Button>
             )}
             <Button onClick={goBack}>{t('common.cancel')}</Button>

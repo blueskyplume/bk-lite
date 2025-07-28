@@ -1,17 +1,23 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import useApiClient from '@/utils/request';
+import useMonitorApi from '@/app/monitor/api';
 import templateStyle from './index.module.scss';
 import { TreeItem, TableDataItem } from '@/app/monitor/types';
-import { ObectItem } from '@/app/monitor/types/monitor';
-import { OBJECT_ICON_MAP } from '@/app/monitor/constants/monitor';
-import { deepClone, findLabelById } from '@/app/monitor/utils/common';
+import { ObjectItem } from '@/app/monitor/types/monitor';
+import { STRATEGY_TEMPLATES } from '@/app/monitor/constants/monitor';
+import {
+  deepClone,
+  findLabelById,
+  getIconByObjectName,
+} from '@/app/monitor/utils/common';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TreeSelector from '@/app/monitor/components/treeSelector';
 import EntityList from '@/components/entity-list';
 
 const Template: React.FC = () => {
-  const { get, post, isLoading } = useApiClient();
+  const { isLoading } = useApiClient();
+  const { getPolicyTemplate, getMonitorObject } = useMonitorApi();
   const searchParams = useSearchParams();
   const objId = searchParams.get('objId');
   const router = useRouter();
@@ -21,6 +27,7 @@ const Template: React.FC = () => {
   const [tableData, setTableData] = useState<TableDataItem[]>([]);
   const [defaultSelectObj, setDefaultSelectObj] = useState<React.Key>('');
   const [objectId, setObjectId] = useState<React.Key>('');
+  const [objects, setObjects] = useState<ObjectItem[]>([]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -44,12 +51,12 @@ const Template: React.FC = () => {
       const params = {
         monitor_object_name: monitorName,
       };
-      const data = await post(`/monitor/api/monitor_policy/template/`, params);
+      const data = await getPolicyTemplate(params);
       const list = data.map((item: TableDataItem, index: number) => ({
         ...item,
         id: index,
         description: item.description || '--',
-        icon: OBJECT_ICON_MAP[monitorName as string] || 'Host',
+        icon: getIconByObjectName(monitorName as string, objects),
       }));
       setTableData(list);
     } finally {
@@ -60,18 +67,20 @@ const Template: React.FC = () => {
   const getObjects = async () => {
     try {
       setTreeLoading(true);
-      const data: ObectItem[] = await get('/monitor/api/monitor_object/');
+      const data: ObjectItem[] = await getMonitorObject();
+      setObjects(data);
       const _treeData = getTreeData(deepClone(data));
-      setDefaultSelectObj(objId ? +objId : data[0]?.id);
+      const defaulltId = (_treeData[0]?.children || [])[0]?.key;
+      setDefaultSelectObj(objId ? +objId : defaulltId);
       setTreeData(_treeData);
     } finally {
       setTreeLoading(false);
     }
   };
 
-  const getTreeData = (data: ObectItem[]): TreeItem[] => {
-    const groupedData = data.reduce(
-      (acc, item) => {
+  const getTreeData = (data: ObjectItem[]): TreeItem[] => {
+    const groupedData = data.reduce((acc, item) => {
+      if (STRATEGY_TEMPLATES.includes(item.name as string)) {
         if (!acc[item.type]) {
           acc[item.type] = {
             title: item.display_type || '--',
@@ -85,10 +94,9 @@ const Template: React.FC = () => {
           key: item.id,
           children: [],
         });
-        return acc;
-      },
-      {} as Record<string, TreeItem>
-    );
+      }
+      return acc;
+    }, {} as Record<string, TreeItem>);
     return Object.values(groupedData);
   };
 

@@ -171,9 +171,22 @@ const SkillSettingsPage: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (userMessage: string): Promise<{ url: string; payload: any }> => {
+  const handleSendMessage = async (userMessage: string): Promise<{ url: string; payload: any } | null> => {
     try {
       const values = await form.validateFields();
+      
+      // Check if knowledge base is selected when RAG is enabled
+      if (ragEnabled && ragSources.length === 0) {
+        message.error(t('skill.ragKnowledgeBaseRequired'));
+        return null;
+      }
+      
+      // Check if tool is selected when tool functionality is enabled
+      if (showToolEnabled && selectedTools.length === 0) { 
+        message.error(t('skill.ragToolRequired'));
+        return null;
+      }
+      
       const ragScoreThreshold = selectedKnowledgeBases.map(id => ({
         knowledge_base: id,
         score: ragSources.find(base => base.id === id)?.score || 0.7,
@@ -205,8 +218,17 @@ const SkillSettingsPage: React.FC = () => {
         payload
       };
     } catch (error) {
-      console.error(t('common.fetchFailed'), error);
-      throw error;
+      // Display first error message when form validation fails
+      if (error && typeof error === 'object' && 'errorFields' in error) {
+        const errorFields = (error as any).errorFields;
+        if (errorFields && errorFields.length > 0) {
+          const firstError = errorFields[0];
+          message.error(firstError.errors[0]);
+        }
+      } else {
+        message.error(t('skill.formValidationFailed'));
+      }
+      return null;
     }
   };
 
@@ -408,7 +430,7 @@ const SkillSettingsPage: React.FC = () => {
                     )}
                   </Form>
                 </div>
-                {skillType === 1 && (
+                {skillType !== 2 && (
                   <div className={`p-4 rounded-md pb-0 ${styles.contentWrapper}`}>
                     <Form labelCol={{flex: '0 0 135px'}} wrapperCol={{flex: '1'}}>
                       <div className="flex justify-between">

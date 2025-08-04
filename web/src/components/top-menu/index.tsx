@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Popover, Spin, Tour } from 'antd';
 import { CaretDownFilled } from '@ant-design/icons';
 import { useTranslation } from '@/utils/i18n';
+import useModelExperience from '@/app/playground/hooks/useModelExperience';
 import { usePermissions } from '@/context/permissions';
 import { useClientData } from '@/context/client';
 import { useUserInfoContext } from '@/context/userInfo';
 import styles from './index.module.scss';
 import type { TourProps } from 'antd';
-import { TourItem } from '@/types/index';
+import { TourItem, MenuItem, ClientData } from '@/types/index';
 import UserInfo from '../user-info';
 import Icon from '@/components/icon';
 
@@ -20,6 +21,11 @@ const TopMenu = () => {
   const { t } = useTranslation();
   const { menus: menuItems } = usePermissions();
   const pathname = usePathname();
+  const {
+    modelExpList,
+    loading: modelExpLoading,
+    error: modelExpError,
+    reload } = useModelExperience(pathname?.startsWith('/playground'));
   const { clientData, loading } = useClientData();
   const { userId } = useUserInfoContext();
   const [tourOpen, setTourOpen] = useState(false);
@@ -29,12 +35,14 @@ const TopMenu = () => {
 
   const menuRefs = useRef<{ [key: string]: React.RefObject<HTMLAnchorElement> }>({});
 
+  const isOtherMode = pathname?.startsWith('/playground');
+
   const getTourViewedKey = () => {
     return `${userId}_${TOUR_VIEWED_KEY_PREFIX}`;
   };
 
   useEffect(() => {
-    menuItems.forEach((item) => {
+    menuItems.forEach((item: MenuItem) => {
       if (item.tour && !menuRefs.current[item.url]) {
         menuRefs.current[item.url] = React.createRef();
       }
@@ -57,15 +65,15 @@ const TopMenu = () => {
 
   const prepareTourSteps = () => {
     const tours = menuItems
-      .filter(item => item.tour)
-      .map(item => ({
+      .filter((item: MenuItem) => item.tour)
+      .map((item: MenuItem) => ({
         menuItem: item,
         tour: item.tour as TourItem
       }))
-      .sort((a, b) => a.tour.order - b.tour.order);
+      .sort((a: { menuItem: MenuItem; tour: TourItem }, b: { menuItem: MenuItem; tour: TourItem }) => a.tour.order - b.tour.order);
 
     if (tours.length > 0) {
-      const steps = tours.map(({ menuItem, tour }) => {
+      const steps = tours.map(({ menuItem, tour }: { menuItem: MenuItem; tour: TourItem }) => {
         const step: NonNullable<TourProps['steps']>[0] = {
           title: tour.title,
           description: tour.description,
@@ -104,7 +112,7 @@ const TopMenu = () => {
     }
   };
 
-  const handleTourChange: TourProps['onChange'] = (current) => {
+  const handleTourChange: TourProps['onChange'] = (current: number) => {
     setCurrentStep(current);
   };
 
@@ -126,13 +134,46 @@ const TopMenu = () => {
     window.open('https://github.com/TencentBlueKing/bk-lite', '_blank');
   };
 
+  const renderSubMenuPanel = useMemo(() => {
+    if (modelExpLoading) return;
+    const renderMenu = () => (
+      modelExpList?.map((item: any, index: number) => {
+        return (
+          <div key={`category_${index}`}>
+            <h3 className='text-base font-bold mb-4'>{item.name}</h3>
+            <div className='flex flex-wrap justify-between'>
+              {item?.children && item.children.map((child: any) => {
+                return (
+                  <div key={`child_${child?.id}`} className='mr-2 mb-4 w-[150px]'>
+                    <Link href={child.url} prefetch={false}>
+                      <div className={`${styles.menuItem} flex items-center cursor-pointer text-sm`}>
+                        <span>{child.name}</span>
+                      </div>
+                      <p className='truncate text-[--color-text-3] text-sm'>{child.description}</p>
+                    </Link>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })
+    )
+
+    return (
+      <div className='flex max-w-[80vw] ml-6 max-h-[80vh] overflow-y-auto'>
+        <div>{renderMenu()}</div>
+      </div>
+    );
+  }, [modelExpList, modelExpLoading, modelExpError, reload]);
+
   const renderContent = loading ? (
     <div className="flex justify-center items-center h-32">
       <Spin tip="Loading..." />
     </div>
   ) : (
     <div className="grid grid-cols-4 gap-4 max-h-[420px] overflow-auto">
-      {clientData.map((app) => (
+      {clientData.map((app: ClientData) => (
         <div
           key={app.name}
           className={`group flex flex-col items-center p-4 rounded-sm cursor-pointer ${styles.navApp}`}
@@ -180,9 +221,39 @@ const TopMenu = () => {
           style={{ whiteSpace: 'nowrap' }}
         >
           {menuItems
-            .filter((item) => item.url && !item.isNotMenuItem)
-            .map((item) => {
+            .filter((item: MenuItem) => item.url && !item.isNotMenuItem)
+            .map((item: MenuItem) => {
               const isActive = item.url === '/' ? pathname === '/' : pathname?.startsWith(item.url);
+
+              if (isOtherMode && item.name === 'capabilities') {
+
+                return (
+                  <Popover
+                    key={item.url}
+                    content={renderSubMenuPanel}
+                    trigger="hover"
+                    placement="bottom"
+                    overlayClassName="top-menu-submenu-popover"
+                    className='z-40'
+                  >
+                    <div>
+                      <Link
+                        href={item.url}
+                        prefetch={false} legacyBehavior>
+                        <a
+                          ref={menuRefs.current[item.url] || null}
+                          id={item.name}
+                          className={`px-3 py-2 rounded-[10px] flex items-center ${styles.menuCol} ${isActive ? styles.active : ''}`}
+                        >
+                          <Icon type={item.icon} className="mr-2 w-4 h-4" />
+                          {item.title}
+                        </a>
+                      </Link>
+                    </div>
+                  </Popover>
+                );
+              }
+
               return (
                 <Link key={item.url} href={item.url} prefetch={false} legacyBehavior>
                   <a

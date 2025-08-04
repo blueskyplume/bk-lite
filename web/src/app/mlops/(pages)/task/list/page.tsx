@@ -16,7 +16,6 @@ import { ModalRef, ColumnItem, Option } from '@/app/mlops/types';
 import type { TreeDataNode } from 'antd';
 import { TrainJob } from '@/app/mlops/types/task';
 import { TRAIN_STATUS_MAP, TRAIN_TEXT } from '@/app/mlops/constants';
-import { JointContent } from 'antd/es/message/interface';
 import { DataSet } from '@/app/mlops/types/manage';
 const { Search } = Input;
 
@@ -120,7 +119,7 @@ const TrainTask = () => {
       align: 'center',
       render: (_: unknown, record: TrainJob) => (
         <>
-          <PermissionWrapper requiredPermissions={['Edit']}>
+          <PermissionWrapper requiredPermissions={['Train']}>
             <Popconfirm
               title={t('traintask.trainStartTitle')}
               description={t('traintask.trainStartContent')}
@@ -264,7 +263,7 @@ const TrainTask = () => {
   const handleEdit = (record: TrainJob) => {
     if (modalRef.current) {
       modalRef.current.showModal({
-        type: 'edit',
+        type: 'update',
         title: 'edittask',
         form: record
       })
@@ -274,9 +273,10 @@ const TrainTask = () => {
   const onTrainStart = async (record: TrainJob) => {
     try {
       await startAnomalyTrainTask(record.id);
+      message.success(`traintask.trainStartSucess`);
     } catch (e) {
       console.log(e);
-      message.error(e as JointContent)
+      message.error(`common.error`);
     }
   };
 
@@ -346,7 +346,7 @@ const TrainTask = () => {
           </>)
         }
       />
-      <TrainTaskModal ref={modalRef} onSuccess={() => onRefresh()} datasetOptions={datasetOptions} />
+      <TrainTaskModal ref={modalRef} onSuccess={() => onRefresh()} activeTag={selectedKeys} datasetOptions={datasetOptions} />
     </>
   );
 };

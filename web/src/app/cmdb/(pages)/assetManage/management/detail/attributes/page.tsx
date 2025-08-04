@@ -21,6 +21,10 @@ const Attributes = () => {
   const commonContext = useCommon();
   const searchParams = useSearchParams();
   const modelId = searchParams.get('model_id');
+  const permissionParam = searchParams.get('permission');
+  const modelPermission = permissionParam
+    ? decodeURIComponent(permissionParam).split(',')
+    : [];
   const permissionGroupsInfo = useRef(
     commonContext?.permissionGroupsInfo || null
   );
@@ -70,7 +74,7 @@ const Attributes = () => {
       ),
     },
     {
-      title: t('editable'),
+      title: t('common.editable'),
       key: 'editable',
       dataIndex: 'editable',
       render: (_, { editable }) => (
@@ -98,13 +102,13 @@ const Attributes = () => {
       ),
     },
     {
-      title: t('action'),
+      title: t('common.action'),
       key: 'action',
       render: (_, record) => (
         <>
           <PermissionWrapper
             requiredPermissions={['Edit Model']}
-            instPermissions={record.permission}
+            instPermissions={modelPermission}
           >
             <Button
               type="link"
@@ -112,12 +116,12 @@ const Attributes = () => {
               disabled={!isAdmin && record.is_pre}
               onClick={() => showAttrModal('edit', record)}
             >
-              {t('edit')}
+              {t('common.edit')}
             </Button>
           </PermissionWrapper>
           <PermissionWrapper
             requiredPermissions={['Edit Model']}
-            instPermissions={record.permission}
+            instPermissions={modelPermission}
           >
             <Button
               type="link"
@@ -128,7 +132,7 @@ const Attributes = () => {
                 })
               }
             >
-              {t('delete')}
+              {t('common.delete')}
             </Button>
           </PermissionWrapper>
         </>
@@ -154,8 +158,8 @@ const Attributes = () => {
 
   const showDeleteConfirm = (row = { attr_id: '' }) => {
     confirm({
-      title: t('deleteTitle'),
-      content: t('deleteContent'),
+      title: t('common.deleteTitle'),
+      content: t('common.deleteContent'),
       centered: true,
       onOk() {
         return new Promise(async (resolve) => {
@@ -219,7 +223,7 @@ const Attributes = () => {
         <div className="nav-box flex justify-end mb-[16px]">
           <div className="left-side w-[240px] mr-[8px]">
             <Input
-              placeholder={t('search')}
+              placeholder={t('common.search')}
               value={searchText}
               allowClear
               onChange={onSearchTxtChange}
@@ -228,7 +232,10 @@ const Attributes = () => {
             />
           </div>
           <div className="right-side">
-            <PermissionWrapper requiredPermissions={['Edit Model']}>
+            <PermissionWrapper
+              requiredPermissions={['Edit Model']}
+              instPermissions={modelPermission}
+            >
               <Button
                 type="primary"
                 className="mr-[8px]"

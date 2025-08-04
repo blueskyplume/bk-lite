@@ -14,11 +14,10 @@ import { useLocalizedTime } from '@/hooks/useLocalizedTime';
 
 const SearchTable: React.FC<SearchTableProps> = ({
   dataSource,
-  pagination,
-  expand,
   loading = false,
-  onChange,
+  scroll,
   addToQuery,
+  onLoadMore,
 }) => {
   const { t } = useTranslation();
   const { handleCopy } = useHandleCopy();
@@ -39,7 +38,7 @@ const SearchTable: React.FC<SearchTableProps> = ({
       ),
     },
     {
-      title: 'source',
+      title: 'message',
       dataIndex: '_msg',
       key: '_msg',
     },
@@ -88,7 +87,7 @@ const SearchTable: React.FC<SearchTableProps> = ({
               <li className="flex items-start mt-[10px]" key={index}>
                 <div className="flex items-center min-w-[250px] w-[250px] mr-[10px]">
                   <CustomPopover
-                    title={`${item.label} = string`}
+                    title={item.label}
                     content={(onClose) => (
                       <ul>
                         <li>
@@ -158,18 +157,21 @@ const SearchTable: React.FC<SearchTableProps> = ({
       columns={columns}
       dataSource={dataSource}
       loading={loading}
-      rowKey="_time"
-      scroll={{
-        y: `calc(100vh - ${expand ? '568px' : '488px'})`,
-      }}
-      pagination={pagination}
+      virtual
+      rowKey="id"
+      scroll={scroll || undefined}
       expandable={{
         columnWidth: 40,
         expandedRowRender: (record) => getRowExpandRender(record),
         expandedRowKeys: expandedRowKeys,
         onExpandedRowsChange: (keys) => setExpandedRowKeys(keys as React.Key[]),
       }}
-      onChange={onChange}
+      onScroll={(e: any) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollTop + clientHeight >= scrollHeight) {
+          onLoadMore?.();
+        }
+      }}
     />
   );
 };

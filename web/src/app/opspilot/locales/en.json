@@ -280,6 +280,7 @@
     "selecteTool": "Selecte Tool",
     "ragKnowledgeBaseRequired": "When RAG is enabled, a knowledge base must be selected.",
     "ragToolRequired": "When RAG is enabled, a tool must be selected.",
+    "formValidationFailed": "Form validation failed, please check required fields",
     "settings": {
       "menu": "Setting",
       "title": "LLM Skill",
@@ -462,7 +463,8 @@
     "saveToKnowledgeBase": "Save to Knowledge Base",
     "removeAnnotationConfirm": "Are you sure you want to remove this annotation?",
     "noKnowledge": "No knowledge available.",
-    "knowledgeDetails": "Knowledge Details"
+    "knowledgeDetails": "Knowledge Details",
+    "chunkDetails": "Chunk Details"
   },
   "settings": {
     "menu": "Settings",

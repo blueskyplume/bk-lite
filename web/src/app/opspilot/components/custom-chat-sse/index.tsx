@@ -1,5 +1,5 @@
-import React, { useState, useCallback, ReactNode, useRef } from 'react';
-import { Popconfirm, Button, Tooltip, Flex, ButtonProps } from 'antd';
+import React, { useState, useCallback, useRef, ReactNode, useEffect } from 'react';
+import { Popconfirm, Button, Tooltip, Flex, Spin, Drawer, ButtonProps } from 'antd';
 import { FullscreenOutlined, FullscreenExitOutlined, SendOutlined } from '@ant-design/icons';
 import { Bubble, Sender } from '@ant-design/x';
 import { v4 as uuidv4 } from 'uuid';
@@ -16,31 +16,18 @@ import PermissionWrapper from '@/components/permission';
 import { CustomChatMessage, Annotation } from '@/app/opspilot/types/global';
 import { useSession } from 'next-auth/react';
 import { useAuth } from '@/context/auth';
-
-interface CustomChatSSEProps {
-  handleSendMessage?: (userMessage: string) => Promise<{ url: string; payload: any }>;
-  showMarkOnly?: boolean;
-  initialMessages?: CustomChatMessage[];
-  mode?: 'preview' | 'chat';
-  guide?: string;
-}
-
-type ActionRender = (_: any, info: { components: { SendButton: React.ComponentType<ButtonProps>; LoadingButton: React.ComponentType<ButtonProps>; }; }) => ReactNode;
-
-interface SSEChunk {
-  choices: Array<{
-    delta: {
-      content?: string;
-    };
-    index: number;
-    finish_reason: string | null;
-  }>;
-  id: string;
-  object: string;
-  created: number;
-}
+import { useKnowledgeApi } from '@/app/opspilot/api/knowledge';
+import {
+  CustomChatSSEProps,
+  ActionRender,
+  SSEChunk,
+  ReferenceModalState,
+  DrawerContentState,
+  GuideParseResult
+} from '@/app/opspilot/types/chat';
 
 const md = new MarkdownIt({
+  html: true,
   highlight: function (str: string, lang: string) {
     if (lang && hljs.getLanguage(lang)) {
       try {
@@ -59,7 +46,15 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
   guide
 }) => {
   const { t } = useTranslation();
-  const { data: session } = useSession();
+  
+  let session = null;
+  try {
+    const sessionData = useSession();
+    session = sessionData.data;
+  } catch (error) {
+    console.warn('useSession hook error, falling back to auth context:', error);
+  }
+  
   const authContext = useAuth();
   const token = session?.user?.token || authContext?.token || null;
 
@@ -71,9 +66,48 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
   const [annotation, setAnnotation] = useState<Annotation | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const currentBotMessageRef = useRef<CustomChatMessage | null>(null);
+  const chatContentRef = useRef<HTMLDivElement>(null);
+
+  const [referenceModal, setReferenceModal] = useState<ReferenceModalState>({
+    visible: false,
+    loading: false,
+    title: '',
+    content: ''
+  });
+
+  const [drawerContent, setDrawerContent] = useState<DrawerContentState>({
+    visible: false,
+    title: '',
+    content: ''
+  });
+
+  const { getChunkDetail } = useKnowledgeApi();
+
+  // Auto scroll to bottom function
+  const scrollToBottom = useCallback(() => {
+    if (chatContentRef.current) {
+      const element = chatContentRef.current;
+      // Use smooth scrolling for better user experience
+      element.scrollTo({
+        top: element.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, []);
+
+  // Auto scroll when messages change or during streaming
+  useEffect(() => {
+    // Only auto scroll when there are messages and either loading or new messages added
+    if (messages.length > 0) {
+      // Use requestAnimationFrame to ensure DOM has been updated
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    }
+  }, [messages]);
 
   // Parse guide text and extract content within [] as quick send items
-  const parseGuideItems = useCallback((guideText: string) => {
+  const parseGuideItems = useCallback((guideText: string): GuideParseResult => {
     if (!guideText) return { text: '', items: [], renderedHtml: '' };
     
     const regex = /\[([^\]]+)\]/g;
@@ -96,23 +130,217 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
     return { text: guideText, items, renderedHtml };
   }, []);
 
+  // Parse and handle reference links in content
+  const parseReferenceLinks = useCallback((content: string) => {
+    // Match pattern like [[48]](chunk_id:3444444|knowledge_id:4555|chunk_type:Document/QA/Graph)
+    const referenceRegex = /\[\[(\d+)\]\]\(([^)]+)\)/g;
+    // console.log('Parsing references in content:', content);
+    
+    return content.replace(referenceRegex, (match, refNumber, params) => {
+      // Parse parameters from the link using | as separator
+      const paramPairs = params.split('|');
+      const urlParams = new Map();
+      
+      paramPairs.forEach((pair: string) => {
+        const [key, value] = pair.split(':');
+        if (key && value) {
+          urlParams.set(key, value);
+        }
+      });
+      
+      const chunkId = urlParams.get('chunk_id');
+      const knowledgeId = urlParams.get('knowledge_id');
+      const chunkType = urlParams.get('chunk_type') || 'Document';
+      
+      const getIconType = (type: string) => {
+        switch (type) {
+          case 'Document':
+            return 'wendangguanlixitong-wendangguanlixitongtubiao';
+          case 'QA':
+            return 'wendaduihua';
+          case 'Graph':
+            return 'zhishitupu';
+          default:
+            return 'wendangguanlixitong-wendangguanlixitongtubiao';
+        }
+      };
+      
+      const iconType = getIconType(chunkType);
+      
+      // Create a clickable span with data attributes and embedded SVG icon
+      return `<span class="reference-link inline-flex items-center gap-1" 
+                data-ref-number="${refNumber}" 
+                data-chunk-id="${chunkId}" 
+                data-knowledge-id="${knowledgeId}"
+                style="color: #1890ff; cursor: pointer; margin: 0 2px;">
+                <svg class="icon icon-${iconType} inline-block" style="width: 1em; height: 1em; vertical-align: text-bottom;" aria-hidden="true">
+                  <use href="#icon-${iconType}"></use>
+                </svg>
+              </span>`;
+    });
+  }, []);
+
+  // Parse and handle suggestion links in content
+  const parseSuggestionLinks = useCallback((content: string) => {
+    // Match pattern like [1](suggest:xxxxx) or [2](suggest: xxx)
+    const suggestionRegex = /\[(\d+)\]\(suggest:\s*([^)]+)\)/g;
+    
+    return content.replace(suggestionRegex, (match, number, suggestionText) => {
+      const trimmedText = suggestionText.trim();
+      
+      // Create a button-style clickable element using Tailwind classes
+      return `<button class="suggestion-button inline-block text-[var(--color-text-1)] text-left border border-[var(--color-border-1)] rounded-full px-3 py-1.5 mx-1 my-1 cursor-pointer text-xs transition-all duration-200 ease-in-out hover:shadow-md hover:-translate-y-0.5 hover:border-blue-400 active:scale-95" 
+                data-suggestion="${trimmedText}">
+                ${trimmedText}
+              </button>`;
+    });
+  }, []);
+
+  // 通用的发送消息处理逻辑
+  const handleClickableItemSend = useCallback(async (content: string) => {
+    if (!content || loading || !token) {
+      return;
+    }
+
+    // console.log('Clicking item with content:', content);
+    
+    setLoading(true);
+    
+    // Create user message
+    const newUserMessage: CustomChatMessage = {
+      id: uuidv4(),
+      content,
+      role: 'user',
+      createAt: new Date().toISOString(),
+      updateAt: new Date().toISOString(),
+    };
+
+    // console.log('Created user message:', newUserMessage);
+
+    // Create bot loading message
+    const botLoadingMessage: CustomChatMessage = {
+      id: uuidv4(),
+      content: '',
+      role: 'bot',
+      createAt: new Date().toISOString(),
+      updateAt: new Date().toISOString(),
+    };
+
+    // Get current message state first, then immediately update UI
+    const currentMessages = messages;
+    const updatedMessages = [...currentMessages, newUserMessage, botLoadingMessage];
+    updateMessages(updatedMessages);
+    currentBotMessageRef.current = botLoadingMessage;
+
+    // Execute sending logic asynchronously
+    try {
+      if (handleSendMessage) {
+        const result = await handleSendMessage(content, currentMessages);
+        
+        if (result === null) {
+          updateMessages(currentMessages);
+          setLoading(false);
+          return;
+        }
+        
+        const { url, payload } = result;
+        await handleSSEStream(url, payload, botLoadingMessage);
+      }
+    } catch (error: any) {
+      console.error(`${t('chat.sendFailed')}:`, error);
+      
+      updateMessages(prevMessages => 
+        prevMessages.map(msgItem => 
+          msgItem.id === botLoadingMessage.id 
+            ? { ...msgItem, content: t('chat.connectionError') }
+            : msgItem
+        )
+      );
+      setLoading(false);
+    }
+  }, [loading, token, messages, handleSendMessage]);
+
   // Handle click events for clickable elements in guide text
   const handleGuideClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (target.classList.contains('guide-clickable-item')) {
       const content = target.getAttribute('data-content');
-      if (content && !loading && token) {
-        handleSend(content);
+      if (content) {
+        handleClickableItemSend(content);
       }
     }
-  }, [loading, token]);
+  }, [handleClickableItemSend]);
+
+  // Handle reference link click
+  const handleReferenceClick = useCallback(async (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    
+    let referenceElement = target;
+    while (referenceElement && !referenceElement.classList.contains('reference-link')) {
+      referenceElement = referenceElement.parentElement as HTMLElement;
+    }
+    
+    if (referenceElement && referenceElement.classList.contains('reference-link')) {
+      const chunkId = referenceElement.getAttribute('data-chunk-id');
+      const knowledgeId = referenceElement.getAttribute('data-knowledge-id');
+            
+      if (!knowledgeId) {
+        console.warn('Missing knowledge_id in reference link');
+        return;
+      }
+
+      setDrawerContent({
+        visible: true,
+        title: `${t('chat.chunkDetails')}`,
+        content: ''
+      });
+
+      setReferenceModal(prev => ({
+        ...prev,
+        loading: true
+      }));
+
+      try {
+        // Fetch knowledge details using the knowledge_id
+        const data = await getChunkDetail(knowledgeId, chunkId);
+        
+        setDrawerContent(prev => ({
+          ...prev,
+          content: data?.content || '--'
+        }));
+      } catch (error) {
+        console.error('Failed to fetch reference details:', error);
+      } finally {
+        setReferenceModal(prev => ({
+          ...prev,
+          loading: false
+        }));
+      }
+    }
+  }, [getChunkDetail]);
+
+  // Handsuggestion button click
+  const handleSuggestionClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.classList.contains('suggestion-button')) {
+      const suggestionText = target.getAttribute('data-suggestion');
+      if (suggestionText) {
+        handleClickableItemSend(suggestionText);
+      }
+    }
+  }, [handleClickableItemSend]);
 
   const handleFullscreenToggle = () => {
     setIsFullscreen(!isFullscreen);
   };
 
   const handleClearMessages = () => {
-    setMessages([]);
+    // Stop any ongoing SSE connections
+    stopSSEConnection();
+    // Clear message array
+    updateMessages([]);
+    // Reset current bot message reference
+    currentBotMessageRef.current = null;
   };
 
   const stopSSEConnection = useCallback(() => {
@@ -121,6 +349,19 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
       abortControllerRef.current = null;
     }
     setLoading(false);
+  }, []);
+
+  const updateMessages = useCallback((newMessages: CustomChatMessage[] | ((prev: CustomChatMessage[]) => CustomChatMessage[])) => {
+    setMessages(prevMessages => {
+      const updatedMessages = typeof newMessages === 'function' ? newMessages(prevMessages) : newMessages;
+      
+      // Trigger auto scroll after state update
+      setTimeout(() => {
+        scrollToBottom();
+      }, 50);
+      
+      return updatedMessages;
+    });
   }, []);
 
   // Handle SSE streaming response
@@ -151,10 +392,6 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
         console.error(`HTTP ${response.status}: ${response.statusText}`);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-
-      // Check response type
-      const contentType = response.headers.get('content-type');
-      console.log('Response content-type:', contentType);
 
       const reader = response.body?.getReader();
       if (!reader) {
@@ -213,8 +450,8 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
                 if (choice.delta && choice.delta.content) {
                   accumulatedContent += choice.delta.content;
                   
-                  // Update message content in real-time
-                  setMessages(prevMessages => 
+                  // Update message content in real-time with auto scroll
+                  updateMessages(prevMessages => 
                     prevMessages.map(msgItem => 
                       msgItem.id === botMessage.id 
                         ? { 
@@ -243,7 +480,7 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
       console.error('SSE stream error:', error);
       
       // Update error message
-      setMessages(prevMessages => 
+      updateMessages(prevMessages => 
         prevMessages.map(msgItem => 
           msgItem.id === botMessage.id 
             ? { ...msgItem, content: `${t('chat.connectionError')}: ${error.message}` }
@@ -254,7 +491,7 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
       setLoading(false);
       abortControllerRef.current = null;
     }
-  }, [token, t]);
+  }, [token, updateMessages]);
 
   const handleSend = useCallback(async (msg: string) => {
     if (msg.trim() && !loading && token) {
@@ -278,19 +515,32 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
         updateAt: new Date().toISOString(),
       };
 
-      const updatedMessages = [...messages, newUserMessage, botLoadingMessage];
-      setMessages(updatedMessages);
+      // Get messages currently displayed in the dialog as history
+      const currentDisplayedMessages = messages;
+      const updatedMessages = [...currentDisplayedMessages, newUserMessage, botLoadingMessage];
+      updateMessages(updatedMessages);
       currentBotMessageRef.current = botLoadingMessage;
 
       try {
         if (handleSendMessage) {
-          const { url, payload } = await handleSendMessage(msg);
+          // Pass messages currently displayed in the dialog as history
+          const result = await handleSendMessage(msg, currentDisplayedMessages);
+          
+          // If handleSendMessage returns null, form validation failed, prevent sending
+          if (result === null) {
+            // Remove added messages
+            updateMessages(currentDisplayedMessages);
+            setLoading(false);
+            return;
+          }
+          
+          const { url, payload } = result;
           await handleSSEStream(url, payload, botLoadingMessage);
         }
       } catch (error: any) {
         console.error(`${t('chat.sendFailed')}:`, error);
         
-        setMessages(prevMessages => 
+        updateMessages(prevMessages => 
           prevMessages.map(msgItem => 
             msgItem.id === botLoadingMessage.id 
               ? { ...msgItem, content: t('chat.connectionError') }
@@ -300,7 +550,7 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
         setLoading(false);
       }
     }
-  }, [loading, handleSendMessage, messages, t, token, handleSSEStream]);
+  }, [loading, messages, token, handleSendMessage, handleSSEStream, updateMessages]);
 
   const handleCopyMessage = (content: string) => {
     navigator.clipboard.writeText(content).then(() => {
@@ -311,7 +561,7 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
   };
 
   const handleDeleteMessage = (id: string) => {
-    setMessages(messages.filter(msg => msg.id !== id));
+    updateMessages(messages.filter(msg => msg.id !== id));
   };
 
   const handleRegenerateMessage = useCallback(async (id: string) => {
@@ -331,18 +581,28 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
         };
 
         const updatedMessages = [...messages, newMessage];
-        setMessages(updatedMessages);
+        updateMessages(updatedMessages);
         currentBotMessageRef.current = newMessage;
 
         try {
           if (handleSendMessage) {
-            const { url, payload } = await handleSendMessage(lastUserMessage.content);
+            const result = await handleSendMessage(lastUserMessage.content);
+            
+            // If handleSendMessage returns null, form validation failed, prevent regeneration
+            if (result === null) {
+              // Remove added messages and restore original state
+              updateMessages(messages);
+              setLoading(false);
+              return;
+            }
+            
+            const { url, payload } = result;
             await handleSSEStream(url, payload, newMessage);
           }
         } catch (error: any) {
           console.error(`${t('chat.regenerateFailed')}:`, error);
 
-          setMessages(prevMessages =>
+          updateMessages(prevMessages =>
             prevMessages.map(msgItem =>
               msgItem.id === newMessage.id
                 ? { ...msgItem, content: t('chat.connectionError') }
@@ -353,15 +613,24 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
         }
       }
     }
-  }, [messages, handleSendMessage, t, token, handleSSEStream]);
+  }, [messages, token, handleSendMessage, handleSSEStream, updateMessages]);
 
   const renderContent = (msg: CustomChatMessage) => {
     const { content, knowledgeBase } = msg;
+    // Parse reference links and make them clickable
+    // If content is empty or just a default placeholder, show loading state
+    const parsedContent = parseReferenceLinks(content || '');
+    const parsedSuggestionContent = parseSuggestionLinks(parsedContent);
+    
     return (
       <>
         <div
-          dangerouslySetInnerHTML={{ __html: md.render(content || '...') }}
+          dangerouslySetInnerHTML={{ __html: md.render(parsedSuggestionContent) }}
           className={styles.markdownBody}
+          onClick={(e) => {
+            handleReferenceClick(e);
+            handleSuggestionClick(e);
+          }}
         />
         {(Array.isArray(knowledgeBase) && knowledgeBase.length) ? <KnowledgeBase knowledgeList={knowledgeBase} /> : null}
       </>
@@ -426,7 +695,7 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
 
   const updateMessagesAnnotation = (id: string | undefined, newAnnotation?: Annotation) => {
     if (!id) return;
-    setMessages((prevMessages) =>
+    updateMessages((prevMessages) =>
       prevMessages.map((msg) =>
         msg.id === id
           ? { ...msg, annotation: newAnnotation }
@@ -451,6 +720,14 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
       stopSSEConnection();
     };
   }, [stopSSEConnection]);
+
+  const closeDrawer = useCallback(() => {
+    setDrawerContent({
+      visible: false,
+      title: '',
+      content: ''
+    });
+  }, []);
 
   const guideData = parseGuideItems(guide || '');
 
@@ -480,17 +757,20 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
           </div>
         )}
         
-        <div className="flex-1 chat-content-wrapper overflow-y-auto overflow-x-hidden pb-4">
+        <div 
+          ref={chatContentRef}
+          className="flex-1 chat-content-wrapper overflow-y-auto overflow-x-hidden pb-4"
+        >
           <Flex gap="small" vertical>
             {messages.map((msg) => (
               <Bubble
                 key={msg.id}
                 className={styles.bubbleWrapper}
                 placement={msg.role === 'user' ? 'end' : 'start'}
-                loading={msg.content === '' && loading}
+                loading={msg.content === '' && loading && currentBotMessageRef.current?.id === msg.id}
                 content={renderContent(msg)}
                 avatar={{ icon: <Icon type={msg.role === 'user' ? 'yonghu' : 'jiqiren3'} className={styles.avatar} /> }}
-                footer={msg.content === '' ? null : (
+                footer={msg.content === '' && loading && currentBotMessageRef.current?.id === msg.id ? null : (
                   <MessageActions
                     message={msg}
                     onCopy={handleCopyMessage}
@@ -540,6 +820,24 @@ const CustomChatSSE: React.FC<CustomChatSSEProps> = ({
           onCancel={() => setAnnotationModalVisible(false)}
         />
       )}
+      
+      {/* Reference Details Drawer */}
+      <Drawer
+        width={480}
+        visible={drawerContent.visible}
+        title={drawerContent.title}
+        onClose={closeDrawer}
+      >
+        {referenceModal.loading ? (
+          <div className="flex justify-center items-center h-32">
+            <Spin size="large" />
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap leading-6">
+            {drawerContent.content}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };

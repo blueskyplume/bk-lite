@@ -14,5 +14,6 @@ def cloud_init():
             new_key = key.replace("DEFAULT_ZONE_VAR_", "")
             SidecarEnv.objects.get_or_create(
                 key=new_key,
-                defaults={"value": value, "cloud_region_id": 1}
+                cloud_region_id=1,
+                defaults={"value": value, "cloud_region_id": 1, "is_pre": True},
             )

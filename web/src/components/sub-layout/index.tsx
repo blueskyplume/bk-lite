@@ -12,6 +12,8 @@ import { usePermissions } from '@/context/permissions';
 interface WithSideMenuLayoutProps {
   intro?: React.ReactNode;
   showBackButton?: boolean;
+  activeKeyword?: boolean;
+  keywordName?: string;
   onBackButtonClick?: () => void;
   children: React.ReactNode;
   topSection?: React.ReactNode;
@@ -20,6 +22,7 @@ interface WithSideMenuLayoutProps {
   layoutType?: 'sideMenu' | 'segmented';
   taskProgressComponent?: React.ReactNode;
   pagePathName?: string;
+  customMenuItems?: MenuItem[];
 }
 
 const WithSideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
@@ -30,9 +33,12 @@ const WithSideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
   topSection,
   showProgress,
   showSideMenu = true,
+  activeKeyword = false,
+  keywordName = '',
   layoutType = 'sideMenu',
   taskProgressComponent,
-  pagePathName
+  pagePathName,
+  customMenuItems
 }) => {
   const router = useRouter();
   const curRouterName = usePathname();
@@ -62,7 +68,12 @@ const WithSideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
     return [];
   };
 
-  const updateMenuItems = useMemo(() => getMenuItemsForPath(menus, pathname ?? ''), [pathname]);
+  const updateMenuItems = useMemo(() => {
+    if (customMenuItems && customMenuItems.length > 0) {
+      return customMenuItems;
+    }
+    return getMenuItemsForPath(menus, pathname ?? '');
+  }, [pathname, menus, customMenuItems]);
 
   useEffect(() => {
     setMenuItems(updateMenuItems?.filter(menu => !menu.isNotMenuItem));
@@ -98,6 +109,8 @@ const WithSideMenuLayout: React.FC<WithSideMenuLayoutProps> = ({
               <SideMenu
                 menuItems={menuItems}
                 showBackButton={showBackButton}
+                activeKeyword={activeKeyword}
+                keywordName={keywordName}
                 showProgress={showProgress}
                 taskProgressComponent={taskProgressComponent}
                 onBackButtonClick={onBackButtonClick}

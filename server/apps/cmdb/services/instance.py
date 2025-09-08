@@ -1,5 +1,5 @@
 from apps.cmdb.constants import INSTANCE, INSTANCE_ASSOCIATION, OPERATOR_INSTANCE
-from apps.cmdb.graph.neo4j import Neo4jClient
+from apps.cmdb.graph.drivers.graph_client import GraphClient
 from apps.cmdb.models.change_record import CREATE_INST, CREATE_INST_ASST, DELETE_INST, DELETE_INST_ASST, UPDATE_INST
 from apps.cmdb.models.show_field import ShowField
 from apps.cmdb.services.model import ModelManage
@@ -11,6 +11,19 @@ from apps.core.exceptions.base_app_exception import BaseAppException
 
 
 class InstanceManage(object):
+
+    @classmethod
+    def search_inst(cls, model_id: str, inst_name: str = None, _id: int = None):
+        """查询实例"""
+        with GraphClient() as ag:
+            params = [{"field": "model_id", "type": "str=", "value": model_id}]
+            if _id:
+                params.append({"field": "id", "type": "id=", "value": int(_id)})
+            if inst_name:
+                params.append({"field": "inst_name", "type": "str=", "value": inst_name})
+            inst_list, count = ag.query_entity(INSTANCE, params)
+        return inst_list, count
+
     @staticmethod
     def get_permission_params(user_groups, roles):
         """获取用户实例权限查询参数，用户用户查询实例"""
@@ -22,7 +35,7 @@ class InstanceManage(object):
     def check_instances_permission(user_groups: list, roles: list, instances: list, model_id: str):
         """实例权限校验，用于操作之前"""
         permission_params = InstanceManage.get_permission_params(user_groups=user_groups, roles=roles)
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             inst_list, count = ag.query_entity(
                 INSTANCE,
                 [{"field": "model_id", "type": "str=", "value": model_id}],
@@ -45,7 +58,7 @@ class InstanceManage(object):
         """实例列表"""
 
         params.append({"field": "model_id", "type": "str=", "value": model_id})
-        
+
         # 构建权限过滤条件：有权限的实例 OR 自己创建的实例
         permission_or_creator_filter = None
         if inst_names and creator:
@@ -69,7 +82,7 @@ class InstanceManage(object):
         else:
             permission_params = InstanceManage.get_permission_params(user_groups, roles)
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             inst_list, count = ag.query_entity(
                 INSTANCE,
                 params,
@@ -93,7 +106,7 @@ class InstanceManage(object):
             if attr["is_required"]:
                 check_attr_map["is_required"][attr["attr_id"]] = attr["attr_name"]
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(INSTANCE, [{"field": "model_id", "type": "str=", "value": model_id}])
             result = ag.create_entity(INSTANCE, instance_info, check_attr_map, exist_items, operator)
 
@@ -131,7 +144,7 @@ class InstanceManage(object):
             if attr["editable"]:
                 check_attr_map["editable"][attr["attr_id"]] = attr["attr_name"]
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(
                 INSTANCE,
                 [{"field": "model_id", "type": "str=", "value": inst_info["model_id"]}],
@@ -176,7 +189,7 @@ class InstanceManage(object):
             if attr["editable"]:
                 check_attr_map["editable"][attr["attr_id"]] = attr["attr_name"]
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(
                 INSTANCE,
                 [
@@ -218,7 +231,7 @@ class InstanceManage(object):
 
         InstanceManage.check_instances_permission(user_groups, roles, inst_list, inst_list[0]["model_id"])
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             ag.batch_delete_entity(INSTANCE, inst_ids)
 
         change_records = [dict(inst_id=i["_id"], model_id=i["model_id"], before_data=i, model_object=OPERATOR_INSTANCE,
@@ -230,7 +243,7 @@ class InstanceManage(object):
     def instance_association_instance_list(model_id: str, inst_id: int):
         """查询模型实例关联的实例列表"""
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             # 作为源模型实例
             src_query_data = [
                 {"field": "src_inst_id", "type": "int=", "value": inst_id},
@@ -266,7 +279,7 @@ class InstanceManage(object):
     def instance_association(model_id: str, inst_id: int):
         """查询模型实例关联的实例列表"""
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             # 作为源模型实例
             src_query_data = [
                 {"field": "src_inst_id", "type": "int=", "value": inst_id},
@@ -297,7 +310,7 @@ class InstanceManage(object):
         # 1:n关联校验
         elif asso_info["mapping"] == "1:n":
             # 检查目标实例是否已经存在关联
-            with Neo4jClient() as ag:
+            with GraphClient() as ag:
                 # 作为源模型实例
                 dst_query_data = [
                     {"field": "dst_inst_id", "type": "int=", "value": data["dst_inst_id"]},
@@ -306,11 +319,22 @@ class InstanceManage(object):
                 dst_edge = ag.query_edge(INSTANCE_ASSOCIATION, dst_query_data)
                 if dst_edge:
                     raise BaseAppException("destination instance already exists association!")
+        # n:1关联校验
+        elif asso_info["mapping"] == "n:1":
+            # 检查源实例是否已经存在关联
+            with GraphClient() as ag:
+                src_query_data = [
+                    {"field": "src_inst_id", "type": "int=", "value": data["src_inst_id"]},
+                    {"field": "model_asst_id", "type": "str=", "value": data["model_asst_id"]},
+                ]
+                src_edge = ag.query_edge(INSTANCE_ASSOCIATION, src_query_data)
+                if src_edge:
+                    raise BaseAppException("source instance already exists association!")
 
         # 1:1关联校验
         elif asso_info["mapping"] == "1:1":
             # 检查源和目标实例是否已经存在关联
-            with Neo4jClient() as ag:
+            with GraphClient() as ag:
                 # 作为源模型实例
                 src_query_data = [
                     {"field": "src_inst_id", "type": "int=", "value": data["src_inst_id"]},
@@ -328,6 +352,8 @@ class InstanceManage(object):
                 dst_edge = ag.query_edge(INSTANCE_ASSOCIATION, dst_query_data)
                 if dst_edge:
                     raise BaseAppException("destination instance already exists association!")
+        else:
+            raise BaseAppException("association mapping error! mapping={}".format(asso_info["mapping"]))
 
     @staticmethod
     def instance_association_create(data: dict, operator: str):
@@ -336,7 +362,7 @@ class InstanceManage(object):
         # 校验关联约束
         InstanceManage.check_asso_mapping(data)
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             try:
                 edge = ag.create_edge(
                     INSTANCE_ASSOCIATION,
@@ -364,7 +390,7 @@ class InstanceManage(object):
 
         asso_info = InstanceManage.instance_association_by_asso_id(asso_id)
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             ag.delete_edge(asso_id)
 
         message = f"删除模型关联关系. 原模型: {asso_info['src']['model_id']} 原模型实例: {asso_info['src'].get('inst_name') or asso_info['src'].get('ip_addr', '')}  目标模型ID: {asso_info['dst']['model_id']} 目标模型实例: {asso_info['dst'].get('inst_name') or asso_info['dst'].get('ip_addr', '')}"
@@ -374,21 +400,21 @@ class InstanceManage(object):
     @staticmethod
     def instance_association_by_asso_id(asso_id: int):
         """根据关联ID查询实例关联"""
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             edge = ag.query_edge_by_id(asso_id, return_entity=True)
         return edge
 
     @staticmethod
     def query_entity_by_id(inst_id: int):
         """根据实例ID查询实例详情"""
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             entity = ag.query_entity_by_id(inst_id)
         return entity
 
     @staticmethod
     def query_entity_by_ids(inst_ids: list):
         """根据实例ID查询实例详情"""
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             entity_list = ag.query_entity_by_ids(inst_ids)
         return entity_list
 
@@ -396,7 +422,8 @@ class InstanceManage(object):
     def download_import_template(model_id: str):
         """下载导入模板"""
         attrs = ModelManage.search_model_attr_v2(model_id)
-        return Export(attrs).export_template()
+        association = ModelManage.model_association_search(model_id)
+        return Export(attrs, model_id=model_id, association=association).export_template()
 
     @staticmethod
     def inst_import(model_id: str, file_stream: bytes, operator: str):
@@ -404,7 +431,7 @@ class InstanceManage(object):
         attrs = ModelManage.search_model_attr_v2(model_id)
         model_info = ModelManage.search_model_info(model_id)
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(INSTANCE, [{"field": "model_id", "type": "str=", "value": model_id}])
         results = Import(model_id, attrs, exist_items, operator).import_inst_list(file_stream)
 
@@ -423,16 +450,16 @@ class InstanceManage(object):
 
         return results
 
-    @staticmethod
-    def inst_import_support_edit(model_id: str, file_stream: bytes, operator: str):
+    def inst_import_support_edit(self, model_id: str, file_stream: bytes, operator: str):
         """实例导入-支持编辑"""
         attrs = ModelManage.search_model_attr_v2(model_id)
         model_info = ModelManage.search_model_info(model_id)
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(INSTANCE, [{"field": "model_id", "type": "str=", "value": model_id}])
-        add_results, update_results = Import(model_id, attrs, exist_items, operator).import_inst_list_support_edit(
-            file_stream)
+
+        _import = Import(model_id, attrs, exist_items, operator)
+        add_results, update_results, asso_result = _import.import_inst_list_support_edit(file_stream)
 
         add_changes = [
             dict(
@@ -448,40 +475,96 @@ class InstanceManage(object):
         exist_items__id_map = {i["_id"]: i for i in exist_items}
         update_changes = [
             dict(
-                inst_id=i["_id"],
-                model_id=i["model_id"],
-                before_data=exist_items__id_map[i["_id"]],
+                inst_id=i["data"]["_id"],
+                model_id=i["data"]["model_id"],
+                before_data=exist_items__id_map[i["data"]["_id"]],
                 model_object=OPERATOR_INSTANCE,
-                message=f"导入模型实例. 模型:{model_info['model_name']} 更新模型实例:{i.get('inst_name') or i.get('ip_addr', '')}",
+                message=f"导入模型实例. 模型:{model_info['model_name']} 更新模型实例:{i['data'].get('inst_name') or i['data'].get('ip_addr', '')}",
             )
-            for i in update_results
+            for i in update_results if i["success"]
         ]
         batch_create_change_record(INSTANCE, CREATE_INST, add_changes, operator=operator)
         batch_create_change_record(INSTANCE, UPDATE_INST, update_changes, operator=operator)
-        return add_results, update_results
+        result_message = self.format_result_message(_import.import_result_message)
+        return result_message
 
     @staticmethod
-    def inst_export(model_id: str, ids: list, inst_names: list):
+    def format_result_message(result: dict):
+        key_map = {"add": "新增", "update": "更新", "asso": "关联"}
+        add_mgs = ""
+        for _key in ["add", "update", "asso"]:
+            success_count = result[_key]["success"]
+            fail_count = result[_key]["error"]
+            data = result[_key]["data"]
+            message = " ,".join(data)
+            add_mgs += f"{key_map[_key]}: 成功{success_count}个，失败{fail_count}个. {message}\n"
+        return add_mgs
+
+    @staticmethod
+    def inst_export(model_id: str, ids: list, user_groups: list, roles: list, inst_names: list, created: str = "",
+                    attr_list: list = [], association_list: list = []):
         """实例导出"""
         attrs = ModelManage.search_model_attr_v2(model_id)
-        with Neo4jClient() as ag:
+        association = ModelManage.model_association_search(model_id)
+
+        with GraphClient() as ag:
             if ids:
+                # 如果指定了实例ID，直接查询这些实例
                 inst_list = ag.query_entity_by_ids(ids)
             else:
+                # 构建权限参数
+                permission_params = InstanceManage.get_permission_params(user_groups, roles)
+
+                # 构建针对单个模型的实例权限参数
+                model_instance_permission_params = []
+                if inst_names:  # 如果有具体的实例名称限制
+                    model_instance_permission_params = [{
+                        'model_id': model_id,
+                        'inst_names': inst_names
+                    }]
+
                 # 构建查询参数
                 query_params = [{"field": "model_id", "type": "str=", "value": model_id}]
-                # 如果有实例名称列表，添加实例名称过滤条件
-                if inst_names:
-                    query_params.append({"field": "inst_name", "type": "str[]", "value": inst_names})
-                inst_list, _ = ag.query_entity(INSTANCE, query_params)
-        return Export(attrs).export_inst_list(inst_list)
+
+                # 使用Neo4j的权限过滤查询
+                instance_permission_str = ag.format_instance_permission_params(model_instance_permission_params,
+                                                                               created)
+
+                # 如果有组织权限，所有条件都必须在组织权限范围内
+                if permission_params:
+                    if instance_permission_str:
+                        # 组织权限 AND (实例权限 OR 创建人权限)
+                        final_permission_condition = f"{permission_params} AND ({instance_permission_str})"
+                    else:
+                        # 仅组织权限
+                        final_permission_condition = permission_params
+                elif instance_permission_str:
+                    # 仅实例权限（包含创建人权限）
+                    final_permission_condition = instance_permission_str
+                else:
+                    final_permission_condition = ""
+
+                inst_list, _ = ag.query_entity(INSTANCE, query_params, permission_params=final_permission_condition)
+
+        attrs = [i for i in attrs if i["attr_id"] in attr_list] if attr_list else attrs
+        association = [i for i in association if
+                       i["model_asst_id"] in association_list] if association_list else []
+        return Export(attrs, model_id=model_id, association=association).export_inst_list(inst_list)
 
     @staticmethod
     def topo_search(inst_id: int):
         """拓扑查询"""
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             result = ag.query_topo(INSTANCE, inst_id)
         return result
+
+    @staticmethod
+    def topo_search_test_config(inst_id: int, model_id: str):
+        """拓扑查询"""
+        with GraphClient() as ag:
+            result = ag.query_topo_test_config(INSTANCE, inst_id, model_id)
+        return result
+
 
     @staticmethod
     def create_or_update(data: dict):
@@ -501,72 +584,61 @@ class InstanceManage(object):
         return result
 
     @staticmethod
-    def model_inst_count(user_groups: list, roles: list, rules: dict = {}):
+    def format_instance_permission_data(rules):
+        # 构建实例权限过滤参数
+        result = []
+        if not rules:
+            return result
+
+        for group_id, models in rules.items():
+            for model_id, permissions in models.items():
+                # 检查是否有具体的实例权限限制
+                has_specific_instances = False
+                specific_instance_names = []
+
+                for perm in permissions:
+                    # id为'0'或'-1'表示全选，不需要过滤
+                    if perm.get('id') not in ['0', '-1']:
+                        has_specific_instances = True
+                        # 这里的id实际上是inst_name
+                        specific_instance_names.append(perm.get('id'))
+
+                # 如果有具体的实例权限限制，添加到过滤参数中
+                if has_specific_instances and specific_instance_names:
+                    result.append({
+                        'model_id': model_id,
+                        'inst_names': specific_instance_names
+                    })
+        return result
+
+    @classmethod
+    def model_inst_count(cls, user_groups: list, roles: list, rules: dict = {}, created: str = ""):
         # 构建基础权限参数
         permission_params = InstanceManage.get_permission_params(user_groups, roles)
+        instance_permission_params = cls.format_instance_permission_data(rules)
 
-        # 构建实例权限过滤参数
-        instance_permission_params = []
-        if rules:
-            for group_id, models in rules.items():
-                for model_id, permissions in models.items():
-                    # 检查是否有具体的实例权限限制
-                    has_specific_instances = False
-                    specific_instance_names = []
-
-                    for perm in permissions:
-                        # id为'0'或'-1'表示全选，不需要过滤
-                        if perm.get('id') not in ['0', '-1']:
-                            has_specific_instances = True
-                            # 这里的id实际上是inst_name
-                            specific_instance_names.append(perm.get('id'))
-
-                    # 如果有具体的实例权限限制，添加到过滤参数中
-                    if has_specific_instances and specific_instance_names:
-                        instance_permission_params.append({
-                            'model_id': model_id,
-                            'inst_names': specific_instance_names
-                        })
-
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             data = ag.entity_count(
                 INSTANCE,
                 "model_id",
                 [],
                 permission_params=permission_params,
-                instance_permission_params=instance_permission_params
+                instance_permission_params=instance_permission_params,
+                created=created
             )
         return data
 
-    @staticmethod
-    def fulltext_search(user_groups: list, roles: list, search: str, rules: dict = {}):
+    @classmethod
+    def fulltext_search(cls, user_groups: list, roles: list, search: str, rules: dict = {}, created: str = ""):
         """全文检索"""
         permission_params = InstanceManage.get_permission_params(user_groups, roles)
 
         # 构建实例权限过滤参数
-        instance_permission_params = []
-        if rules:
-            for group_id, models in rules.items():
-                for model_id, permissions in models.items():
-                    # 检查是否有具体的实例权限限制
-                    has_specific_instances = False
-                    specific_instance_names = []
+        instance_permission_params = cls.format_instance_permission_data(rules)
 
-                    for perm in permissions:
-                        # id为'0'或'-1'表示全选，不需要过滤
-                        if perm.get('id') not in ['0', '-1']:
-                            has_specific_instances = True
-                            # 这里的id实际上是inst_name
-                            specific_instance_names.append(perm.get('id'))
-
-                    # 如果有具体的实例权限限制，添加到过滤参数中
-                    if has_specific_instances and specific_instance_names:
-                        instance_permission_params.append({
-                            'model_id': model_id,
-                            'inst_names': specific_instance_names
-                        })
-
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             data = ag.full_text(search, permission_params=permission_params,
-                                instance_permission_params=instance_permission_params)
+                                instance_permission_params=instance_permission_params,
+                                created=created
+                                )
         return data

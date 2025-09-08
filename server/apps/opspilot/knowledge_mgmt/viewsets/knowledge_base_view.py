@@ -5,8 +5,15 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.decorators.api_permission import HasRole
+from apps.core.decorators.api_permission import HasPermission
 from apps.core.utils.viewset_utils import AuthViewSet
+from apps.opspilot.knowledge_mgmt.models import (
+    FileKnowledge,
+    KnowledgeGraph,
+    ManualKnowledge,
+    QAPairs,
+    WebPageKnowledge,
+)
 from apps.opspilot.knowledge_mgmt.models.knowledge_document import DocumentStatus
 from apps.opspilot.knowledge_mgmt.serializers import KnowledgeBaseSerializer
 from apps.opspilot.models import EmbedProvider, KnowledgeBase, KnowledgeDocument
@@ -20,7 +27,25 @@ class KnowledgeBaseViewSet(AuthViewSet):
     search_fields = ("name",)
     permission_key = "knowledge"
 
-    @HasRole()
+    @HasPermission("knowledge_list-View")
+    def retrieve(self, request, *args, **kwargs):
+        serializer = self.get_detail(request, *args, **kwargs)
+        return_data = serializer.data
+        query = {"knowledge_document__knowledge_base_id": kwargs["pk"]}
+        count_data = {
+            "file_count": FileKnowledge.objects.filter(**query).count(),
+            "web_page_count": WebPageKnowledge.objects.filter(**query).count(),
+            "manual_count": ManualKnowledge.objects.filter(**query).count(),
+            "qa_count": QAPairs.objects.filter(knowledge_base_id=kwargs["pk"]).count(),
+            "graph_count": KnowledgeGraph.objects.filter(knowledge_base_id=kwargs["pk"]).count(),
+        }
+        count_data["document_count"] = sum(
+            value for key, value in count_data.items() if key not in ["qa_count", "graph_count"]
+        )
+        return_data.update(count_data)
+        return JsonResponse({"result": True, "data": return_data})
+
+    @HasPermission("knowledge_list-Add")
     def create(self, request, *args, **kwargs):
         params = request.data
         if not params.get("team"):
@@ -32,12 +57,10 @@ class KnowledgeBaseViewSet(AuthViewSet):
         params["created_by"] = request.user.username
         if params.get("enable_rerank") is None:
             params["enable_rerank"] = False
-        if params.get("rag_k") is None:
-            params["rag_k"] = 10
-        if params.get("rag_num_candidates") is None:
-            params["rag_num_candidates"] = 50
         if not params.get("team"):
             params["team"] = [int(request.COOKIES.get("current_team"))]
+        params["score_threshold"] = 0.3
+        params["search_type"] = "mmr"
         serializer = self.get_serializer(data=params)
         serializer.is_valid(raise_exception=True)
         with atomic():
@@ -45,7 +68,7 @@ class KnowledgeBaseViewSet(AuthViewSet):
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
-    @HasRole()
+    @HasPermission("knowledge_list-Edit")
     def update(self, request, *args, **kwargs):
         instance: KnowledgeBase = self.get_object()
         params = request.data
@@ -54,11 +77,12 @@ class KnowledgeBaseViewSet(AuthViewSet):
                 return JsonResponse(
                     {"result": False, "message": _("The knowledge base is training and cannot be modified.")}
                 )
-            retrain_all.delay(instance.id, username=request.user.username, domain=request.user.domain)
+            delete_qa_pairs = params.pop("delete_qa_pairs", False)
+            retrain_all.delay(instance.id, request.user.username, request.user.domain, delete_qa_pairs)
         return super().update(request, *args, **kwargs)
 
     @action(methods=["POST"], detail=True)
-    @HasRole()
+    @HasPermission("knowledge_setting-Edit")
     def update_settings(self, request, *args, **kwargs):
         instance: KnowledgeBase = self.get_object()
         if not request.user.is_superuser:
@@ -78,35 +102,38 @@ class KnowledgeBaseViewSet(AuthViewSet):
             instance.introduction = kwargs["introduction"]
         if kwargs.get("team"):
             instance.team = kwargs["team"]
-        instance.enable_vector_search = kwargs["enable_vector_search"]
-        instance.vector_search_weight = kwargs["vector_search_weight"]
-        instance.enable_text_search = kwargs["enable_text_search"]
-        instance.text_search_weight = kwargs["text_search_weight"]
         instance.enable_rerank = kwargs["enable_rerank"]
-        instance.rerank_model_id = kwargs["rerank_model"]
-        instance.text_search_mode = kwargs["text_search_mode"]
-        instance.rag_k = kwargs["rag_k"]
-        instance.rerank_top_k = kwargs.get("rerank_top_k", 10)
+        if kwargs.get("rerank_model") is None:
+            instance.rerank_model = None
+        else:
+            instance.rerank_model_id = kwargs["rerank_model"]
+            instance.rerank_top_k = kwargs["rerank_top_k"]
         instance.enable_naive_rag = kwargs["enable_naive_rag"]
         instance.enable_qa_rag = kwargs["enable_qa_rag"]
         instance.enable_graph_rag = kwargs["enable_graph_rag"]
+
         instance.rag_size = kwargs["rag_size"]
         instance.qa_size = kwargs["qa_size"]
         instance.graph_size = kwargs["graph_size"]
-        instance.rag_num_candidates = kwargs["rag_num_candidates"]
+        instance.search_type = kwargs["search_type"]
+        instance.score_threshold = kwargs.get("score_threshold", 0.7)
+        instance.rag_recall_mode = kwargs.get("rag_recall_mode", "chunk")
         instance.save()
         return JsonResponse({"result": True})
 
-    @HasRole()
+    @HasPermission("knowledge_list-Delete")
     def destroy(self, request, *args, **kwargs):
         if KnowledgeDocument.objects.filter(knowledge_base_id=kwargs["pk"]).exists():
             return JsonResponse(
                 {"result": False, "message": _("This knowledge base contains documents and cannot be deleted.")}
             )
+        elif QAPairs.objects.filter(knowledge_base_id=kwargs["pk"]).exists():
+            return JsonResponse(
+                {"result": False, "message": _("This knowledge base contains Q&A pairs and cannot be deleted.")}
+            )
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=False, methods=["GET"])
-    @HasRole()
     def get_teams(self, request):
         groups = request.user.group_list
         return JsonResponse({"result": True, "data": groups})

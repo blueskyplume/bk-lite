@@ -17,6 +17,7 @@ from apps.opspilot.model_provider_mgmt.views import (
     EmbedProviderViewSet,
     LLMModelViewSet,
     LLMViewSet,
+    ModelTypeViewSet,
     OCRProviderViewSet,
     RerankProviderViewSet,
     RuleViewSet,
@@ -35,6 +36,7 @@ router.register(r"model_provider_mgmt/rule", RuleViewSet)
 router.register(r"model_provider_mgmt/llm_model", LLMModelViewSet)
 router.register(r"model_provider_mgmt/skill_tools", SkillToolsViewSet)
 router.register(r"model_provider_mgmt/skill_log", SkillRequestLogViewSet)
+router.register(r"model_provider_mgmt/model_type", ModelTypeViewSet)
 
 # bot
 router.register(r"bot_mgmt/bot", BotViewSet)
@@ -56,7 +58,6 @@ router.register(r"knowledge_mgmt/knowledge_graph", KnowledgeGraphViewSet)
 # quota
 router.register(r"quota_rule_mgmt/quota_rule", QuotaRuleViewSet)
 
-
 urlpatterns = router.urls
 
 # bot open api
@@ -65,6 +66,7 @@ urlpatterns += [
     path(r"bot_mgmt/rasa_model_download/", views.model_download, name="model_download"),
     path(r"bot_mgmt/skill_execute/", views.skill_execute, name="skill_execute"),
     path(r"bot_mgmt/v1/chat/completions", views.openai_completions, name="openai_completions"),
+    path(r"bot_mgmt/lobe_chat/v1/chat/completions", views.lobe_skill_execute, name="openai_completions"),
     path(r"bot_mgmt/get_active_users_line_data/", views.get_active_users_line_data, name="get_active_users_line_data"),
     path(
         r"bot_mgmt/get_conversations_line_data/", views.get_conversations_line_data, name="get_conversations_line_data"

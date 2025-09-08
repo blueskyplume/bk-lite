@@ -1,13 +1,16 @@
-import { Pagination, TableDataItem } from '@/app/log/types';
+import { TableDataItem } from '@/app/log/types';
 import React from 'react';
 
 export interface SearchTableProps {
   dataSource: TableDataItem[];
-  pagination: Pagination;
-  expand: boolean;
+  fields: string[];
   loading?: boolean;
-  onChange: (pagination: any) => void;
+  scroll?: {
+    x?: string | number;
+    y?: string | number;
+  };
   addToQuery: (row: TableDataItem, type: string) => void;
+  onLoadMore?: () => void;
 }
 
 export interface SearchParams {
@@ -18,6 +21,7 @@ export interface SearchParams {
   fields_limit?: number;
   step?: string;
   limit?: number | null;
+  log_groups?: React.Key[];
 }
 
 export interface LogStream {
@@ -30,7 +34,7 @@ export interface LogStream {
 }
 
 export interface DetailItem {
-  instance_id: string;
+  stream: string;
   value: number;
 }
 
@@ -41,7 +45,20 @@ export interface AggregatedResult {
 }
 
 export interface LogTerminalProps {
-  searchParams?: () => SearchParams;
   className?: string;
+  query: SearchParams;
   fetchData?: (loading: boolean) => void;
+}
+
+export interface LogTerminalRef {
+  startLogStream: () => void;
+}
+
+export interface FieldListProps {
+  loading?: boolean;
+  className?: string;
+  style?: Record<string, string>;
+  fields: string[];
+  addToQuery: (row: TableDataItem, type: string) => void;
+  changeDisplayColumns: (columns: string[]) => void;
 }

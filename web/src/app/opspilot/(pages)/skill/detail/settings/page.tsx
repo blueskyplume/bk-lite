@@ -19,7 +19,6 @@ const { TextArea } = Input;
 
 const SkillSettingsPage: React.FC = () => {
   const [form] = Form.useForm();
-  const [isDeepSeek, setIsDeepSeek] = useState(false);
   const { groups, loading: groupsLoading } = useGroups();
   const { t } = useTranslation();
   const { fetchSkillDetail, fetchKnowledgeBases, fetchLlmModels, saveSkillDetail } = useSkillApi();
@@ -65,10 +64,9 @@ const SkillSettingsPage: React.FC = () => {
           prompt: data.skill_prompt,
           guide: data.guide || initialGuide,
           show_think: data.show_think,
+          enable_suggest: data.enable_suggest,
         });
         setGuideValue(data.guide || initialGuide);
-        const selected = llmModels.find(model => model.id === data.llm_model);
-        setIsDeepSeek(selected?.llm_model_type === 'deep-seek');
         setChatHistoryEnabled(data.enable_conversation_history);
         setRagEnabled(data.enable_rag);
         setRagStrictMode(data.enable_rag_strict_mode);
@@ -160,6 +158,7 @@ const SkillSettingsPage: React.FC = () => {
           icon: tool.icon,
           kwargs: tool.kwargs.filter((kwarg: any) => kwarg.key),
         })),
+        enable_suggest: values.enable_suggest,
       };
       setSaveLoading(true);
       await saveSkillDetail(id, payload);
@@ -171,13 +170,33 @@ const SkillSettingsPage: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (userMessage: string): Promise<{ url: string; payload: any }> => {
+  const handleSendMessage = async (userMessage: string, currentMessages: any[] = []): Promise<{ url: string; payload: any } | null> => {
     try {
       const values = await form.validateFields();
+      
+      // Check if knowledge base is selected when RAG is enabled
+      if (ragEnabled && ragSources.length === 0) {
+        message.error(t('skill.ragKnowledgeBaseRequired'));
+        return null;
+      }
+      
+      // Check if tool is selected when tool functionality is enabled
+      if (showToolEnabled && selectedTools.length === 0) { 
+        message.error(t('skill.ragToolRequired'));
+        return null;
+      }
+      
       const ragScoreThreshold = selectedKnowledgeBases.map(id => ({
         knowledge_base: id,
         score: ragSources.find(base => base.id === id)?.score || 0.7,
       }));
+
+      const chatHistory = chatHistoryEnabled && quantity 
+        ? currentMessages.slice(-quantity).map(msg => ({ 
+          message: msg.content, 
+          event: msg.role 
+        }))
+        : [];
 
       const payload = {
         user_message: userMessage,
@@ -187,7 +206,7 @@ const SkillSettingsPage: React.FC = () => {
         enable_rag_knowledge_source: showRagSource,
         enable_rag_strict_mode: ragStrictMode,
         rag_score_threshold: ragScoreThreshold,
-        chat_history: quantity ? [] : [],
+        chat_history: chatHistory,
         conversation_window_size: chatHistoryEnabled ? quantity : undefined,
         temperature: temperature,
         show_think: values.show_think,
@@ -198,6 +217,7 @@ const SkillSettingsPage: React.FC = () => {
         skill_id: id,
         enable_km_route: enableKmRoute,
         km_llm_model: enableKmRoute ? kmLlmModel : undefined,
+        enable_suggest: values.enable_suggest
       };
 
       return {
@@ -205,8 +225,17 @@ const SkillSettingsPage: React.FC = () => {
         payload
       };
     } catch (error) {
-      console.error(t('common.fetchFailed'), error);
-      throw error;
+      // Display first error message when form validation fails
+      if (error && typeof error === 'object' && 'errorFields' in error) {
+        const errorFields = (error as any).errorFields;
+        if (errorFields && errorFields.length > 0) {
+          const firstError = errorFields[0];
+          message.error(firstError.errors[0]);
+        }
+      } else {
+        message.error(t('skill.formValidationFailed'));
+      }
+      return null;
     }
   };
 
@@ -272,7 +301,6 @@ const SkillSettingsPage: React.FC = () => {
                       <Select
                         onChange={(value: number) => {
                           const selected = llmModels.find(model => model.id === value);
-                          setIsDeepSeek(selected?.llm_model_type === 'deep-seek');
                           form.setFieldsValue({ show_think: selected && selected.llm_model_type === 'deep-seek' ? false : true });
                         }}
                       >
@@ -281,14 +309,18 @@ const SkillSettingsPage: React.FC = () => {
                         ))}
                       </Select>
                     </Form.Item>
-                    {isDeepSeek && (
-                      <Form.Item
-                        label={t('skill.form.showThought')}
-                        name="show_think"
-                        valuePropName="checked">
-                        <Switch size="small" />
-                      </Form.Item>
-                    )}
+                    <Form.Item
+                      label={t('skill.form.showThought')}
+                      name="show_think"
+                      valuePropName="checked">
+                      <Switch size="small" />
+                    </Form.Item>
+                    <Form.Item
+                      label={t('skill.form.enableSuggest')}
+                      name="enable_suggest"
+                      valuePropName="checked">
+                      <Switch size="small" />
+                    </Form.Item>
                     <Form.Item
                       label={t('skill.form.temperature')}
                       name="temperature"
@@ -408,7 +440,7 @@ const SkillSettingsPage: React.FC = () => {
                     )}
                   </Form>
                 </div>
-                {skillType === 1 && (
+                {skillType !== 2 && (
                   <div className={`p-4 rounded-md pb-0 ${styles.contentWrapper}`}>
                     <Form labelCol={{flex: '0 0 135px'}} wrapperCol={{flex: '1'}}>
                       <div className="flex justify-between">
@@ -440,7 +472,7 @@ const SkillSettingsPage: React.FC = () => {
           <div className="w-1/2 space-y-4">
             <CustomChatSSE 
               handleSendMessage={handleSendMessage} 
-              guide={guideValue} 
+              guide={guideValue}
             />
           </div>
         </div>

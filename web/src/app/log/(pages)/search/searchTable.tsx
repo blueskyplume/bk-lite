@@ -1,5 +1,5 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { CopyTwoTone, CaretDownFilled } from '@ant-design/icons';
 import { Button } from 'antd';
 import CustomPopover from './customPopover';
@@ -14,42 +14,63 @@ import { useLocalizedTime } from '@/hooks/useLocalizedTime';
 
 const SearchTable: React.FC<SearchTableProps> = ({
   dataSource,
-  pagination,
-  expand,
   loading = false,
-  onChange,
+  scroll,
+  fields = [],
   addToQuery,
+  onLoadMore,
 }) => {
   const { t } = useTranslation();
   const { handleCopy } = useHandleCopy();
   const { convertToLocalizedTime } = useLocalizedTime();
   const [expandedRowKeys, setExpandedRowKeys] = useState<React.Key[]>([]);
 
-  const columns = [
-    {
-      title: 'timestrap',
-      dataIndex: '_time',
-      key: '_time',
-      width: 150,
-      render: (val: string) => (
-        <EllipsisWithTooltip
-          text={convertToLocalizedTime(val, 'YYYY-MM-DD HH:mm:ss')}
-          className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
-        ></EllipsisWithTooltip>
-      ),
-    },
-    {
-      title: 'source',
-      dataIndex: '_msg',
-      key: '_msg',
-    },
-  ];
+  const activeColumns = useMemo(() => {
+    const baseColumns = [
+      {
+        title: 'timestamp',
+        dataIndex: '_time',
+        key: '_time',
+        width: 160,
+        fixed: 'left',
+        render: (val: string) => (
+          <EllipsisWithTooltip
+            text={convertToLocalizedTime(val, 'YYYY-MM-DD HH:mm:ss')}
+            className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
+          ></EllipsisWithTooltip>
+        ),
+      },
+      {
+        title: 'message',
+        dataIndex: '_msg',
+        key: '_msg',
+        render: (val: string) => val || '--',
+        width: 800,
+      },
+    ];
+    const storageFileds = localStorage.getItem('logSearchFields');
+    const dependentFileds = storageFileds
+      ? JSON.parse(storageFileds || '[]')
+      : [];
+    const arr = fields.length ? fields : dependentFileds;
+    const activeColumns = arr
+      .filter((item: string) => !['timestamp', 'message'].includes(item))
+      .map((item: string) => ({
+        title: item,
+        dataIndex: item,
+        key: item,
+        width: 200,
+        ellipsis: {
+          showTitle: true,
+        },
+      }));
+
+    return [...baseColumns, ...activeColumns];
+  }, [fields]);
 
   const getRowExpandRender = (record: TableDataItem) => {
     return (
-      <div
-        className={`w-[calc(100vw-90px)] min-w-[1180px] ${searchStyle.detail}`}
-      >
+      <div className={`w-full ${searchStyle.detail}`}>
         <div className={searchStyle.title}>
           <div className="mb-1">
             <CopyTwoTone
@@ -72,6 +93,12 @@ const SearchTable: React.FC<SearchTableProps> = ({
             </span>
             <span className="mr-3">
               <span className="text-[var(--color-text-3)]">
+                {t('log.integration.collector')}：
+              </span>
+              <span>{record.collector || '--'}</span>
+            </span>
+            <span>
+              <span className="text-[var(--color-text-3)]">
                 {t('log.integration.collectType')}：
               </span>
               <span>{record.collect_type || '--'}</span>
@@ -88,7 +115,7 @@ const SearchTable: React.FC<SearchTableProps> = ({
               <li className="flex items-start mt-[10px]" key={index}>
                 <div className="flex items-center min-w-[250px] w-[250px] mr-[10px]">
                   <CustomPopover
-                    title={`${item.label} = string`}
+                    title={item.label}
                     content={(onClose) => (
                       <ul>
                         <li>
@@ -155,21 +182,25 @@ const SearchTable: React.FC<SearchTableProps> = ({
 
   return (
     <CustomTable
-      columns={columns}
+      className="w-[calc(100vw-250px)] min-w-[1030px]"
+      columns={activeColumns}
       dataSource={dataSource}
       loading={loading}
-      rowKey="_time"
-      scroll={{
-        y: `calc(100vh - ${expand ? '568px' : '488px'})`,
-      }}
-      pagination={pagination}
+      virtual
+      rowKey="id"
+      scroll={scroll || undefined}
       expandable={{
-        columnWidth: 40,
+        columnWidth: 36,
         expandedRowRender: (record) => getRowExpandRender(record),
         expandedRowKeys: expandedRowKeys,
         onExpandedRowsChange: (keys) => setExpandedRowKeys(keys as React.Key[]),
       }}
-      onChange={onChange}
+      onScroll={(e: any) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollTop + clientHeight + 10 >= scrollHeight) {
+          onLoadMore?.();
+        }
+      }}
     />
   );
 };

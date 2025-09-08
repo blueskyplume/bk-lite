@@ -2,70 +2,95 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import TimeSelector from '@/components/time-selector';
 import { ListItem, TimeSelectorDefaultValue, TimeSelectorRef } from '@/types';
+import { useSearchParams } from 'next/navigation';
 import { SearchOutlined, BulbFilled } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
-import { Card, Input, Button, Select, Segmented, Spin } from 'antd';
+import {
+  Card,
+  Input,
+  Button,
+  Select,
+  Segmented,
+  Spin,
+  InputNumber,
+  message,
+} from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import searchStyle from './index.module.scss';
 import Collapse from '@/components/collapse';
 import CustomBarChart from '@/app/log/components/charts/barChart';
 import GrammarExplanation from '@/app/log/components/operate-drawer';
 import SearchTable from './searchTable';
+import FieldList from './fieldList';
 import LogTerminal from './logTerminal';
 import { ChartData, Pagination, TableDataItem } from '@/app/log/types';
 import useApiClient from '@/utils/request';
 import useSearchApi from '@/app/log/api/search';
 import useIntegrationApi from '@/app/log/api/integration';
-import { SearchParams } from '@/app/log/types/search';
-import { aggregateLogs, escapeArrayToJson } from '@/app/log/utils/common';
+import { SearchParams, LogTerminalRef } from '@/app/log/types/search';
+import { aggregateLogs } from '@/app/log/utils/common';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
 import MarkdownRenderer from '@/components/markdown';
+import { v4 as uuidv4 } from 'uuid';
 
 const { Option } = Select;
+const PAGE_LIMIT = 100;
 
 const SearchView: React.FC = () => {
   const { t } = useTranslation();
+  const searchParams = useSearchParams();
   const { isLoading } = useApiClient();
-  const { getLogStreams } = useIntegrationApi();
+  const { getLogStreams, getFields } = useIntegrationApi();
   const { getHits, getLogs } = useSearchApi();
   const { convertToLocalizedTime } = useLocalizedTime();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const terminalRef = useRef<LogTerminalRef | null>(null);
   const timeSelectorRef = useRef<TimeSelectorRef>(null);
   const [frequence, setFrequence] = useState<number>(0);
-  const [searchText, setSearchText] = useState<string>('');
-  const [allTableData, setAllTableData] = useState<TableDataItem[]>([]);
+  const queryText = searchParams.get('query') || '';
+  const startTime = searchParams.get('startTime') || '';
+  const endTime = searchParams.get('endTime') || '';
+  const [searchText, setSearchText] = useState<string>(queryText);
+  const [tableData, setTableData] = useState<TableDataItem[]>([]);
   const [queryTime, setQueryTime] = useState<Date>(new Date());
   const [queryEndTime, setQueryEndTime] = useState<Date>(new Date());
-  //   const [limit, setLimit] = useState<number | null>(1000);
   const [groupList, setGroupList] = useState<ListItem[]>([]);
+  const [fields, setFields] = useState<string[]>([]);
+  const [columnFields, setColumnFields] = useState<string[]>([]);
   const [groups, setGroups] = useState<React.Key[]>([]);
   const [pagination, setPagination] = useState<Pagination>({
-    current: 1,
+    current: 0,
     total: 0,
-    pageSize: 20,
+    pageSize: PAGE_LIMIT,
   });
   const [expand, setExpand] = useState<boolean>(true);
   const [chartData, setChartData] = useState<ChartData[]>([]);
   const [visible, setVisible] = useState<boolean>(false);
   const [activeMenu, setActiveMenu] = useState<string>('list');
   const [pageLoading, setPageLoading] = useState<boolean>(false);
+  const [chartLoading, setChartLoading] = useState<boolean>(false);
+  const [treeLoading, setTreeLoading] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
+  const [terminalLoading, setTerminalLoading] = useState<boolean>(false);
   const [timeDefaultValue, setTimeDefaultValue] =
     useState<TimeSelectorDefaultValue>({
-      selectValue: 15,
-      rangePickerVaule: null,
+      selectValue: startTime ? 0 : 15,
+      rangePickerVaule: endTime ? [dayjs(+startTime), dayjs(+endTime)] : null,
     });
+  const [windowHeight, setWindowHeight] = useState<number>(window.innerHeight);
+  const [limit, setLimit] = useState<number | null>(100);
 
   const isList = useMemo(() => activeMenu === 'list', [activeMenu]);
 
-  const tableData = useMemo(() => {
-    const startIndex = (pagination.current - 1) * pagination.pageSize;
-    const endIndex = startIndex + pagination.pageSize;
-    return allTableData.slice(startIndex, endIndex);
-  }, [pagination.current, pagination.pageSize, allTableData]);
+  const scrollHeight = useMemo(() => {
+    // 根据expand状态和屏幕高度动态计算scroll高度
+    const fixedHeight = expand ? 480 : 400;
+    return Math.max(200, windowHeight - fixedHeight);
+  }, [windowHeight, expand]);
 
   useEffect(() => {
     if (isLoading) return;
+    getAllFields();
     initData();
   }, [isLoading]);
 
@@ -80,7 +105,17 @@ const SearchView: React.FC = () => {
     return () => {
       clearTimer();
     };
-  }, [frequence, searchText, groups]);
+  }, [frequence, searchText, groups, limit]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowHeight(window.innerHeight);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   const clearTimer = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -89,67 +124,122 @@ const SearchView: React.FC = () => {
 
   const onTabChange = async (val: string) => {
     setActiveMenu(val);
+    setChartData([]);
+    setTableData([]);
+    if (val === 'list') {
+      onRefresh();
+    }
   };
 
   const initData = async () => {
-    setPageLoading(true);
-    Promise.all([getGroups(), getLogData('init')]).finally(() => {
+    try {
+      setPageLoading(true);
+      const data = await getLogStreams({
+        page_size: -1,
+        page: 1,
+      });
+      const list = data || [];
+      const ids = list.at()?.id ? [list.at().id] : [];
+      setGroupList(list);
+      setGroups(ids);
+      if (list.length) {
+        getLogData('init', { logGroups: ids });
+      }
+    } finally {
       setPageLoading(false);
-    });
+    }
   };
 
-  const getGroups = async () => {
-    const data = await getLogStreams({
-      page_size: 99999999999,
-      page: 1,
-    });
-    setGroupList(data?.items || []);
+  const getAllFields = async () => {
+    setTreeLoading(true);
+    try {
+      const data = await getFields();
+      setFields(data || []);
+    } finally {
+      setTreeLoading(false);
+    }
   };
 
-  const getLogData = async (type: string, times?: number[]) => {
-    setPageLoading(type !== 'timer');
+  const getChartData = async (
+    type: string,
+    extra?: {
+      times?: number[];
+      logGroups?: React.Key[];
+    }
+  ) => {
+    setChartLoading(type !== 'timer');
+    try {
+      const params = getParams(extra);
+      const res = await getHits(params);
+      const chartData = aggregateLogs(res?.hits);
+      const total = chartData.reduce((pre, cur) => (pre += cur.value), 0);
+      setPagination((pre) => ({
+        ...pre,
+        total: total,
+        current: 1,
+      }));
+      setChartData(chartData);
+    } finally {
+      setChartLoading(false);
+    }
+  };
+
+  const getTableData = async (
+    type: string,
+    extra?: {
+      times?: number[];
+      logGroups?: React.Key[];
+    }
+  ) => {
+    setTableLoading(type !== 'timer');
+    try {
+      const params = getParams(extra);
+      const res = await getLogs(params);
+      const listData: TableDataItem[] = (res || []).map(
+        (item: TableDataItem) => ({
+          ...item,
+          id: uuidv4(),
+        })
+      );
+      setTableData(listData);
+    } finally {
+      setTableLoading(false);
+    }
+  };
+
+  const getLogData = async (
+    type: string,
+    extra?: {
+      times?: number[];
+      logGroups?: React.Key[];
+    }
+  ) => {
+    if (!extra?.logGroups?.length && !groups.length) {
+      return message.error(t('log.search.searchError'));
+    }
+    setTableData([]);
+    setChartData([]);
     setQueryTime(new Date());
     setQueryEndTime(new Date());
-    const params = getParams(times);
-    await Promise.all([getHits(params), getLogs(params)])
-      .then((res) => {
-        const chartData = aggregateLogs(res[0]?.hits);
-        const listData = res[1] || [];
-        setChartData(chartData);
-        setPagination((pre) => {
-          return {
-            ...pre,
-            current: 1,
-            total: listData.length,
-          };
-        });
-        setAllTableData(listData);
-      })
-      .finally(() => {
-        setPageLoading(type === 'init');
+    Promise.all([getChartData(type, extra), getTableData(type, extra)]).finally(
+      () => {
         setQueryEndTime(new Date());
-      });
+      }
+    );
   };
 
-  const getParams = (seletedTimes?: number[]) => {
-    const times = seletedTimes || timeSelectorRef.current?.getValue() || [];
-    let text = searchText;
-    if (groups?.length >= 1) {
-      const groupsText =
-        groups.length > 1
-          ? `streams:"${escapeArrayToJson(groups)}"`
-          : `streams:"${groups[0]}"`;
-      text = searchText ? `${groupsText} | ${searchText}` : groupsText;
-    }
+  const getParams = (extra?: { times?: number[]; logGroups?: React.Key[] }) => {
+    const times = extra?.times || timeSelectorRef.current?.getValue() || [];
     const params: SearchParams = {
-      start_time: new Date(times[0]).toISOString(),
-      end_time: new Date(times[1]).toISOString(),
+      start_time: times[0] ? new Date(times[0]).toISOString() : '',
+      end_time: times[1] ? new Date(times[1]).toISOString() : '',
       field: '_stream',
       fields_limit: 5,
-      query: text || '*',
-      limit: null,
+      log_groups: extra?.logGroups || groups,
+      query: searchText || '*',
+      limit,
     };
-    params.step = (times[1] - times[0]) / 100 + 'ms';
+    params.step = Math.round((times[1] - times[0]) / 100) + 'ms';
     return params;
   };
 
@@ -161,11 +251,12 @@ const SearchView: React.FC = () => {
     getLogData('refresh');
   };
 
-  const handleTableChange = (pagination: Pagination) => {
-    setPagination({
-      ...pagination,
-      total: allTableData.length,
-    });
+  const handleSearch = () => {
+    if (isList) {
+      onRefresh();
+      return;
+    }
+    terminalRef?.current?.startLogStream();
   };
 
   const addToQuery = (row: TableDataItem, type: string) => {
@@ -190,20 +281,11 @@ const SearchView: React.FC = () => {
       selectValue: 0,
     }));
     const times = arr.map((item) => dayjs(item).valueOf());
-    getLogData('refresh', times);
+    getLogData('refresh', { times });
   };
 
   return (
     <div className={`${searchStyle.search} w-full`}>
-      <div className="flex justify-end">
-        <TimeSelector
-          ref={timeSelectorRef}
-          defaultValue={timeDefaultValue}
-          onChange={onRefresh}
-          onFrequenceChange={onFrequenceChange}
-          onRefresh={onRefresh}
-        />
-      </div>
       <Spin spinning={pageLoading}>
         <Card bordered={false} className={searchStyle.searchCondition}>
           <b className="flex mb-[10px]">{t('log.search.searchCriteria')}</b>
@@ -213,10 +295,9 @@ const SearchView: React.FC = () => {
                 width: '250px',
               }}
               showSearch
-              allowClear
-              mode="tags"
+              mode="multiple"
               maxTagCount="responsive"
-              placeholder={t('common.select')}
+              placeholder={t('log.search.selectGroup')}
               value={groups}
               onChange={(val) => setGroups(val)}
             >
@@ -238,86 +319,128 @@ const SearchView: React.FC = () => {
                 />
               }
               onChange={(e) => setSearchText(e.target.value)}
-              onPressEnter={onRefresh}
+              onPressEnter={handleSearch}
             />
-            {/* <InputNumber
-              className="mr-[8px] w-[100px]"
-              placeholder={t('log.search.listTotal')}
-              value={limit}
-              min={0}
-              max={10000}
-              precision={0}
-              controls={false}
-              onChange={(val) => setLimit(val)}
-            /> */}
             <Button
               type="primary"
               icon={<SearchOutlined />}
-              onClick={onRefresh}
+              onClick={handleSearch}
             >
-              {t('common.search')}
+              {t('log.search.search')}
             </Button>
           </div>
         </Card>
-        <Card bordered={false}>
-          <Collapse
-            title={t('log.search.histogram')}
-            icon={
-              <div>
-                <span className="mr-2">
-                  <span className="text-[var(--color-text-3)]">
-                    {t('log.search.total')}：
-                  </span>
-                  <span>{allTableData?.length || 0}</span>
-                </span>
-                <span className="mr-2">
-                  <span className="text-[var(--color-text-3)]">
-                    {t('log.search.queryTime')}：
-                  </span>
-                  <span>{convertToLocalizedTime(String(queryTime))}</span>
-                </span>
-                <span className="mr-2">
-                  <span className="text-[var(--color-text-3)]">
-                    {t('log.search.timeConsumption')}：
-                  </span>
-                  <span>{`${Number(queryEndTime) - Number(queryTime)}ms`}</span>
-                </span>
-              </div>
-            }
-            onToggle={(val) => setExpand(val)}
-          >
-            <CustomBarChart
-              className={searchStyle.chart}
-              data={chartData}
-              onXRangeChange={onXRangeChange}
+        <div className="my-[10px] flex items-center justify-between">
+          <Segmented
+            value={activeMenu}
+            options={[
+              { value: 'list', label: t('log.search.list') },
+              { value: 'overview', label: t('log.search.terminal') },
+            ]}
+            onChange={onTabChange}
+          />
+          <div className={isList ? 'flex items-center' : 'hidden'}>
+            <span className="text-[var(--color-text-3)] text-[12px] mr-[8px]">
+              {t('log.search.listTotal')}
+            </span>
+            <div className="flex">
+              <InputNumber
+                className="mr-[8px] w-[100px]"
+                placeholder={t('common.inputMsg')}
+                value={limit}
+                min={1}
+                max={1000000}
+                precision={0}
+                controls={false}
+                onChange={(val) => setLimit(val || 1)}
+              />
+            </div>
+            <TimeSelector
+              ref={timeSelectorRef}
+              defaultValue={timeDefaultValue}
+              onChange={onRefresh}
+              onFrequenceChange={onFrequenceChange}
+              onRefresh={onRefresh}
             />
-          </Collapse>
-        </Card>
-        <Segmented
-          className="my-[10px]"
-          value={activeMenu}
-          options={[
-            { value: 'list', label: t('log.search.list') },
-            { value: 'overview', label: t('log.search.terminal') },
-          ]}
-          onChange={onTabChange}
-        />
+          </div>
+        </div>
         {isList ? (
-          <Card bordered={false}>
-            <SearchTable
-              dataSource={tableData}
-              pagination={pagination}
-              onChange={handleTableChange}
-              addToQuery={addToQuery}
-              expand={expand}
-            />
-          </Card>
+          <>
+            <Spin spinning={chartLoading}>
+              <Card bordered={false} className="mb-[10px]">
+                <Collapse
+                  title={t('log.search.histogram')}
+                  icon={
+                    <div>
+                      <span className="mr-2">
+                        <span className="text-[var(--color-text-3)]">
+                          {t('log.search.total')}：
+                        </span>
+                        <span>{pagination.total}</span>
+                      </span>
+                      <span className="mr-2">
+                        <span className="text-[var(--color-text-3)]">
+                          {t('log.search.queryTime')}：
+                        </span>
+                        <span>{convertToLocalizedTime(String(queryTime))}</span>
+                      </span>
+                      <span className="mr-2">
+                        <span className="text-[var(--color-text-3)]">
+                          {t('log.search.timeConsumption')}：
+                        </span>
+                        <span>{`${
+                          Number(queryEndTime) - Number(queryTime)
+                        }ms`}</span>
+                      </span>
+                    </div>
+                  }
+                  isOpen={expand}
+                  onToggle={(val) => setExpand(val)}
+                >
+                  <CustomBarChart
+                    className={searchStyle.chart}
+                    data={chartData}
+                    onXRangeChange={onXRangeChange}
+                  />
+                </Collapse>
+              </Card>
+            </Spin>
+            <Card
+              bordered={false}
+              style={{
+                minHeight: scrollHeight + 74 + 'px',
+                overflowY: 'hidden',
+              }}
+            >
+              <div className={searchStyle.tableArea}>
+                <Spin spinning={treeLoading}>
+                  <FieldList
+                    style={{ height: scrollHeight + 'px' }}
+                    className="w-[180px] min-w-[180px]"
+                    fields={fields}
+                    addToQuery={addToQuery}
+                    changeDisplayColumns={(val) => {
+                      setColumnFields(val);
+                    }}
+                  />
+                </Spin>
+                <SearchTable
+                  loading={tableLoading}
+                  dataSource={tableData}
+                  fields={columnFields}
+                  scroll={{ x: 'calc(100vw-300px)', y: scrollHeight }}
+                  addToQuery={addToQuery}
+                />
+              </div>
+            </Card>
+          </>
         ) : (
-          <Spin spinning={tableLoading}>
+          <Spin spinning={terminalLoading}>
             <LogTerminal
-              className="h-[calc(100vh-434px)]"
-              searchParams={getParams}
-              fetchData={(val) => setTableLoading(val)}
+              ref={terminalRef}
+              className="h-[calc(100vh-244px)]"
+              query={getParams()}
+              fetchData={(val) => setTerminalLoading(val)}
             />
           </Spin>
         )}

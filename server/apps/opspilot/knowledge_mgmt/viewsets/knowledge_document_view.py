@@ -9,8 +9,9 @@ from django_minio_backend import MinioBackend
 from rest_framework import viewsets
 from rest_framework.decorators import action
 
+from apps.core.decorators.api_permission import HasPermission
 from apps.core.logger import opspilot_logger as logger
-from apps.opspilot.knowledge_mgmt.models import KnowledgeGraph
+from apps.opspilot.knowledge_mgmt.models import KnowledgeGraph, QAPairs
 from apps.opspilot.knowledge_mgmt.models.knowledge_document import DocumentStatus
 from apps.opspilot.knowledge_mgmt.models.knowledge_task import KnowledgeTask
 from apps.opspilot.knowledge_mgmt.serializers import KnowledgeDocumentSerializer
@@ -42,38 +43,51 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
     filterset_class = ObjFilter
     ordering = ("-id",)
 
+    @HasPermission("knowledge_document-Delete")
     def destroy(self, request, *args, **kwargs):
         instance: KnowledgeDocument = self.get_object()
         if instance.train_status == DocumentStatus.TRAINING:
             return JsonResponse({"result": False, "message": _("training document can not be deleted")})
         with transaction.atomic():
             ConversationTag.objects.filter(knowledge_document_id=instance.id).delete()
+            for i in QAPairs.objects.filter(document_id=instance.id):
+                i.delete()
             instance.delete()
         return JsonResponse({"result": True})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-Train")
     def batch_train(self, request):
         kwargs = request.data
         knowledge_document_ids = kwargs.pop("knowledge_document_ids", [])
         if type(knowledge_document_ids) is not list:
             knowledge_document_ids = [knowledge_document_ids]
         KnowledgeDocument.objects.filter(id__in=knowledge_document_ids).update(train_status=DocumentStatus.TRAINING)
-        general_embed.delay(knowledge_document_ids, request.user.username, request.user.domain)
+        general_embed.delay(
+            knowledge_document_ids, request.user.username, request.user.domain, kwargs["delete_qa_pairs"]
+        )
         return JsonResponse({"result": True})
 
     @action(methods=["GET"], detail=False)
+    @HasPermission("knowledge_document-View")
     def get_my_tasks(self, request):
         knowledge_base_id = request.GET.get("knowledge_base_id", 0)
         if not knowledge_base_id:
             return JsonResponse({"result": False, "message": _("knowledge_base_id is required")})
-        task_list = (
+        task_list = list(
             KnowledgeTask.objects.filter(created_by=request.user.username, knowledge_base_id=knowledge_base_id)
-            .values("task_name", "train_progress", "is_qa_task")
+            .values("task_name", "train_progress", "is_qa_task", "completed_count", "total_count")
             .order_by("-id")
         )
-        return JsonResponse({"result": True, "data": list(task_list)})
+        for i in task_list:
+            # if not i["is_qa_task"]:
+            i["train_progress"] = f"{i['completed_count']}/{i['total_count']}"
+        # else:
+        #     i["train_progress"] = f"{i['train_progress']}%"
+        return JsonResponse({"result": True, "data": task_list})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_testing-View")
     def testing(self, request):
         kwargs = request.data
         knowledge_base_id = kwargs.pop("knowledge_base_id", 0)
@@ -84,26 +98,27 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         service = KnowledgeSearchService()
         knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id)
         docs = qa_docs = graph_list = []
+        score_threshold = kwargs.get("score_threshold", knowledge_base.score_threshold)
         if kwargs.get("enable_naive_rag", True):
             params = dict(
                 kwargs,
                 **{
-                    "size": kwargs.get("rag_size", knowledge_base.rag_size),
+                    "rag_size": kwargs.get("rag_size", knowledge_base.rag_size),
                     "enable_qa_rag": False,
                     "enable_graph_rag": False,
                 },
             )
-            docs = service.search(knowledge_base, query, params, is_qa=False)
+            docs = service.search(knowledge_base, query, params, score_threshold, is_qa=False)
         if kwargs.get("enable_qa_rag", True):
             params = dict(
                 kwargs,
                 **{
-                    "size": kwargs.get("qa_size", knowledge_base.qa_size),
+                    "qa_size": kwargs.get("qa_size", knowledge_base.qa_size),
                     "enable_naive_rag": False,
                     "enable_graph_rag": False,
                 },
             )
-            qa_docs = service.search(knowledge_base, query, params, is_qa=True)
+            qa_docs = service.search(knowledge_base, query, params, score_threshold, is_qa=True)
         if kwargs.get("enable_graph_rag", False):
             graph_obj = KnowledgeGraph.objects.filter(knowledge_base_id=knowledge_base.id).first()
             if graph_obj:
@@ -125,11 +140,12 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         return JsonResponse({"result": True, "data": {"docs": docs, "qa_docs": qa_docs, "graph_data": graph_list}})
 
     @action(methods=["GET"], detail=True)
+    @HasPermission("knowledge_document-View")
     def get_detail(self, request, *args, **kwargs):
         instance: KnowledgeDocument = self.get_object()
         page = int(request.GET.get("page", 1))
         page_size = int(request.GET.get("page_size", 10))
-        search_text = request.GET.get("search_text", "")
+        search_text = request.GET.get("search_term", "")
         index_name = instance.knowledge_index_name()
         res = ChunkHelper.get_document_es_chunk(
             index_name,
@@ -143,7 +159,12 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
                 "result": True,
                 "data": {
                     "items": [
-                        {"id": i["metadata"]["chunk_id"], "content": i["page_content"], "index_name": index_name}
+                        {
+                            "id": i["metadata"]["chunk_id"],
+                            "qa_count": i["metadata"].get("qa_count", 0),
+                            "content": i["page_content"],
+                            "index_name": index_name,
+                        }
                         for i in res["documents"]
                     ],
                     "count": res["count"],
@@ -152,10 +173,13 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         )
 
     @action(methods=["GET"], detail=False)
+    @HasPermission("knowledge_document-View")
     def get_chunk_detail(self, request):
         knowledge_id = request.GET.get("knowledge_id")
         instance = KnowledgeDocument.objects.get(id=knowledge_id)
         chunk_id = request.GET.get("chunk_id")
+        if not chunk_id:
+            return JsonResponse({"result": True, "message": _("chunk_id is required")})
         index_name = instance.knowledge_index_name()
         res = ChunkHelper.get_document_es_chunk(
             index_name,
@@ -183,7 +207,20 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-Delete")
+    def delete_chunks(self, request):
+        params = request.data
+        chunk_ids = params["ids"]
+        keep_qa = not params.get("delete_all", False)
+        for chunk_id in chunk_ids:
+            result = ChunkHelper.delete_es_content(chunk_id, True, keep_qa)
+            if not result:
+                return JsonResponse({"result": False, "message": _("Failed to delete QA pair.")})
+        return JsonResponse({"result": True})
+
     @action(methods=["POST"], detail=True)
+    @HasPermission("knowledge_document-Set")
     def enable_chunk(self, request, *args, **kwargs):
         instance: KnowledgeDocument = self.get_object()
         enabled = request.data.get("enabled", False)
@@ -197,20 +234,8 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             logger.exception(e)
             return JsonResponse({"result": False, "message": _("update failed")})
 
-    @action(methods=["POST"], detail=True)
-    def delete_chunk(self, request, *args, **kwargs):
-        instance: KnowledgeDocument = self.get_object()
-        chunk_id = request.data.get("chunk_id", "")
-        if not chunk_id:
-            return JsonResponse({"result": False, "message": _("chunk_id is required")})
-        try:
-            KnowledgeSearchService.delete_es_content(instance.knowledge_index_name(), chunk_id, instance.name, True)
-            return JsonResponse({"result": True})
-        except Exception as e:
-            logger.exception(e)
-            return JsonResponse({"result": False, "message": _("delete failed")})
-
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-Delete")
     def batch_delete(self, request):
         doc_ids = request.data.get("doc_ids", [])
         knowledge_base_id = request.data.get("knowledge_base_id", 0)
@@ -219,16 +244,16 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         KnowledgeDocument.objects.filter(id__in=doc_ids).delete()
         index_name = f"knowledge_base_{knowledge_base_id}"
         try:
-            KnowledgeSearchService.delete_es_content(
-                index_name,
-                ",".join([str(i) for i in doc_ids]),
-            )
+            for i in doc_ids:
+                KnowledgeSearchService.delete_es_content(index_name, str(i))
+            QAPairs.objects.filter(document_id__in=doc_ids).delete()
         except Exception as e:
             logger.exception(e)
             return JsonResponse({"result": False, "message": _("delete failed")})
         return JsonResponse({"result": True})
 
     @action(methods=["GET"], detail=True)
+    @HasPermission("knowledge_document-View")
     def get_document_detail(self, request, *args, **kwargs):
         obj: KnowledgeDocument = self.get_object()
         result = {"document_id": obj.id, "name": obj.name, "knowledge_source_type": obj.knowledge_source_type}
@@ -240,7 +265,24 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         result.update(doc.to_dict())
         return JsonResponse({"result": True, "data": result})
 
+    @action(methods=["GET"], detail=True)
+    @HasPermission("knowledge_document-View")
+    def get_instance_detail(self, request, *args, **kwargs):
+        instance = self.get_object()
+        return JsonResponse(
+            {
+                "result": True,
+                "data": {
+                    "knowledge_id": instance.id,
+                    "name": instance.name,
+                    "knowledge_base_id": instance.knowledge_base_id,
+                    "knowledge_source_type": instance.knowledge_source_type,
+                },
+            }
+        )
+
     @action(methods=["POST"], detail=True)
+    @HasPermission("knowledge_document-Set")
     def update_document_base_info(self, request, *args, **kwargs):
         obj: KnowledgeDocument = self.get_object()
         knowledge_model_map = {
@@ -256,12 +298,16 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             obj.name = name
             obj.save()
         doc.save()
-        if obj.knowledge_source_type == "web_page" and doc.sync_enabled:
-            doc.create_sync_periodic_task()
+        if obj.knowledge_source_type == "web_page":
+            if doc.sync_enabled:
+                doc.create_sync_periodic_task()
+            else:
+                doc.delete_sync_periodic_task()
 
         return JsonResponse({"result": True})
 
     @action(methods=["GET"], detail=True)
+    @HasPermission("knowledge_document-View")
     def get_file_link(self, request, *args, **kwargs):
         instance: KnowledgeDocument = self.get_object()
         if instance.knowledge_source_type != "file":
@@ -285,6 +331,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         return JsonResponse({"result": True})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-Set")
     def update_parse_settings(self, request):
         kwargs = request.data
         knowledge_document_list = kwargs.pop("knowledge_document_list", [])
@@ -300,6 +347,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         return JsonResponse({"result": True})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-Set")
     def update_chunk_settings(self, request):
         kwargs = request.data
         knowledge_document_list = kwargs.get("knowledge_document_list", [])
@@ -313,6 +361,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         return JsonResponse({"result": True})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-View")
     def get_doc_list_config(self, request):
         doc_ids = request.data.get("doc_ids", [])
         doc_list = KnowledgeDocument.objects.filter(id__in=doc_ids).values(
@@ -329,6 +378,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         return JsonResponse({"result": True, "data": list(doc_list)})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("knowledge_document-Set")
     def preview_chunk(self, request):
         kwargs = request.data
         document = KnowledgeDocument.objects.get(id=kwargs["knowledge_document_id"])
@@ -339,5 +389,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             document.semantic_chunk_parse_embedding_model = EmbedProvider.objects.get(
                 id=kwargs["semantic_chunk_parse_embedding_model"]
             )
-        res = general_embed_by_document_list([document], is_show=True, username=request.user.username)
+        res = general_embed_by_document_list(
+            [document], is_show=True, username=request.user.username, domain=request.user.domain
+        )
         return JsonResponse({"result": True, "data": res})

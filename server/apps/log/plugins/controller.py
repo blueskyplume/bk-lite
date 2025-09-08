@@ -1,29 +1,18 @@
 import os
 import uuid
+import json
 
 from jinja2 import Environment, FileSystemLoader, DebugUndefined
-from apps.log.models import CollectConfig, Stream
+
+from apps.core.exceptions.base_app_exception import BaseAppException
+from apps.log.models import CollectConfig
 from apps.log.plugins import PLUGIN_DIRECTORY
-from apps.log.utils.stream import StreamUtils
 from apps.rpc.node_mgmt import NodeMgmt
 
 
 class Controller:
     def __init__(self, data):
         self.data = data
-        self.stream_rules = self.get_stream_rules()
-
-    def get_stream_rules(self):
-        streams = Stream.objects.filter(collect_type_id=self.data["collect_type_id"])
-        stream_rules = []
-        for stream in streams:
-            stream_rules.append(
-                {
-                    "stream_id": stream.id,
-                    "condition": StreamUtils.json_to_jq_expression(stream.rule),
-                }
-            )
-        return stream_rules
 
     def get_template_info_by_type(self, template_dir: str, type_name: str):
         """
@@ -50,7 +39,7 @@ class Controller:
             })
         return result
 
-    def render_template(self, template_dir: str, file_name: str, context: dict, stream_rules=None):
+    def render_template(self, template_dir: str, file_name: str, context: dict):
         """
         渲染指定目录下的 j2 模板文件。
 
@@ -59,8 +48,11 @@ class Controller:
         :return: 渲染后的配置字符串
         """
         _context = {**context}
-        _context.update(streams=stream_rules or [])
         env = Environment(loader=FileSystemLoader(template_dir), undefined=DebugUndefined)
+
+        # 添加 to_json 过滤器
+        env.filters['to_json'] = lambda obj: json.dumps(obj, ensure_ascii=False)
+
         template = env.get_template(file_name)
         return template.render(_context)
 
@@ -78,6 +70,11 @@ class Controller:
                     configs.append(_config)
         return configs
 
+    def get_child_config_sort_order(self, collect_type: str):
+        """ 获取子配置的排序顺序, 用于配置渲染顺序 """
+        sort_order = 1 if collect_type == "flows" else 0
+        return sort_order
+
     def controller(self):
         base_dir = PLUGIN_DIRECTORY
         configs = self.format_configs()
@@ -88,14 +85,15 @@ class Controller:
             env_config = {k[4:]: v for k, v in config_info.items() if k.startswith("ENV_")}
             for template in templates:
                 is_child = True if template["config_type"] == "child" else False
-                collector_name = "Vector" if is_child else config_info["collector"]
+                # 采集器名称
+                # collector_name = "Vector" if is_child else config_info["collector"]
+                collector_name = config_info["collector"]
                 config_id = str(uuid.uuid4().hex)
                 # 生成配置
                 template_config = self.render_template(
                     template_dir,
                     f"{template['type']}.{template['config_type']}.{template['file_type']}.j2",
                     config_info,
-                    self.stream_rules
                 )
 
                 # 节点管理创建配置
@@ -108,6 +106,7 @@ class Controller:
                         node_id=config_info["node_id"],
                         collector_name=collector_name,
                         env_config=env_config,
+                        sort_order=self.get_child_config_sort_order(config_info["collect_type"]),
                     )
                     node_child_configs.append(node_child_config)
                 else:
@@ -137,3 +136,28 @@ class Controller:
         NodeMgmt().batch_add_node_config(node_configs)
         # 创建子配置
         NodeMgmt().batch_add_node_child_config(node_child_configs)
+
+    def render_config_template_content(self, file_type, context_data, instance_id):
+        """ 渲染配置模板内容。"""
+
+        template_dir = os.path.join(PLUGIN_DIRECTORY, self.data["collector"], self.data["collect_type"])
+        templates = self.get_template_info_by_type(template_dir, self.data["collect_type"])
+
+        template = None
+
+        for _template in templates:
+            if _template["config_type"] != file_type:
+                continue
+            template = _template
+
+        if template is None:
+            raise BaseAppException(f"No matching template found for {self.data['collect_type']} with file type {file_type}")
+
+        # 生成配置
+        content = self.render_template(
+            template_dir,
+            f"{template['type']}.{template['config_type']}.{template['file_type']}.j2",
+            {"instance_id": instance_id,  **context_data},
+        )
+
+        return content

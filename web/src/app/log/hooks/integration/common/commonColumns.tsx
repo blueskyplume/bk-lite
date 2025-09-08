@@ -1,5 +1,5 @@
 import React from 'react';
-import { Input, Select, Button } from 'antd';
+import { Input, Select, Button, Tooltip } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { TableDataItem } from '@/app/log/types';
 import { IntegrationLogInstance } from '@/app/log/types/integration';
@@ -11,7 +11,6 @@ const useCommonColumns = () => {
 
   return {
     getCommonColumns: (config: {
-      nodesLoading: boolean;
       nodeList: TableDataItem[];
       dataSource: TableDataItem[];
       initTableItems: IntegrationLogInstance;
@@ -91,7 +90,6 @@ const useCommonColumns = () => {
           render: (_: unknown, record: TableDataItem, index: number) => (
             <Select
               showSearch
-              loading={config.nodesLoading}
               value={record.node_ids}
               onChange={(val) => handleFilterNodeChange(val, index)}
               filterOption={(input, option) =>
@@ -124,7 +122,18 @@ const useCommonColumns = () => {
           ),
         },
         {
-          title: t('common.group'),
+          title: (
+            <Tooltip title={t('log.integration.belongingGroupTips')}>
+              {
+                <span
+                  className="pb-[2px]"
+                  style={{ borderBottom: '1px dashed var(--color-border-4)' }}
+                >
+                  {t('common.belongingGroup')}
+                </span>
+              }
+            </Tooltip>
+          ),
           dataIndex: 'group_ids',
           key: 'group_ids',
           width: 200,

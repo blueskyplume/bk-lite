@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from django.conf import settings
+from django.utils.translation import gettext as _
 
 from apps.core.logger import opspilot_logger as logger
 from apps.core.mixinx import EncryptMixin
@@ -90,7 +91,8 @@ class LLMService:
 
         return text_message, image_data
 
-    def _process_chat_history(self, chat_history: List[Dict[str, Any]], window_size: int) -> List[Dict[str, Any]]:
+    @staticmethod
+    def process_chat_history(chat_history: List[Dict[str, Any]], window_size: int) -> List[Dict[str, Any]]:
         """
         处理聊天历史，处理窗口大小和图片数据
 
@@ -103,7 +105,7 @@ class LLMService:
         """
         num = window_size * -1
         processed_history = []
-
+        role_map = {"assistant": "bot"}
         for user_msg in chat_history[num:]:
             message = user_msg.get("message", user_msg.get("text", ""))
             if user_msg["event"] == "user" and isinstance(message, list):
@@ -115,13 +117,13 @@ class LLMService:
                         if image_url:
                             image_list.append(image_url)
                     else:
-                        msg = item["message"]
+                        msg = item.get("text", "") or item.get("message", "")
                 processed_history.append({"event": "user", "message": msg, "image_data": image_list})
             else:
                 txt = user_msg.get("message", user_msg.get("text", ""))
                 if isinstance(txt, list):
                     txt = "\n".join([i.get("message", i.get("text")) for i in txt])
-                processed_history.append({"event": user_msg["event"], "message": txt})
+                processed_history.append({"event": role_map.get(user_msg["event"], user_msg["event"]), "message": txt})
 
         return processed_history
 
@@ -135,7 +137,7 @@ class LLMService:
             extra_config.update(km_request)
         user_message, image_data = self._process_user_message_and_images(kwargs["user_message"])
         # 处理聊天历史
-        chat_history = self._process_chat_history(kwargs["chat_history"], kwargs.get("conversation_window_size", 10))
+        chat_history = self.process_chat_history(kwargs["chat_history"], kwargs.get("conversation_window_size", 10))
         # 构建聊天参数
         chat_kwargs = {
             "openai_api_base": llm_model.decrypted_llm_config["openai_base_url"],
@@ -150,6 +152,7 @@ class LLMService:
             "enable_naive_rag": kwargs["enable_rag"],
             "rag_stage": "string",
             "naive_rag_request": naive_rag_request,
+            "enable_suggest": kwargs.get("enable_suggest", False),
         }
         if kwargs.get("thread_id"):
             chat_kwargs["thread_id"] = str(kwargs["thread_id"])
@@ -157,7 +160,7 @@ class LLMService:
             extra_config.update({"enable_rag_source": True})
         if kwargs.get("enable_rag_strict_mode"):
             extra_config.update({"enable_rag_strict_mode": kwargs["enable_rag_strict_mode"]})
-        if kwargs["skill_type"] == SkillTypeChoices.BASIC_TOOL:
+        if kwargs["skill_type"] != SkillTypeChoices.KNOWLEDGE_TOOL:
             for tool in kwargs.get("tools", []):
                 for i in tool.get("kwargs", []):
                     if i["type"] == "password":
@@ -202,6 +205,8 @@ class LLMService:
         elif kwargs["skill_type"] == SkillTypeChoices.LATS:
             url = f"{settings.METIS_SERVER_URL}/api/agent/invoke_lats_agent"
         result = ChatServerHelper.post_chat_server(chat_kwargs, url)
+        if not result:
+            return {"message": _("URL request failed")}, doc_map, title_map
         data = result["message"]
 
         # 更新团队令牌使用信息
@@ -279,7 +284,6 @@ class LLMService:
                 params = dict(
                     default_kwargs,
                     **{
-                        "size": knowledge_base.rag_size,
                         "enable_naive_rag": True,
                         "enable_qa_rag": False,
                         "enable_graph_rag": False,
@@ -290,7 +294,6 @@ class LLMService:
                 params = dict(
                     default_kwargs,
                     **{
-                        "size": knowledge_base.qa_size,
                         "enable_naive_rag": False,
                         "enable_qa_rag": True,
                         "enable_graph_rag": False,
@@ -347,15 +350,11 @@ class LLMService:
         score_threshold = score_threshold_map.get(knowledge_base.id, 0.7)
         kwargs = {
             "index_name": knowledge_base.knowledge_index_name(),
-            "metadata_filter": {"enabled": True},
-            "threshold": score_threshold,
-            "enable_term_search": knowledge_base.enable_text_search,  # TODO 确认是否这个参数
-            "text_search_weight": knowledge_base.text_search_weight,
-            "text_search_mode": knowledge_base.text_search_mode,
-            "enable_vector_search": knowledge_base.enable_vector_search,
-            "vector_search_weight": knowledge_base.vector_search_weight,
-            "rag_k": knowledge_base.rag_k,
-            "rag_num_candidates": knowledge_base.rag_num_candidates,
+            "metadata_filter": {"enabled": "true"},
+            "score_threshold": score_threshold,
+            "k": knowledge_base.rag_size,
+            "qa_size": knowledge_base.qa_size,
+            "search_type": knowledge_base.search_type,  # 0: similarity, mmr, similarity_score_threshold
             "enable_rerank": knowledge_base.enable_rerank,
             "embed_model_base_url": embed_model_base_url,
             "embed_model_api_key": embed_model_api_key,
@@ -364,7 +363,7 @@ class LLMService:
             "rerank_model_api_key": rerank_model_api_key,
             "rerank_model_name": rerank_model_name,
             "rerank_top_k": knowledge_base.rerank_top_k,
-            "rag_recall_mode": "chunk",
+            "rag_recall_mode": knowledge_base.rag_recall_mode,
             "graph_rag_request": {},
         }
         return kwargs

@@ -19,13 +19,12 @@ import EditInstance from './editInstance';
 import Permission from '@/components/permission';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
-import { ListItem } from '@/app/log//types';
 import { GroupInfo } from '@/app/log/types/integration';
 const { Search } = Input;
 
 const Grouping = () => {
   const { isLoading } = useApiClient();
-  const { getLogStreams, deleteLogStream, getCollectTypes } = useLogApi();
+  const { getLogStreams, deleteLogStream, getFields } = useLogApi();
   const { t } = useTranslation();
   const { convertToLocalizedTime } = useLocalizedTime();
   const commonContext = useCommon();
@@ -42,7 +41,7 @@ const Grouping = () => {
   const [tableData, setTableData] = useState<TableDataItem[]>([]);
   const [searchText, setSearchText] = useState<string>('');
   const [confirmLoading, setConfirmLoading] = useState(false);
-  const [collectTypes, setCollectTypes] = useState<ListItem[]>([]);
+  const [fields, setFields] = useState<string[]>([]);
 
   const columns: ColumnItem[] = [
     {
@@ -72,20 +71,6 @@ const Grouping = () => {
         <EllipsisWithTooltip
           className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
           text={showGroupName(organizations, organizationList)}
-        />
-      ),
-    },
-    {
-      title: t('log.integration.collectType'),
-      dataIndex: 'collect_type',
-      key: 'collect_type',
-      width: 160,
-      render: (_, { collect_type }) => (
-        <EllipsisWithTooltip
-          className="w-full overflow-hidden text-ellipsis whitespace-nowrap"
-          text={
-            collectTypes.find((item) => item.id === collect_type)?.name || '--'
-          }
         />
       ),
     },
@@ -130,7 +115,11 @@ const Grouping = () => {
               okButtonProps={{ loading: confirmLoading }}
               onConfirm={() => deleteInstConfirm(record)}
             >
-              <Button type="link" className="ml-[10px]">
+              <Button
+                type="link"
+                className="ml-[10px]"
+                disabled={record.id === 'default'}
+              >
                 {t('common.remove')}
               </Button>
             </Popconfirm>
@@ -163,6 +152,9 @@ const Grouping = () => {
 
   const getRuleDisplay = (rule: GroupInfo) => {
     const { mode, conditions = [] } = rule || {};
+    if (!mode) {
+      return '*';
+    }
     if (mode === 'OR') {
       return `${t('log.integration.anySatisfy')}${conditions.length}${t(
         'log.integration.anyOneof'
@@ -174,14 +166,14 @@ const Grouping = () => {
   };
 
   const getCollectTypeList = async (params = {}) => {
-    const data = await getCollectTypes(params);
-    setCollectTypes(data);
+    const data = await getFields(params);
+    setFields(data);
   };
 
-  const openInstanceModal = (row = {}, type: string) => {
+  const openInstanceModal = (row: TableDataItem, type: string) => {
     instanceRef.current?.showModal({
       title: t(`common.${type}`),
-      type,
+      type: row.id === 'default' ? 'builtIn' : type,
       form: row,
     });
   };
@@ -263,11 +255,7 @@ const Grouping = () => {
           onChange={handleTableChange}
         ></CustomTable>
       </Spin>
-      <EditInstance
-        ref={instanceRef}
-        collectTypes={collectTypes}
-        onSuccess={onRefresh}
-      />
+      <EditInstance ref={instanceRef} fields={fields} onSuccess={onRefresh} />
     </div>
   );
 };

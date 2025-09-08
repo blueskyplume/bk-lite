@@ -322,6 +322,26 @@ const useMonitorApi = () => {
     );
   };
 
+  const getTemplateObjects = async () => {
+    return await get('/monitor/api/monitor_policy/template/monitor_object/');
+  };
+
+  const getSnapshot = async (
+    params: {
+      id?: React.Key;
+      page?: number;
+      page_size?: number;
+    } = {}
+  ) => {
+    const { id, ...rest } = params;
+    return await get(
+      `/monitor/api/monitor_alert_metric_snapshot/query/${id}/`,
+      {
+        params: rest,
+      }
+    );
+  };
+
   return {
     getMonitorMetrics,
     getMetricsGroup,
@@ -357,6 +377,8 @@ const useMonitorApi = () => {
     getConfigContent,
     updateMonitorInstance,
     setInstancesGroup,
+    getTemplateObjects,
+    getSnapshot,
   };
 };
 

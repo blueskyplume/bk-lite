@@ -57,14 +57,17 @@ else
     log "INFO" "未检测到 --opspilot 参数，禁用 OpsPilot 功能"
 fi
 
+INSTALL_APPS="system_mgmt,cmdb,monitor,node_mgmt,console_mgmt,alerts,log,mlops,operation_analysis"
+
 if [[ $OPSPILOT_ENABLED == "true" ]]; then
-    export INSTALL_APPS="system_mgmt,cmdb,monitor,node_mgmt,console_mgmt,opspilot"
+    export INSTALL_APPS="${INSTALL_APPS},opspilot"
+    log "INFO" "启用 OpsPilot 功能，安装应用列表: ${INSTALL_APPS}"
+    # 使用 compose/ops_pilot.yaml 文件
     export COMPOSE_CMD="${DOCKER_COMPOSE_CMD} -f compose/infra.yaml -f compose/monitor.yaml -f compose/server.yaml -f compose/web.yaml -f compose/ops_pilot.yaml config --no-interpolate"
 else
-    export INSTALL_APPS="system_mgmt,cmdb,monitor,node_mgmt,console_mgmt"
+    log "INFO" "禁用 OpsPilot 功能，安装应用列表: ${INSTALL_APPS}"
     export COMPOSE_CMD="${DOCKER_COMPOSE_CMD} -f compose/infra.yaml -f compose/monitor.yaml -f compose/server.yaml -f compose/web.yaml config --no-interpolate"
 fi
-
 
 # Function to validate environment variables
 validate_env_var() {
@@ -72,6 +75,22 @@ validate_env_var() {
     if [ -z "${!var_name}" ]; then
         log "ERROR" "Environment variable $var_name is not set."
         exit 1
+    fi
+}
+
+# Function to add mirror prefix to docker image if MIRROR is set
+add_mirror_prefix() {
+    local image="$1"
+    if [ -n "$MIRROR" ]; then
+        # 如果镜像名包含斜杠，说明有仓库前缀
+        if [[ "$image" == *"/"* ]]; then
+            echo "${MIRROR}/${image}"
+        else
+            # 如果没有斜杠，说明是官方镜像，需要加上library前缀
+            echo "${MIRROR}/library/${image}"
+        fi
+    else
+        echo "$image"
     fi
 }
 
@@ -135,11 +154,11 @@ else
     fi
 
     # 从命令行读取HOST_IP环境变量
-    read -p "输入对外访问的IP地址，默认为 [$DEFAULT_IP] " HOST_IP
+    read -p "输入对外访问的IP地址，默认为 [$DEFAULT_IP] " HOST_IP  < /dev/tty
     export HOST_IP=${HOST_IP:-$DEFAULT_IP}
 
     DEFAULT_TRAEFIK_WEB_PORT=80
-    read -p "输入访问端口，默认为 [$DEFAULT_TRAEFIK_WEB_PORT] " TRAEFIK_WEB_PORT
+    read -p "输入访问端口，默认为 [$DEFAULT_TRAEFIK_WEB_PORT] " TRAEFIK_WEB_PORT  < /dev/tty
     export TRAEFIK_WEB_PORT=${TRAEFIK_WEB_PORT:-$DEFAULT_TRAEFIK_WEB_PORT}
 
     # 将输入的配置写入port.env
@@ -150,6 +169,8 @@ EOF
 fi
 
 # 检查common.env文件是否存在，存在则加载，不存在则生成
+# 检查并设置MIRROR环境变量
+MIRROR=${MIRROR:-""}
 COMMON_ENV_FILE="common.env"
 if [ -f "$COMMON_ENV_FILE" ]; then
     log "SUCCESS" "发现 $COMMON_ENV_FILE 配置文件，加载已保存的环境变量..."
@@ -166,14 +187,12 @@ else
     export NATS_ADMIN_PASSWORD=$(generate_password 32)
     export NATS_MONITOR_USERNAME=monitor
     export NATS_MONITOR_PASSWORD=$(generate_password 32)
-    export NEO4J_USERNAME=neo4j
-    export NEO4J_PASSWORD=$(generate_password 32)
-    export NEO4J_AUTH="${NEO4J_USERNAME}/${NEO4J_PASSWORD}"
     export MINIO_ROOT_USER=minio
     export MINIO_ROOT_PASSWORD=$(generate_password 32)
     export RABBITMQ_DEFAULT_USER=rabbit
     export RABBITMQ_DEFAULT_PASSWORD=$(generate_password 32)
-    export ELASTIC_PASSWORD=$(generate_password 32)
+    export FALKORDB_PASSWORD=$(generate_password 32)
+    export MIRROR=${MIRROR:-""}
 
     # 保存到common.env文件
     cat > $COMMON_ENV_FILE <<EOF
@@ -188,43 +207,51 @@ export NATS_ADMIN_USERNAME=$NATS_ADMIN_USERNAME
 export NATS_ADMIN_PASSWORD=$NATS_ADMIN_PASSWORD
 export NATS_MONITOR_USERNAME=$NATS_MONITOR_USERNAME
 export NATS_MONITOR_PASSWORD=$NATS_MONITOR_PASSWORD
-export NEO4J_USERNAME=$NEO4J_USERNAME
-export NEO4J_PASSWORD=$NEO4J_PASSWORD
-export NEO4J_AUTH=$NEO4J_AUTH
 export MINIO_ROOT_USER=$MINIO_ROOT_USER
 export MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD
 export RABBITMQ_DEFAULT_USER=$RABBITMQ_DEFAULT_USER
 export RABBITMQ_DEFAULT_PASSWORD=$RABBITMQ_DEFAULT_PASSWORD
-export ELASTIC_PASSWORD=$ELASTIC_PASSWORD
+export FALKORDB_PASSWORD=$FALKORDB_PASSWORD
+export MIRROR=$MIRROR
 EOF
     log "SUCCESS" "环境变量已生成并保存到 $COMMON_ENV_FILE 文件"
 fi
 
+if [ -n "$MIRROR" ]; then
+    log "INFO" "检测到镜像仓库 MIRROR=${MIRROR}，所有 Docker 镜像将使用此镜像仓库"
+else
+    log "INFO" "未设置 MIRROR 环境变量，使用默认镜像仓库"
+fi
+
 # 固定的环境变量
-DOCKER_IMAGE_TRAEFIK=traefik:3.3.3
-DOCKER_IMAGE_REDIS=redis:5.0.14
-DOCKER_IMAGE_NATS=nats:2.10.25
-DOCKER_IMAGE_NATS_CLI=bitnami/natscli:0.1.6
-DOCKER_IMAGE_VICTORIA_METRICS=victoriametrics/victoria-metrics:v1.106.1
-DOCKER_IMAGE_POSTGRES=postgres:15
-DOCKER_IMAGE_SERVER=bklite/server
-DOCKER_IMAGE_WEB=bklite/web
+DOCKER_IMAGE_TRAEFIK=$(add_mirror_prefix "traefik:3.3.3")
+DOCKER_IMAGE_REDIS=$(add_mirror_prefix "redis:5.0.14")
+DOCKER_IMAGE_NATS=$(add_mirror_prefix "nats:2.10.25")
+DOCKER_IMAGE_NATS_CLI=$(add_mirror_prefix "bitnami/natscli:0.1.6")
+DOCKER_IMAGE_VICTORIA_METRICS=$(add_mirror_prefix "victoriametrics/victoria-metrics:v1.106.1")
+DOCKER_IMAGE_POSTGRES=$(add_mirror_prefix "postgres:15")
+DOCKER_IMAGE_SERVER=$(add_mirror_prefix "bklite/server")
+DOCKER_IMAGE_WEB=$(add_mirror_prefix "bklite/web")
 DOCKER_NETWORK=prod
-DIST_ARCH=arm64
+DIST_ARCH=amd64
 POSTGRES_USERNAME=postgres
 TRAEFIK_ENABLE_DASHBOARD=false
 DEFAULT_REQUEST_TIMEOUT=10
-DOCKER_IMAGE_STARGAZER=bklite/stargazer
-DOCKER_NEO4J_IMAGE=neo4j:4.4.43
-DOCKER_IMAGE_MINIO=minio/minio:RELEASE.2024-05-01T01-11-10Z-cpuv1
-DOCKER_IMAGE_RABBITMQ=rabbitmq:management
-DOCKER_IMAGE_ELASTICSEARCH=bklite/elasticsearch
-DOCKER_IMAGE_METIS=bklite/metis
-
+DOCKER_IMAGE_STARGAZER=$(add_mirror_prefix "bklite/stargazer")
+DOCKER_IMAGE_MINIO=$(add_mirror_prefix "minio/minio:RELEASE.2024-05-01T01-11-10Z-cpuv1")
+DOCKER_IMAGE_RABBITMQ=$(add_mirror_prefix "rabbitmq:management")
+DOCKER_IMAGE_METIS=$(add_mirror_prefix "bklite/metis")
+DOCKER_IMAGE_VICTORIALOGS=$(add_mirror_prefix "victoriametrics/victoria-logs:v1.25.0")
+DOCKER_IMAGE_MLFLOW=$(add_mirror_prefix "bklite/mlflow")
+DOCKER_IMAGE_NATS_EXECUTOR=$(add_mirror_prefix "bklite/nats-executor")
+DOCKER_IMAGE_FALKORDB=$(add_mirror_prefix "falkordb/falkordb:v4.12.4")
+DOCKER_IMAGE_PGVECTOR=$(add_mirror_prefix "pgvector/pgvector:pg15")
+DOCKER_IMAGE_TELEGRAF=$(add_mirror_prefix "bklite/telegraf:latest")
 # 采集器镜像
 # TODO: 不同OS/架构支持
-export DOCKER_IMAGE_FUSION_COLLECTOR=bklite/fusion-collector:linux-amd64
+export DOCKER_IMAGE_FUSION_COLLECTOR=$(add_mirror_prefix "bklite/fusion-collector:latest")
 
+docker pull $DOCKER_IMAGE_FUSION_COLLECTOR
 # 从镜像生成控制器&采集器包
 log "INFO" "开始生成控制器和采集器包..."
 # 获取当前cpu架构
@@ -233,7 +260,7 @@ if [[ "$CPU_ARCH" == "x86_64" ]]; then
    [ -d pkgs ] && rm -rvf pkgs
    mkdir -p pkgs/controller
    mkdir -p pkgs/collector
-   docker run --rm -v $PWD/pkgs:/pkgs --entrypoint=/bin/bash $DOCKER_IMAGE_FUSION_COLLECTOR -c "tar -czvf /pkgs/controller/lite_controller_linux_amd64.tar.gz . ;cp -av bin/* /pkgs/collector/"
+   docker run --rm -v $PWD/pkgs:/pkgs --entrypoint=/bin/bash $DOCKER_IMAGE_FUSION_COLLECTOR -c "cp -av bin/* /pkgs/collector/;cd /opt; cp fusion-collectors/misc/* fusion-collectors/;zip -r /pkgs/controller/fusion-collectors.zip fusion-collectors"
 elif [[ "$CPU_ARCH" == "aarch64" ]]; then
    log "WARNING" "当前CPU架构为arm64，暂时无内置采集器"
 else
@@ -304,14 +331,11 @@ NATS_ADMIN_USERNAME=${NATS_ADMIN_USERNAME}
 NATS_ADMIN_PASSWORD=${NATS_ADMIN_PASSWORD}
 NATS_MONITOR_USERNAME=${NATS_MONITOR_USERNAME}
 NATS_MONITOR_PASSWORD=${NATS_MONITOR_PASSWORD}
-NEO4J_USERNAME=${NEO4J_USERNAME}
-NEO4J_PASSWORD=${NEO4J_PASSWORD}
-NEO4J_AUTH=${NEO4J_AUTH}
 MINIO_ROOT_USER=${MINIO_ROOT_USER}
 MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
 RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
 RABBITMQ_DEFAULT_PASSWORD=${RABBITMQ_DEFAULT_PASSWORD}
-ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+FALKORDB_PASSWORD=${FALKORDB_PASSWORD}
 DOCKER_IMAGE_TRAEFIK=${DOCKER_IMAGE_TRAEFIK}
 DOCKER_IMAGE_REDIS=${DOCKER_IMAGE_REDIS}
 DOCKER_IMAGE_NATS=${DOCKER_IMAGE_NATS}
@@ -321,17 +345,22 @@ DOCKER_IMAGE_POSTGRES=${DOCKER_IMAGE_POSTGRES}
 DOCKER_IMAGE_SERVER=${DOCKER_IMAGE_SERVER}
 DOCKER_IMAGE_WEB=${DOCKER_IMAGE_WEB}
 DOCKER_IMAGE_STARGAZER=${DOCKER_IMAGE_STARGAZER}
-DOCKER_NEO4J_IMAGE=${DOCKER_NEO4J_IMAGE}
 DOCKER_IMAGE_FUSION_COLLECTOR=${DOCKER_IMAGE_FUSION_COLLECTOR}
-DOCKER_IMAGE_MINIO=minio/minio:RELEASE.2024-05-01T01-11-10Z-cpuv1
-DOCKER_IMAGE_RABBITMQ=rabbitmq:management
-DOCKER_IMAGE_ELASTICSEARCH=bklite/elasticsearch
-DOCKER_IMAGE_METIS=bklite/metis
+DOCKER_IMAGE_MINIO=${DOCKER_IMAGE_MINIO}
+DOCKER_IMAGE_RABBITMQ=${DOCKER_IMAGE_RABBITMQ}
+DOCKER_IMAGE_METIS=${DOCKER_IMAGE_METIS}
+DOCKER_IMAGE_TELEGRAF=${DOCKER_IMAGE_TELEGRAF}
 POSTGRES_USERNAME=${POSTGRES_USERNAME}
 TRAEFIK_ENABLE_DASHBOARD=${TRAEFIK_ENABLE_DASHBOARD}
 DEFAULT_REQUEST_TIMEOUT=${DEFAULT_REQUEST_TIMEOUT}
 DIST_ARCH=${DIST_ARCH}
 DOCKER_NETWORK=${DOCKER_NETWORK}
+DOCKER_IMAGE_VICTORIALOGS=${DOCKER_IMAGE_VICTORIALOGS}
+DOCKER_IMAGE_MLFLOW=${DOCKER_IMAGE_MLFLOW}
+DOCKER_IMAGE_NATS_EXECUTOR=${DOCKER_IMAGE_NATS_EXECUTOR}
+DOCKER_IMAGE_FALKORDB=${DOCKER_IMAGE_FALKORDB}
+DOCKER_IMAGE_PGVECTOR=${DOCKER_IMAGE_PGVECTOR}
+
 INSTALL_APPS="${INSTALL_APPS}"
 EOF
 
@@ -339,9 +368,12 @@ EOF
 log "INFO" "生成合成的 docker-compose.yaml 文件..."
 $COMPOSE_CMD > docker-compose.yaml
 
+log "INFO" "拉取最新的镜像..."
+${DOCKER_COMPOSE_CMD} pull
+
 # 按照特定顺序启动服务
-log "INFO" "启动基础服务 (Traefik, Redis, NATS, VictoriaMetrics, Neo4j)..."
-${DOCKER_COMPOSE_CMD} up -d traefik redis nats victoria-metrics neo4j
+log "INFO" "启动基础服务 (Traefik, Redis, NATS, VictoriaMetrics, FalkorDB, VictoriaLogs, MLFlow, NATS Executor)..."
+${DOCKER_COMPOSE_CMD} up -d traefik redis nats victoria-metrics falkordb victoria-logs mlflow nats-executor
 
 # 创建 JetStream - 使用正确的网络名称
 log "INFO" "创建JetStream..."
@@ -354,18 +386,18 @@ docker run --rm --network=bklite-prod \
     --max-msg-size=-1 --max-msgs=-1 --max-msgs-per-subject=1000000 \
     --dupe-window=5m --no-allow-rollup --no-deny-delete --no-deny-purge
 
-# 启动 Postgres 并等待服务就绪
-log "INFO" "启动 Postgres..."
-${DOCKER_COMPOSE_CMD} up -d postgres
-wait_container_health postgres "Postgres"
-
-# 启动服务
-log "INFO" "启动系统管理服务..."
-${DOCKER_COMPOSE_CMD} up -d server
-
 log "INFO" "启动所有服务"
 ${DOCKER_COMPOSE_CMD} up -d
 sleep 10
+
+log "INFO" "开始初始化内置插件"
+$DOCKER_COMPOSE_CMD exec -T server /bin/bash -s <<EOF
+python manage.py controller_package_init --pk_version latest --file_path /apps/pkgs/controller/fusion-collectors.zip
+python manage.py collector_package_init --os linux --object Telegraf --pk_version latest --file_path /apps/pkgs/collector/telegraf
+python manage.py collector_package_init --os linux --object Vector --pk_version latest --file_path /apps/pkgs/collector/vector
+python manage.py collector_package_init --os linux --object Nats-Executor --pk_version latest --file_path /apps/pkgs/collector/nats-executor
+EOF
+
 log "SUCCESS" "部署成功，访问 http://$HOST_IP:$TRAEFIK_WEB_PORT 访问系统"
 log "SUCCESS" "初始用户名: admin, 初始密码: password"
 log "SUCCESS" "控制器安装信息："

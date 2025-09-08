@@ -4,7 +4,7 @@ import useMlopsTaskApi from "@/app/mlops/api/task";
 import useMlopsModelReleaseApi from "@/app/mlops/api/modelRelease";
 import CustomTable from "@/components/custom-table";
 import { useTranslation } from "@/utils/i18n";
-import { Button, Popconfirm, Tag, message, Tree, type TreeDataNode } from "antd";
+import { Button, Popconfirm, Switch, message, Tree, type TreeDataNode } from "antd";
 import { PlusOutlined } from '@ant-design/icons';
 import PageLayout from '@/components/page-layout';
 import TopSection from "@/components/top-section";
@@ -18,7 +18,7 @@ import { TrainJob } from "@/app/mlops/types/task";
 const ModelRelease = () => {
   const { t } = useTranslation();
   const { getAnomalyTaskList } = useMlopsTaskApi();
-  const { getAnomalyServingsList, deleteAnomalyServing } = useMlopsModelReleaseApi();
+  const { getAnomalyServingsList, deleteAnomalyServing, updateAnomalyServings } = useMlopsModelReleaseApi();
   const modalRef = useRef<ModalRef>(null);
   const [trainjobs, setTrainjobs] = useState<Option[]>([]);
   const [tableData, setTableData] = useState<TableData[]>([]);
@@ -39,6 +39,10 @@ const ModelRelease = () => {
         {
           title: t(`datasets.anomaly`),
           key: 'anomaly',
+        },
+        {
+          title: t(`datasets.rasa`),
+          key: 'rasa'
         }
       ]
     }
@@ -59,9 +63,9 @@ const ModelRelease = () => {
       title: t(`model-release.publishStatus`),
       dataIndex: 'status',
       key: 'status',
-      render: (_, record) => (
-        <Tag color={record.status === 'active' ? 'success' : 'default'}>{t(`model-release.${record.status}`)}</Tag>
-      )
+      render: (_, record) => {
+        return <Switch checked={record.status === 'active'} onChange={(value: boolean) => handleModelAcitve(record.id, value)} />
+      }
     },
     {
       title: t(`common.action`),
@@ -104,7 +108,7 @@ const ModelRelease = () => {
 
   useEffect(() => {
     setSelectedKeys(['anomaly']);
-  }, [])
+  }, []);
 
   useEffect(() => {
     getModelServings();
@@ -154,6 +158,19 @@ const ModelRelease = () => {
     } catch (e) {
       console.log(e);
       message.error(t(`common.delFailed`));
+    }
+  };
+
+  const handleModelAcitve = async (id: number, value: boolean) => {
+    setLoading(true);
+    try {
+      const status = value ? 'active' : 'inactive';
+      await updateAnomalyServings(id, { status })
+    } catch (e) {
+      console.log(e);
+      // message.error(t(``));
+    } finally {
+      getModelServings();
     }
   };
 

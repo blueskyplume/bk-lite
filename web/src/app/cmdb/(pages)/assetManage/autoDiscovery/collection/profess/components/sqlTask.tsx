@@ -155,23 +155,23 @@ const SQLTask: React.FC<SQLTaskFormProps> = ({
               <Form.Item
                 label={t('Collection.VMTask.username')}
                 name="user"
-                rules={[{ required: true }]}
+                rules={[{ required: true, message: t('common.inputTip') }]}
               >
-                <Input placeholder={t('common.pleaseInput')} />
+                <Input placeholder={t('common.inputTip')} />
               </Form.Item>
 
               <Form.Item
                 label={t('Collection.VMTask.password')}
                 name="password"
-                rules={[{ required: true }]}
+                rules={[{ required: true, message: t('common.inputTip') }]}
               >
-                <Input.Password placeholder={t('common.pleaseInput')} />
+                <Input.Password placeholder={t('common.inputTip')} />
               </Form.Item>
 
               <Form.Item
                 label={t('Collection.port')}
                 name="port"
-                rules={[{ required: true }]}
+                rules={[{ required: true, message: t('common.inputTip') }]}
               >
                 <InputNumber min={1} max={65535} className="w-32" />
               </Form.Item>

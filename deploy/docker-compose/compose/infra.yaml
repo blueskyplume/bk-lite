@@ -9,6 +9,8 @@ volumes:
   victoria-metrics:
   postgres:
   neo4j:
+  victoria-logs:
+  falkordb:
 
 services:
   traefik:
@@ -46,6 +48,11 @@ services:
       - "${REDIS_PASSWORD}"
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "-p", "6379", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - prod
 
@@ -80,24 +87,9 @@ services:
     depends_on:
       - nats
 
-  neo4j:
-    image: ${DOCKER_NEO4J_IMAGE}
-    container_name: neo4j
-    restart: always
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-      - "7473:7473"
-    networks:
-      - prod
-    environment:
-      - NEO4J_AUTH=${NEO4J_AUTH}
-    volumes:
-      - neo4j:/data
-
   postgres:
     container_name: postgres
-    image: postgres:15
+    image: ${DOCKER_IMAGE_POSTGRES}
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -113,3 +105,63 @@ services:
       timeout: 5s
       retries: 3
     restart: always
+  
+  victoria-logs:
+    image: ${DOCKER_IMAGE_VICTORIALOGS}
+    restart: always
+    networks:
+      - prod
+    volumes:
+      - victoria-logs:/vlogs
+    command:
+      - -storageDataPath=/vlogs
+      - -loggerFormat=json
+      - -insert.maxLineSizeBytes=10000000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://victoria-logs:9428/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mlflow:
+    image: ${DOCKER_IMAGE_MLFLOW}
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "15000"
+    networks:
+      - prod
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://mlflow:15000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+  nats-executor:
+    image: ${DOCKER_IMAGE_NATS_EXECUTOR}
+    container_name: nats-executor
+    environment:
+      - NATS_INSTANCE_ID=default
+      - NATS_URLS=nats://$NATS_ADMIN_USERNAME:$NATS_ADMIN_PASSWORD@nats:4222
+    networks:
+      - prod
+    restart: always
+
+  falkordb:
+    image: ${DOCKER_IMAGE_FALKORDB}
+    restart: always
+    environment:
+      - REDIS_ARGS=--requirepass ${FALKORDB_PASSWORD}
+      - FALKORDB_ARGS=THREAD_COUNT 4
+    networks:
+      - prod
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "-p", "6379", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - falkordb:/var/lib/falkordb/data

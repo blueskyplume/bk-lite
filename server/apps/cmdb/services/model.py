@@ -13,7 +13,7 @@ from apps.cmdb.constants import (
     USER,
     OPERATOR_MODEL,
 )
-from apps.cmdb.graph.neo4j import Neo4jClient
+from apps.cmdb.graph.drivers.graph_client import GraphClient
 from apps.cmdb.language.service import SettingLanguage
 from apps.cmdb.models import UPDATE_INST, DELETE_INST, CREATE_INST
 from apps.cmdb.services.classification import ClassificationManage
@@ -32,7 +32,7 @@ class ModelManage(object):
         # 对模型初始化默认属性实例名称
         data.update(attrs=json.dumps(INST_NAME_INFOS))
 
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(MODEL, [])
             result = ag.create_entity(MODEL, data, CREATE_MODEL_CHECK_ATTR, exist_items)
             classification_info = ClassificationManage.search_model_classification_info(data["classification_id"])
@@ -58,7 +58,7 @@ class ModelManage(object):
         """
         删除模型
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             ag.batch_delete_entity(MODEL, [id])
 
     @staticmethod
@@ -68,7 +68,7 @@ class ModelManage(object):
         TODO 不能单独更新一个字段，如只更新icon，传递全部字段会导致其他字段校验不通过 model_name 后续考虑优化
         """
         model_id = data.pop("model_id", "")  # 不能更新model_id
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             exist_items, _ = ag.query_entity(MODEL, [{"field": "model_id", "type": "str<>", "value": model_id}])
             # 排除当前正在更新的模型，避免自己和自己比较
             exist_items = [i for i in exist_items if i["_id"] != id]
@@ -77,7 +77,7 @@ class ModelManage(object):
 
     @staticmethod
     def search_model(language: str = "en", order_type: str = "ASC", order: str = "id",
-                     classification_ids: list = [], model_list: list = []):
+                     classification_ids: list = [], model_list: list = [], group_list: list = []):
         """
         查询模型
         Args:
@@ -86,6 +86,7 @@ class ModelManage(object):
             order: 排序字段，默认order_id
             classification_ids: 分类ID列表，可选，用于过滤特定分类下的模型
             model_list: 模型ID列表，可选，用于过滤特定模型
+            group: 组织ID，可选，用于过滤特定组织下的模型
         """
         query_conditions = []
 
@@ -103,7 +104,11 @@ class ModelManage(object):
 
             query_conditions = or_conditions
 
-        with Neo4jClient() as ag:
+        # 如果有group_id，添加组织过滤条件
+        if group_list:
+            query_conditions.append({"field": "group", "type": "list[]", "value": group_list})
+
+        with GraphClient() as ag:
             # 如果有过滤条件，使用OR查询，否则查询所有
             if query_conditions:
                 models, _ = ag.query_entity(MODEL, query_conditions, order=order, order_type=order_type,
@@ -130,7 +135,7 @@ class ModelManage(object):
         """
         创建模型属性
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             model_query = {"field": "model_id", "type": "str=", "value": model_id}
             models, model_count = ag.query_entity(MODEL, [model_query])
             if model_count == 0:
@@ -161,7 +166,7 @@ class ModelManage(object):
         """
         更新模型属性
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             model_query = {"field": "model_id", "type": "str=", "value": model_id}
             models, model_count = ag.query_entity(MODEL, [model_query])
             if model_count == 0:
@@ -202,7 +207,7 @@ class ModelManage(object):
         """
         删除模型属性
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             model_query = {"field": "model_id", "type": "str=", "value": model_id}
             models, model_count = ag.query_entity(MODEL, [model_query])
             if model_count == 0:
@@ -235,7 +240,7 @@ class ModelManage(object):
         查询模型详情
         """
         query_data = {"field": "model_id", "type": "str=", "value": model_id}
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             models, _ = ag.query_entity(MODEL, [query_data])
         if len(models) == 0:
             return {}
@@ -262,11 +267,12 @@ class ModelManage(object):
         """
         model_info = ModelManage.search_model_info(model_id)
         attrs = ModelManage.parse_attrs(model_info.get("attrs", "[]"))
-        lan = SettingLanguage(language)
-        model_attr = lan.get_val("ATTR", model_id)
-        for attr in attrs:
-            if model_attr:
-                attr["attr_name"] = model_attr.get(attr["attr_id"]) or attr["attr_name"]
+        # TODO 语言包
+        # lan = SettingLanguage(language)
+        # model_attr = lan.get_val("ATTR", model_id)
+        # for attr in attrs:
+        #     if model_attr:
+        #         attr["attr_name"] = model_attr.get(attr["attr_id"]) or attr["attr_name"]
         return attrs
 
     @staticmethod
@@ -312,7 +318,7 @@ class ModelManage(object):
         """
         创建模型关联
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             try:
                 edge = ag.create_edge(
                     MODEL_ASSOCIATION,
@@ -335,7 +341,7 @@ class ModelManage(object):
         """
         删除模型关联
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             ag.delete_edge(id)
 
     @staticmethod
@@ -343,7 +349,7 @@ class ModelManage(object):
         """
         查询模型关联详情
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             query_data = {
                 "field": "model_asst_id",
                 "type": "str=",
@@ -363,7 +369,7 @@ class ModelManage(object):
             {"field": "src_model_id", "type": "str=", "value": model_id},
             {"field": "dst_model_id", "type": "str=", "value": model_id},
         ]
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             edges = ag.query_edge(MODEL_ASSOCIATION, query_list, param_type="OR")
 
         return edges
@@ -379,7 +385,7 @@ class ModelManage(object):
     def check_model_exist_inst(model_id):
         """模型存在实例"""
         params = [{"field": "model_id", "type": "str=", "value": model_id}]
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             _, count = ag.query_entity(INSTANCE, params, page=dict(skip=0, limit=1))
         if count > 0:
             raise BaseAppException("model exist instance")
@@ -393,7 +399,7 @@ class ModelManage(object):
         Args:
             classification_id: 分类ID
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             models, _ = ag.query_entity(MODEL,
                                         [{"field": "classification_id", "type": "str=", "value": classification_id}],
                                         order="order_id", order_type="desc", page={"skip": 0, "limit": 1})
@@ -408,7 +414,7 @@ class ModelManage(object):
         Args:
             model_orders: [{"model_id": "model_1", "order_id": 1}, ...]
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             for order_info in model_orders:
                 model_query = {"field": "model_id", "type": "str=", "value": order_info["model_id"]}
                 models, model_count = ag.query_entity(MODEL, [model_query])
@@ -433,7 +439,7 @@ class ModelManage(object):
         Returns:
             bool: 更新是否成功
         """
-        with Neo4jClient() as ag:
+        with GraphClient() as ag:
             # 获取所有模型并按classification_id分组
             models, _ = ag.query_entity(MODEL, [], order="classification_id")
 

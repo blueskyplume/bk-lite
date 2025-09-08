@@ -8,17 +8,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
+from apps.core.utils.permission_utils import get_permission_rules, permission_filter
 from apps.core.utils.web_utils import WebUtils
 from apps.monitor.constants import DEFAULT_PERMISSION, POLICY_MODULE
-from apps.monitor.language.service import SettingLanguage
-from apps.monitor.models import MonitorAlert, MonitorEvent, MonitorPolicy, MonitorInstance, MonitorObject, \
-    PolicyOrganization, MonitorEventRawData
+from apps.monitor.models import MonitorAlert, MonitorEvent, MonitorPolicy, MonitorEventRawData
+from apps.monitor.models.monitor_policy import MonitorAlertMetricSnapshot
 from apps.monitor.filters.monitor_alert import MonitorAlertFilter
-from apps.monitor.serializers.monitor_alert import MonitorAlertSerializer
-from apps.monitor.serializers.monitor_instance import MonitorInstanceSerializer
-from apps.monitor.serializers.monitor_metrics import MetricSerializer
+from apps.monitor.serializers.monitor_alert import MonitorAlertSerializer, MonitorAlertMetricSnapshotSerializer
 from apps.monitor.serializers.monitor_policy import MonitorPolicySerializer
-from apps.monitor.utils.system_mgmt_api import SystemMgmtUtils
 from config.drf.pagination import CustomPageNumberPagination
 
 
@@ -34,31 +31,23 @@ class MonitorAlertVieSet(
     pagination_class = CustomPageNumberPagination
 
     def list(self, request, *args, **kwargs):
+        monitor_object_id = request.query_params.get('monitor_object_id', None)
+        if not monitor_object_id:
+            return WebUtils.response_error("monitor_object_id is required")
+        permission = get_permission_rules(
+            request.user,
+            request.COOKIES.get("current_team"),
+            "monitor",
+            f"{POLICY_MODULE}.{monitor_object_id}",
+        )
+        qs = permission_filter(MonitorPolicy, permission, team_key="policyorganization__organization__in", id_key="id__in")
 
-        all_permission_objs, permission = SystemMgmtUtils.format_rules_v2(POLICY_MODULE, request.user.rules)
-        policy_ids = MonitorPolicy.objects.filter(
-            monitor_object_id__in=list(all_permission_objs)).values_list("id", flat=True)
-        for policy_id in policy_ids:
-            permission[policy_id] = DEFAULT_PERMISSION
-
-        orgs = {i["id"] for i in request.user.group_list if i["name"] == "OpsPilotGuest"}
-        orgs.add(request.COOKIES.get("current_team"))
+        qs = qs.filter(monitor_object_id=monitor_object_id).distinct()
+        policy_ids = qs.values_list("id", flat=True)
 
         # 获取经过过滤器处理的数据
         queryset = self.filter_queryset(self.get_queryset())
-        if not request.user.is_superuser:
-            policy_ids = PolicyOrganization.objects.filter(organization__in=orgs).values_list("policy_id", flat=True)
-            queryset = queryset.filter(policy_id__in=list(policy_ids)).distinct()
-
-        if request.GET.get("monitor_objects"):
-            monitor_objects = request.GET.get("monitor_objects").split(",")
-            monitor_objects = [int(i) for i in monitor_objects]
-            policy_ids = MonitorPolicy.objects.filter(monitor_object_id__in=monitor_objects).values_list("id", flat=True)
-            queryset = queryset.filter(policy_id__in=list(policy_ids)).distinct()
-
-        if permission:
-            # 如果有权限限制，则过滤 queryset
-            queryset = queryset.filter(id__in=list(permission.keys()))
+        queryset = queryset.filter(policy_id__in=list(policy_ids)).distinct()
 
         if request.GET.get("type") == "count":
             # 执行序列化
@@ -82,19 +71,23 @@ class MonitorAlertVieSet(
         results = serializer.data
 
         # 获取当前页中所有的 policy_id 和 monitor_instance_id
-        policy_ids = [alert["policy_id"] for alert in results if alert["policy_id"]]
+        _policy_ids = [alert["policy_id"] for alert in results if alert["policy_id"]]
 
         # 查询所有相关的策略和实例
-        policies = MonitorPolicy.objects.filter(id__in=policy_ids)
+        policies = MonitorPolicy.objects.filter(id__in=_policy_ids)
 
         # 将策略和实例数据映射到字典中
         policy_dict = {policy.id: policy for policy in policies}
 
+        # 如果有权限规则，则添加到数据中
+        inst_permission_map = {i["id"]: i["permission"] for i in permission.get("instance", [])}
+
         # 补充策略和实例到每个 alert 中
         for alert in results:
 
-            if permission:
-                alert["permission"] = permission.get(alert["id"], DEFAULT_PERMISSION)
+            # 补充权限信息
+            if alert["policy_id"] in inst_permission_map:
+                alert["permission"] = inst_permission_map[alert["policy_id"]]
             else:
                 alert["permission"] = DEFAULT_PERMISSION
 
@@ -185,3 +178,66 @@ class MonitorEventVieSet(viewsets.ViewSet):
         event_obj = MonitorEvent.objects.filter(policy_id=alert_obj.policy_id, monitor_instance_id=alert_obj.monitor_instance_id).order_by("-created_at").first()
         raw_data = MonitorEventRawData.objects.filter(event_id=event_obj.id).first()
         return WebUtils.response_success(raw_data.data if raw_data else {})
+
+
+class MonitorAlertMetricSnapshotViewSet(viewsets.ViewSet):
+    """告警指标快照视图集"""
+
+    @swagger_auto_schema(
+        operation_description="查询告警指标快照",
+        manual_parameters=[
+            openapi.Parameter("alert_id", openapi.IN_PATH, description="告警ID", type=openapi.TYPE_INTEGER, required=True),
+            openapi.Parameter("page", openapi.IN_QUERY, description="页码", type=openapi.TYPE_INTEGER, required=False),
+            openapi.Parameter("page_size", openapi.IN_QUERY, description="每页数量", type=openapi.TYPE_INTEGER, required=False),
+        ]
+    )
+    @action(methods=['get'], detail=False, url_path='query/(?P<alert_id>[^/.]+)')
+    def get_snapshots(self, request, alert_id):
+        """根据告警ID查询指标快照数据"""
+        try:
+            # 1. 根据告警ID获取告警对象
+            alert_obj = MonitorAlert.objects.get(id=alert_id)
+        except MonitorAlert.DoesNotExist:
+            return WebUtils.response_error("告警不存在", status_code=404)
+
+        # 2. 构建查询条件 - 根据告警ID以及告警的开始结束时间
+        snapshot_query = {
+            'alert_id': alert_obj.id,
+            'snapshot_time__gte': alert_obj.start_event_time,
+        }
+
+        # 如果告警已结束，添加结束时间过滤条件
+        if alert_obj.end_event_time:
+            snapshot_query['snapshot_time__lte'] = alert_obj.end_event_time
+
+        # 3. 查询指标快照数据
+        queryset = MonitorAlertMetricSnapshot.objects.filter(**snapshot_query).order_by('snapshot_time')
+
+        # 4. 分页处理
+        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get('page_size', 10))
+
+        if page_size == -1:
+            # 返回所有数据
+            snapshots = queryset
+        else:
+            # 分页返回
+            start = (page - 1) * page_size
+            end = start + page_size
+            snapshots = queryset[start:end]
+
+        # 5. 序列化数据
+        serializer = MonitorAlertMetricSnapshotSerializer(snapshots, many=True)
+
+        return WebUtils.response_success({
+            'count': queryset.count(),
+            'results': serializer.data,
+            'alert_info': {
+                'id': alert_obj.id,
+                'policy_id': alert_obj.policy_id,
+                'monitor_instance_id': alert_obj.monitor_instance_id,
+                'start_event_time': alert_obj.start_event_time,
+                'end_event_time': alert_obj.end_event_time,
+                'status': alert_obj.status
+            }
+        })

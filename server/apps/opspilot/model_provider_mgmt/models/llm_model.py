@@ -5,16 +5,8 @@ from apps.core.encoders import PrettyJSONEncoder
 from apps.core.mixinx import EncryptMixin
 
 
-class LLMModelChoices(models.TextChoices):
-    CHAT_GPT = "chat-gpt", "OpenAI"
-    ZHIPU = "zhipu", "智谱AI"
-    HUGGING_FACE = "hugging_face", "Hugging Face"
-    DEEP_SEEK = "deep-seek", "DeepSeek"
-
-
 class LLMModel(models.Model, EncryptMixin):
     name = models.CharField(max_length=255, verbose_name="名称")
-    llm_model_type = models.CharField(max_length=255, choices=LLMModelChoices.choices, verbose_name="LLM模型类型")
     llm_config = models.JSONField(
         verbose_name="LLM配置",
         blank=True,
@@ -27,6 +19,8 @@ class LLMModel(models.Model, EncryptMixin):
     is_build_in = models.BooleanField(default=True, verbose_name="是否内置")
     is_demo = models.BooleanField(default=False)
     consumer_team = models.CharField(default="", blank=True, null=True, max_length=64)
+    model_type = models.ForeignKey("ModelType", on_delete=models.SET_NULL, verbose_name="模型类型", blank=True, null=True)
+    label = models.CharField(max_length=100, verbose_name="标签", blank=True, null=True)
 
     def __str__(self):
         return self.name
@@ -49,3 +43,12 @@ class LLMModel(models.Model, EncryptMixin):
         verbose_name = "LLM模型"
         verbose_name_plural = verbose_name
         db_table = "model_provider_mgmt_llmmodel"
+
+
+class ModelType(models.Model):
+    name = models.CharField(max_length=50, verbose_name="模型类型名称", unique=True)
+    display_name = models.CharField(max_length=100, verbose_name="显示名称")
+    icon = models.CharField(max_length=100, verbose_name="图标", blank=True, null=True)
+    is_build_in = models.BooleanField(default=False)
+    index = models.IntegerField(default=0, verbose_name="排序")
+    tags = models.JSONField(default=list)

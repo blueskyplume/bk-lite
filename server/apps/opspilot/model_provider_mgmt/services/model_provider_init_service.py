@@ -1,15 +1,6 @@
 from apps.opspilot.model_provider_mgmt.models import LLMSkill
 from apps.opspilot.model_provider_mgmt.services.skill_init_json import SKILL_LIST
-from apps.opspilot.models import (
-    EmbedModelChoices,
-    EmbedProvider,
-    LLMModel,
-    LLMModelChoices,
-    OCRProvider,
-    RerankModelChoices,
-    RerankProvider,
-    SkillTools,
-)
+from apps.opspilot.models import EmbedProvider, LLMModel, OCRProvider, RerankProvider, SkillTools
 
 
 class ModelProviderInitService:
@@ -37,12 +28,11 @@ class ModelProviderInitService:
         if self.owner == "admin":
             RerankProvider.objects.get_or_create(
                 name="bce-reranker-base_v1",
-                rerank_model_type=RerankModelChoices.LANG_SERVE,
                 is_build_in=True,
                 defaults={
                     "rerank_config": {
                         "base_url": "local:bce:maidalun1020/bce-reranker-base_v1",
-                        "api_key": "",
+                        "api_key": "bklite",
                         "model": "bce-reranker-base_v1",
                     },
                     "team": [self.group_id],
@@ -51,12 +41,11 @@ class ModelProviderInitService:
 
             EmbedProvider.objects.get_or_create(
                 name="bce-embedding-base_v1",
-                embed_model_type=EmbedModelChoices.LANG_SERVE,
                 is_build_in=True,
                 defaults={
                     "embed_config": {
                         "base_url": "local:huggingface_embedding:maidalun1020/bce-embedding-base_v1",
-                        "api_key": "",
+                        "api_key": "bklite",
                         "model": "bce-embedding-base_v1",
                     },
                     "team": [self.group_id],
@@ -65,12 +54,11 @@ class ModelProviderInitService:
 
             EmbedProvider.objects.get_or_create(
                 name="FastEmbed(BAAI/bge-small-zh-v1.5)",
-                embed_model_type=EmbedModelChoices.LANG_SERVE,
                 is_build_in=True,
                 defaults={
                     "embed_config": {
                         "base_url": "local:huggingface_embedding:BAAI/bge-small-zh-v1.5",
-                        "api_key": "",
+                        "api_key": "bklite",
                         "model": "FastEmbed(BAAI/bge-small-zh-v1.5)",
                     },
                     "team": [self.group_id],
@@ -79,7 +67,6 @@ class ModelProviderInitService:
 
             LLMModel.objects.get_or_create(
                 name="GPT-4o",
-                llm_model_type=LLMModelChoices.CHAT_GPT,
                 is_build_in=True,
                 defaults={
                     "team": [self.group_id],
@@ -99,6 +86,10 @@ class ModelProviderInitService:
             defaults={
                 "team": [self.group_id],
                 "enabled": True,
+                "ocr_config": {
+                    "base_url": "local:ocr:paddleocr",
+                    "api_key": "bklite",
+                },
             },
         )
 

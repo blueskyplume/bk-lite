@@ -1,21 +1,38 @@
 from django.http import JsonResponse
 from django.utils.translation import gettext as _
+from django_filters import filters
+from django_filters.rest_framework import FilterSet
 from rest_framework.decorators import action
 
+from apps.core.decorators.api_permission import HasPermission
 from apps.core.logger import opspilot_logger as logger
 from apps.core.utils.viewset_utils import AuthViewSet
 from apps.opspilot.bot_mgmt.serializers import BotSerializer
-from apps.opspilot.enum import ChannelChoices
+from apps.opspilot.enum import BotTypeChoice, ChannelChoices
 from apps.opspilot.models import Bot, BotChannel, Channel, LLMSkill
 from apps.opspilot.quota_rule_mgmt.quota_utils import get_quota_client
 from apps.opspilot.utils.pilot_client import PilotClient
+
+
+class BotFilter(FilterSet):
+    name = filters.CharFilter(field_name="name", lookup_expr="icontains")
+    bot_type = filters.CharFilter(method="filter_bot_type")
+
+    @staticmethod
+    def filter_bot_type(qs, field_name, value):
+        """查询类型"""
+        if not value:
+            return qs
+        return qs.filter(bot_type__in=[int(i.strip()) for i in value.split(",") if i.strip()])
 
 
 class BotViewSet(AuthViewSet):
     serializer_class = BotSerializer
     queryset = Bot.objects.all()
     permission_key = "bot"
+    filterset_class = BotFilter
 
+    @HasPermission("bot_list-Add")
     def create(self, request, *args, **kwargs):
         data = request.data
         if not request.user.is_superuser:
@@ -31,22 +48,25 @@ class BotViewSet(AuthViewSet):
             channels=[],
             created_by=request.user.username,
             replica_count=data.get("replica_count") or 1,
+            bot_type=data.get("bot_type", BotTypeChoice.PILOT),
         )
-        channel_list = Channel.objects.all()
-        BotChannel.objects.bulk_create(
-            [
-                BotChannel(
-                    bot_id=bot_obj.id,
-                    name=i.name,
-                    channel_type=i.channel_type,
-                    channel_config=i.channel_config,
-                    enabled=i.channel_type == ChannelChoices.WEB,
-                )
-                for i in channel_list
-            ]
-        )
+        if data.get("bot_type", BotTypeChoice.PILOT) == BotTypeChoice.PILOT:
+            channel_list = Channel.objects.all()
+            BotChannel.objects.bulk_create(
+                [
+                    BotChannel(
+                        bot_id=bot_obj.id,
+                        name=i.name,
+                        channel_type=i.channel_type,
+                        channel_config=i.channel_config,
+                        enabled=i.channel_type == ChannelChoices.WEB,
+                    )
+                    for i in channel_list
+                ]
+            )
         return JsonResponse({"result": True})
 
+    @HasPermission("bot_settings-Edit")
     def update(self, request, *args, **kwargs):
         obj: Bot = self.get_object()
         if not request.user.is_superuser:
@@ -62,11 +82,14 @@ class BotViewSet(AuthViewSet):
         node_port = data.pop("node_port", None)
         if (not request.user.is_superuser) and (obj.created_by != request.user.username):
             data.pop("team", [])
+        if "team" in data:
+            delete_team = [i for i in obj.team if i not in data["team"]]
+            self.delete_rules(obj.id, delete_team)
         for key in data.keys():
             setattr(obj, key, data[key])
         if node_port:
             obj.node_port = node_port
-        if rasa_model is not None:
+        if rasa_model:
             obj.rasa_model_id = rasa_model
         if channels:
             obj.channels = channels
@@ -87,6 +110,7 @@ class BotViewSet(AuthViewSet):
             obj.save()
         return JsonResponse({"result": True})
 
+    @HasPermission("bot_channel-View")
     @action(methods=["GET"], detail=False)
     def get_bot_channels(self, request):
         bot_id = request.GET.get("bot_id")
@@ -104,6 +128,7 @@ class BotViewSet(AuthViewSet):
             )
         return JsonResponse({"result": True, "data": return_data})
 
+    @HasPermission("bot_channel-Setting")
     @action(methods=["POST"], detail=False)
     def update_bot_channel(self, request):
         channel_id = request.data.get("id")
@@ -122,19 +147,16 @@ class BotViewSet(AuthViewSet):
         channel.save()
         return JsonResponse({"result": True})
 
+    @HasPermission("bot_list-Delete")
     def destroy(self, request, *args, **kwargs):
         obj = self.get_object()
         if obj.online:
             client = PilotClient()
-            client.stop_pilot(obj.id)
+            client.stop_pilot(obj)
         return super().destroy(request, *args, **kwargs)
 
-    def list(self, request, *args, **kwargs):
-        name = request.query_params.get("name", "")
-        queryset = Bot.objects.filter(name__icontains=name)
-        return self.query_by_groups(request, queryset)
-
     @action(methods=["POST"], detail=False)
+    @HasPermission("bot_settings-Save&Publish")
     def start_pilot(self, request):
         bot_ids = request.data.get("bot_ids")
         bots = Bot.objects.filter(id__in=bot_ids)
@@ -143,7 +165,6 @@ class BotViewSet(AuthViewSet):
             has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True)
             if not has_permission:
                 return JsonResponse({"result": False, "message": _("You do not have permission to start this bot.")})
-
         client = PilotClient()
         for bot in bots:
             if not bot.api_token:
@@ -155,6 +176,7 @@ class BotViewSet(AuthViewSet):
         return JsonResponse({"result": True})
 
     @action(methods=["POST"], detail=False)
+    @HasPermission("bot_settings-Save&Publish")
     def stop_pilot(self, request):
         bot_ids = request.data.get("bot_ids")
         bots = Bot.objects.filter(id__in=bot_ids)
@@ -166,7 +188,7 @@ class BotViewSet(AuthViewSet):
 
         client = PilotClient()
         for bot in bots:
-            client.stop_pilot(bot.id)
+            client.stop_pilot(bot)
             bot.api_token = ""
             bot.online = False
             bot.save()

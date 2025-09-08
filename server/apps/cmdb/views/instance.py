@@ -1,4 +1,4 @@
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import viewsets, status
@@ -111,6 +111,11 @@ class InstanceViewSet(viewsets.ViewSet):
         """
         model_permission_map = CmdbRulesFormatUtil.format_permission_map(rules=rules, model_id=model_id).get(model_id,
                                                                                                              {})
+        if not model_permission_map:
+            # 如果没有权限配置，则默认所有实例都没有权限
+            for instance in instances:
+                instance['permission'] = [VIEW, OPERATE]
+            return
         inst_name_permission_map_or_list = model_permission_map.get("permission_map", {})
         select_all = model_permission_map.get("select_all")
         for instance in instances:
@@ -345,15 +350,6 @@ class InstanceViewSet(viewsets.ViewSet):
     @HasPermission("asset_info-Delete Associate")
     @action(detail=False, methods=["delete"], url_path="association/(?P<id>.+?)")
     def instance_association_delete(self, request, id: int):
-        # rules = rules = get_cmdb_rules(request=request, permission_key=PERMISSION_INSTANCES)
-        # association = InstanceManage.instance_association_by_asso_id(int(id))
-        # src_model_id = association['edge']['src_model_id']
-        # src_cls_id = ModelManage.search_model_info(src_model_id)["classification_id"]
-        # dst_model_id = association['edge']['dst_model_id']
-        # dst_cls_id = ModelManage.search_model_info(dst_model_id)["classification_id"]
-        # dst_permission = CmdbRulesFormatUtil.format_rules(PERMISSION_INSTANCES, dst_model_id, rules, dst_cls_id)
-        # src_permission = CmdbRulesFormatUtil.format_rules(PERMISSION_INSTANCES, src_model_id, rules, src_cls_id)
-        # TODO 后续补充权限 得有源实例和目标实例的权限才能操作
         InstanceManage.instance_association_delete(int(id), request.user.username)
         return WebUtils.response_success()
 
@@ -445,7 +441,7 @@ class InstanceViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(
         operation_id="inst_import",
-        operation_description="实例导入",
+        operation_description="实例导入支持编辑",
         manual_parameters=[
             openapi.Parameter(
                 "model_id",
@@ -469,48 +465,45 @@ class InstanceViewSet(viewsets.ViewSet):
     @HasPermission("asset_info-Add")
     @action(methods=["post"], detail=False, url_path=r"(?P<model_id>.+?)/inst_import")
     def inst_import(self, request, model_id):
-        result = InstanceManage.inst_import(
-            model_id,
-            request.data.get("file").file,
-            request.user.username,
+        import_message = InstanceManage().inst_import_support_edit(
+            model_id=model_id,
+            file_stream=request.data.get("file").file,
+            operator=request.user.username,
         )
-        return WebUtils.response_success(result)
+        return JsonResponse({"data": [], "result": True, "message": import_message})
 
-    @swagger_auto_schema(
-        operation_id="inst_import_support_edit",
-        operation_description="实例导入支持编辑",
-        manual_parameters=[
-            openapi.Parameter(
-                "model_id",
-                openapi.IN_PATH,
-                description="模型ID",
-                type=openapi.TYPE_STRING,
-            )
-        ],
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                "file": openapi.Schema(
-                    type=openapi.TYPE_FILE,
-                    format=openapi.FORMAT_BINARY,
-                    description="文件",
-                ),
-            },
-            required=["file"],
-        ),
-    )
-    @HasPermission("asset_info-Edit")
-    @action(methods=["post"], detail=False, url_path=r"(?P<model_id>.+?)/inst_import_support_edit")
-    def inst_import_support_edit(self, request, model_id):
-        add_result, update_result = InstanceManage.inst_import_support_edit(
-            model_id,
-            request.data.get("file").file,
-            request.user.username,
-        )
-        return WebUtils.response_success({
-            "add_result": add_result,
-            "update_result": update_result,
-        })
+    # @swagger_auto_schema(
+    #     operation_id="inst_import_support_edit",
+    #     operation_description="实例导入支持编辑",
+    #     manual_parameters=[
+    #         openapi.Parameter(
+    #             "model_id",
+    #             openapi.IN_PATH,
+    #             description="模型ID",
+    #             type=openapi.TYPE_STRING,
+    #         )
+    #     ],
+    #     request_body=openapi.Schema(
+    #         type=openapi.TYPE_OBJECT,
+    #         properties={
+    #             "file": openapi.Schema(
+    #                 type=openapi.TYPE_FILE,
+    #                 format=openapi.FORMAT_BINARY,
+    #                 description="文件",
+    #             ),
+    #         },
+    #         required=["file"],
+    #     ),
+    # )
+    # @HasPermission("asset_info-Edit")
+    # @action(methods=["post"], detail=False, url_path=r"(?P<model_id>.+?)/inst_import_support_edit")
+    # def inst_import_support_edit(self, request, model_id):
+    #     import_message = InstanceManage.inst_import_support_edit(
+    #         model_id,
+    #         request.data.get("file").file,
+    #         request.user.username,
+    #     )
+    #     return JsonResponse({"data": [], "result": True, "message": import_message})
 
     @swagger_auto_schema(
         operation_id="inst_export",
@@ -531,17 +524,28 @@ class InstanceViewSet(viewsets.ViewSet):
     @HasPermission("asset_info-View")
     @action(methods=["post"], detail=False, url_path=r"(?P<model_id>.+?)/inst_export")
     def inst_export(self, request, model_id):
-        # TODO 权限补充上创建人是自己的条件
         rules = get_cmdb_rules(request=request, permission_key=PERMISSION_INSTANCES)
         model_permission_map = CmdbRulesFormatUtil.format_permission_map(rules=rules, model_id=model_id).get(model_id,
                                                                                                              {})
         inst_name_permission_map = model_permission_map.get("permission_map", {})
-        select_all = model_permission_map.get("select_all")
+        select_all = model_permission_map.get("select_all", False)
         inst_names = [] if select_all else list(inst_name_permission_map.keys())
 
+        attr_list = request.data.get("attr_list", [])
+        association_list = request.data.get("association_list", [])
+        inst_ids = request.data.get("inst_ids", [])
         response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        response["Content-Disposition"] = f"attachment;filename={f'{model_id}_import_template.xlsx'}"
-        response.write(InstanceManage.inst_export(model_id, request.data, inst_names).read())
+        response["Content-Disposition"] = f"attachment;filename={f'{model_id}_export.xlsx'}"
+        response.write(InstanceManage.inst_export(
+            model_id,
+            inst_ids,
+            format_group_params(request.COOKIES.get("current_team")),
+            request.user.roles,
+            inst_names,
+            request.user.username,
+            attr_list=attr_list,
+            association_list=association_list
+        ).read())
         return response
 
     @swagger_auto_schema(
@@ -565,7 +569,8 @@ class InstanceViewSet(viewsets.ViewSet):
             format_group_params(request.COOKIES.get("current_team")),
             request.user.roles,
             request.data.get("search", ""),
-            rules
+            rules,
+            created=request.user.username
         )
         return WebUtils.response_success(result)
 
@@ -607,6 +612,45 @@ class InstanceViewSet(viewsets.ViewSet):
         return WebUtils.response_success(result)
 
     @swagger_auto_schema(
+        operation_id="topo_search_test_config",
+        operation_description="实例拓扑查询",
+        manual_parameters=[
+            openapi.Parameter(
+                "model_id",
+                openapi.IN_PATH,
+                description="模型ID",
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter("inst_id", openapi.IN_PATH, description="实例ID", type=openapi.TYPE_NUMBER),
+        ],
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"topo_search_test_config/(?P<model_id>.+?)/(?P<inst_id>.+?)",
+    )
+    @HasPermission("asset_info-View")
+    def topo_search_test_config(self, request, model_id: str, inst_id: int):
+        instance = InstanceManage.query_entity_by_id(inst_id)
+        if not instance:
+            return WebUtils.response_error(response_data=[], error_message="实例不存在",
+                                           status_code=status.HTTP_404_NOT_FOUND)
+
+        if instance.get("_creator") != request.user.username:
+            rules = get_cmdb_rules(request=request, permission_key=PERMISSION_INSTANCES)
+            has_permission = CmdbRulesFormatUtil.has_object_permission(rules=rules, obj_type=PERMISSION_INSTANCES,
+                                                                       classification_id=None,
+                                                                       model_id=model_id, operator=VIEW,
+                                                                       instance_name=instance["inst_name"])
+            if not has_permission:
+                return WebUtils.response_error(response_data=[], error_message="抱歉！您没有此实例的权限",
+                                               status_code=status.HTTP_403_FORBIDDEN)
+
+        result = InstanceManage.topo_search_test_config(int(inst_id), model_id)
+        return WebUtils.response_success(result)
+
+
+    @swagger_auto_schema(
         operation_id="show_field_settings",
         operation_description="展示字段设置",
         request_body=openapi.Schema(
@@ -644,8 +688,9 @@ class InstanceViewSet(viewsets.ViewSet):
     def model_inst_count(self, request):
         # TODO 权限补充上创建人是自己的条件
         rules = get_cmdb_rules(request=request, permission_key=PERMISSION_INSTANCES)
+        # rules = {}
         result = InstanceManage.model_inst_count(user_groups=format_group_params(request.COOKIES.get("current_team")),
-                                                 roles=request.user.roles, rules=rules)
+                                                 roles=request.user.roles, rules=rules, created=request.user.username)
         return WebUtils.response_success(result)
 
     @action(methods=["GET"], detail=False)

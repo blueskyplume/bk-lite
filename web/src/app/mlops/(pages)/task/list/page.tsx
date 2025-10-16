@@ -18,6 +18,7 @@ import type { TreeDataNode } from 'antd';
 import { TrainJob } from '@/app/mlops/types/task';
 import { TRAIN_STATUS_MAP, TRAIN_TEXT } from '@/app/mlops/constants';
 import { DataSet } from '@/app/mlops/types/manage';
+import { exportTrainFileToZip } from '@/app/mlops/utils/common';
 const { Search } = Input;
 
 const getStatusColor = (value: string, TrainStatus: Record<string, string>) => {
@@ -46,7 +47,8 @@ const TrainTask = () => {
     startTimeSeriesTrainTask,
     getClassificationTaskList,
     deleteClassificationTrainTask,
-    startClassificationTrainTask
+    startClassificationTrainTask,
+    getTrainTaskFile
   } = useMlopsTaskApi();
 
   // 状态定义
@@ -62,6 +64,7 @@ const TrainTask = () => {
     total: 0,
     pageSize: 10,
   });
+  const showTrain = ['anomaly', 'classification'];
 
   // 数据集获取映射
   const datasetApiMap: Record<string, () => Promise<DataSet[]>> = {
@@ -221,7 +224,16 @@ const TrainTask = () => {
         const [key] = selectedKeys;
         return (
           <>
-            {key === 'anomaly' &&
+            <PermissionWrapper requiredPermissions={['View']}>
+              <Button
+                type="link"
+                className="mr-[10px]"
+                onClick={() => downloadFile(record)}
+              >
+                {t('common.download')}
+              </Button>
+            </PermissionWrapper>
+            {showTrain.includes(key) &&
               (<>
                 <PermissionWrapper requiredPermissions={['Train']}>
                   <Popconfirm
@@ -429,6 +441,19 @@ const TrainTask = () => {
       message.error(t(`common.error`));
     } finally {
       getTasks();
+    }
+  };
+
+  const downloadFile = async (record: any) => {
+    const [key] = selectedKeys;
+    try {
+      const zipname = `${record.name}_${record.id}`;
+      message.info(`等待数据中...`)
+      const data = await getTrainTaskFile(record.id, key);
+      message.success(`数据加载完毕，开始下载文件`);
+      exportTrainFileToZip(data, zipname);
+    } catch (e) {
+      console.log(e);
     }
   };
 

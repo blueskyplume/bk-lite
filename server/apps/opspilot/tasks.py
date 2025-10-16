@@ -9,8 +9,9 @@ from tqdm import tqdm
 
 from apps.core.logger import opspilot_logger as logger
 from apps.opspilot.enum import DocumentStatus
-from apps.opspilot.knowledge_mgmt.services.knowledge_search_service import KnowledgeSearchService
 from apps.opspilot.models import (
+    Bot,
+    BotWorkFlow,
     FileKnowledge,
     KnowledgeBase,
     KnowledgeDocument,
@@ -21,6 +22,8 @@ from apps.opspilot.models import (
     QAPairs,
     WebPageKnowledge,
 )
+from apps.opspilot.services.knowledge_search_service import KnowledgeSearchService
+from apps.opspilot.utils.chat_flow_utils.engine.factory import create_chat_flow_engine
 from apps.opspilot.utils.chat_server_helper import ChatServerHelper
 from apps.opspilot.utils.chunk_helper import ChunkHelper
 from apps.opspilot.utils.graph_utils import GraphUtils
@@ -120,7 +123,13 @@ def invoke_one_document(document, is_show=False):
         ssl_verify = os.getenv("METIS_SSL_VERIFY", "false").lower() == "true"
         if source_type == "file":
             files = source_data.pop("file")
-            response = requests.post(source_remote, headers=headers, data=form_data, files=files, verify=ssl_verify)
+            response = requests.post(
+                source_remote,
+                headers=headers,
+                data=form_data,
+                files=files,
+                verify=ssl_verify,
+            )
         else:
             form_data.update(source_data)
             response = requests.post(source_remote, headers=headers, data=form_data, verify=ssl_verify)
@@ -137,7 +146,18 @@ def invoke_one_document(document, is_show=False):
 
 def format_file_invoke_kwargs(document):
     knowledge = FileKnowledge.objects.filter(knowledge_document_id=document.id).first()
-    return {"file": [("file", (knowledge.file.name, knowledge.file.read(), "application/octet-stream"))]}
+    return {
+        "file": [
+            (
+                "file",
+                (
+                    knowledge.file.name,
+                    knowledge.file.read(),
+                    "application/octet-stream",
+                ),
+            )
+        ]
+    }
 
 
 def format_manual_invoke_kwargs(document):
@@ -194,9 +214,7 @@ def format_invoke_kwargs(knowledge_document: KnowledgeDocument, preview=False):
         "chunk_size": knowledge_document.general_parse_chunk_size,
         "chunk_overlap": knowledge_document.general_parse_chunk_overlap,
         "load_mode": knowledge_document.mode,
-        "semantic_chunk_model_base_url": [semantic_embed_config.get("base_url", "")]
-        if semantic_embed_config.get("base_url", "")
-        else [],
+        "semantic_chunk_model_base_url": [semantic_embed_config.get("base_url", "")] if semantic_embed_config.get("base_url", "") else [],
         "semantic_chunk_model_api_key": semantic_embed_config.get("api_key", "") or " ",
         "semantic_chunk_model": semantic_embed_config.get("model", semantic_embed_model_name),
         "preview": "true" if preview else "false",
@@ -219,7 +237,11 @@ def sync_web_page_knowledge(web_page_knowledge_id):
     web_page.knowledge_document.train_status = DocumentStatus.CHUNKING
     web_page.knowledge_document.save()
     general_embed_by_document_list(
-        document_list, False, web_page.knowledge_document.created_by, web_page.knowledge_document.domain, True
+        document_list,
+        False,
+        web_page.knowledge_document.created_by,
+        web_page.knowledge_document.domain,
+        True,
     )
 
 
@@ -274,7 +296,13 @@ def create_qa_pairs(qa_pairs_id_list, only_question, delete_old_qa_pairs=False):
             task_obj.total_count = len(content_list)
             task_obj.save()
             success_count = client.create_document_qa_pairs(
-                content_list, embed_config, es_index, llm_setting, qa_pairs_obj, only_question, task_obj
+                content_list,
+                embed_config,
+                es_index,
+                llm_setting,
+                qa_pairs_obj,
+                only_question,
+                task_obj,
             )
         except Exception as e:
             logger.exception(e)
@@ -485,7 +513,10 @@ def _create_single_qa_item(qa_item, index, kwargs, metadata, url, headers):
     # 构建请求参数
     params = dict(kwargs, **{"content": qa_item["instruction"]})
     params["metadata"] = json.dumps(
-        dict(metadata, **{"qa_question": qa_item["instruction"], "qa_answer": qa_item["output"]})
+        dict(
+            metadata,
+            **{"qa_question": qa_item["instruction"], "qa_answer": qa_item["output"]},
+        )
     )
 
     # 尝试创建问答对，带重试机制
@@ -571,9 +602,7 @@ def create_qa_pairs_by_custom(qa_pairs_id, content_list):
         total_count=len(content_list),
     )
     try:
-        success_count = ChunkHelper.create_qa_pairs(
-            content_list, chunk_obj, es_index, embed_config, qa_pairs_id, task_obj
-        )
+        success_count = ChunkHelper.create_qa_pairs(content_list, chunk_obj, es_index, embed_config, qa_pairs_id, task_obj)
         qa_pairs.generate_count = success_count
         qa_pairs.status = "completed"
     except Exception as e:
@@ -650,3 +679,29 @@ def create_qa_pairs_by_chunk(qa_pairs_id, kwargs):
     qa_pairs_obj.status = "completed"
     qa_pairs_obj.save()
     task_obj.delete()
+
+
+@shared_task
+def chat_flow_celery_task(bot_id, node_id, message):
+    """ChatFlow周期性任务"""
+    logger.info(f"开始执行ChatFlow周期任务: bot_id={bot_id}, node_id={node_id}")
+    bot_obj = Bot.objects.filter(id=bot_id, online=True).first()
+    if not bot_obj:
+        logger.error(f"Bot {bot_id} 不存在或已下线")
+        return
+    bot_chat_flow = BotWorkFlow.objects.filter(bot_id=bot_obj.id).first()
+    if not bot_chat_flow:
+        logger.error(f"Bot {bot_id} 没有配置ChatFlow")
+        return
+    try:
+        engine = create_chat_flow_engine(bot_chat_flow, node_id)
+        input_data = {
+            "last_message": message,
+            "user_id": bot_obj.created_by,
+            "bot_id": bot_id,
+            "node_id": node_id,
+        }
+        result = engine.execute(input_data)
+        logger.info(f"ChatFlow周期任务执行完成: bot_id={bot_id}, node_id={node_id}, 执行结果为{result}")
+    except Exception as e:
+        logger.error(f"ChatFlow周期任务执行失败: bot_id={bot_id}, node_id={node_id}, error={str(e)}")

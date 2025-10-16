@@ -7,6 +7,7 @@ import React, {
   forwardRef,
   useImperativeHandle,
 } from 'react';
+import Icon from '@/components/icon';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import type { DataNode } from 'antd/lib/tree';
 import { Form } from 'antd';
@@ -24,9 +25,10 @@ import {
 import {
   PlusOutlined,
   MoreOutlined,
-  AreaChartOutlined,
+  BarChartOutlined,
   SettingOutlined,
-  DeploymentUnitOutlined,
+  FolderOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 
 const Sidebar = forwardRef<SidebarRef, SidebarProps>(
@@ -85,7 +87,7 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
       setModalTitle(title);
       form.setFieldsValue({
         name: defaultValue,
-        desc: dir ? dir.desc || '' : '',
+        desc: action === 'edit' && dir ? dir.desc : '',
       });
       setCurrentDir(dir);
       setNewItemType(itemType);
@@ -116,8 +118,13 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
             desc: values.desc,
           };
           if (modalAction === 'addChild' && currentDir?.data_id) {
-            itemData.directory = parseInt(currentDir.data_id, 10);
-            itemData.parent = parseInt(currentDir.data_id, 10);
+            if (
+              ['dashboard', 'topology', 'architecture'].includes(newItemType)
+            ) {
+              itemData.directory = parseInt(currentDir.data_id, 10);
+            } else if (newItemType === 'directory') {
+              itemData.parent_id = parseInt(currentDir.data_id, 10);
+            }
           }
           await createItem(newItemType, itemData);
         }
@@ -160,14 +167,11 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
         cancelText: t('common.cancel'),
         centered: true,
         onOk: async () => {
-          setLoading(true);
           try {
             await deleteItem(item.type, item.data_id);
             loadDirectories();
           } catch (error) {
             console.error('Failed to delete directory:', error);
-          } finally {
-            setLoading(false);
           }
         },
       });
@@ -176,10 +180,13 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
     const getDirectoryIcon = (type: DirectoryType) => {
       switch (type) {
         case 'dashboard':
-          return <AreaChartOutlined className="mr-1 text-blue-500" />;
+          return <BarChartOutlined className="mr-1 text-purple-600" />;
         case 'topology':
-          return <DeploymentUnitOutlined className="mr-1 text-green-500" />;
+          return <Icon type="tuoputu" className="mr-1" />;
+        case 'architecture':
+          return <ApartmentOutlined className="mr-1 text-green-600 text-sm" />;
         case 'directory':
+          return <FolderOutlined className="mr-1" />;
         default:
           return '';
       }
@@ -194,6 +201,7 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
         (child) =>
           child.type === 'dashboard' ||
           child.type === 'topology' ||
+          child.type === 'architecture' ||
           (child.type === 'directory' && hasChildren(child))
       );
     };
@@ -237,6 +245,21 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
               >
                 {t('opsAnalysisSidebar.addTopo')}
               </Menu.Item>
+              <Menu.Item
+                key="addArchitecture"
+                onClick={() => {
+                  setNewItemType('architecture');
+                  showModal(
+                    'addChild',
+                    t('opsAnalysisSidebar.addArch'),
+                    '',
+                    item,
+                    'architecture'
+                  );
+                }}
+              >
+                {t('opsAnalysisSidebar.addArch')}
+              </Menu.Item>
             </>
           )}
           {isRoot && (
@@ -266,7 +289,9 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
                   ? t('opsAnalysisSidebar.editGroup')
                   : item.type === 'dashboard'
                     ? t('opsAnalysisSidebar.editDash')
-                    : t('opsAnalysisSidebar.editTopo'),
+                    : item.type === 'topology'
+                      ? t('opsAnalysisSidebar.editTopo')
+                      : t('opsAnalysisSidebar.editArch'),
                 item.name,
                 item,
                 item.type
@@ -410,7 +435,9 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
       if (
         item &&
         item.type === urlType &&
-        (item.type === 'dashboard' || item.type === 'topology')
+        (item.type === 'dashboard' ||
+          item.type === 'topology' ||
+          item.type === 'architecture')
       ) {
         setSelectedKeys([item.id]);
         if (onSelect) {
@@ -517,7 +544,7 @@ const Sidebar = forwardRef<SidebarRef, SidebarProps>(
             >
               <Input placeholder={t('opsAnalysisSidebar.inputPlaceholder')} />
             </Form.Item>
-            {(newItemType !== 'directory' || modalAction === 'edit') && (
+            {newItemType !== 'directory' && (
               <Form.Item name="desc" label={t('opsAnalysisSidebar.descLabel')}>
                 <Input.TextArea
                   autoSize={{ minRows: 3 }}

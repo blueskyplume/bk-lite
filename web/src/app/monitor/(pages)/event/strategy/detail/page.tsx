@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import useApiClient from '@/utils/request';
 import useMonitorApi from '@/app/monitor/api';
+import useEventApi from '@/app/monitor/api/event';
 import { useTranslation } from '@/utils/i18n';
 import {
   ModalRef,
@@ -23,37 +24,34 @@ import {
   UserItem,
   SegmentedItem,
   TableDataItem,
+  GroupInfo,
+  ObjectItem,
+  MetricItem,
+  IndexViewItem,
+  ThresholdField,
+  FilterItem,
 } from '@/app/monitor/types';
 import GroupTreeSelector from '@/components/group-tree-select';
 import {
-  StrategyFields,
-  SourceFeild,
-  MetricItem,
-  FilterItem,
-  ThresholdField,
   PluginItem,
-  IndexViewItem,
-  GroupInfo,
+  SourceFeild,
+  StrategyFields,
   ChannelItem,
-  ObjectItem,
-} from '@/app/monitor/types/monitor';
+} from '@/app/monitor/types/event';
 import { useCommon } from '@/app/monitor/context/common';
-import { deepClone } from '@/app/monitor/utils/common';
-import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/integration/common/getObjectConfig';
 import strategyStyle from '../index.module.scss';
 import { PlusOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import SelectAssets from '../selectAssets';
 import SelectCards from './selectCard';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUserInfoContext } from '@/context/userInfo';
-import {
-  useScheduleList,
-  useMethodList,
-  useLevelList,
-  SCHEDULE_UNIT_MAP,
-} from '@/app/monitor/constants/monitor';
+import { useScheduleList, useMethodList } from '@/app/monitor/hooks/event';
+import { useLevelList } from '@/app/monitor/hooks';
+import { SCHEDULE_UNIT_MAP } from '@/app/monitor/constants/event';
 import ThresholdList from './thresholdList';
 import ConditionSelector from './conditionSelector';
+import { cloneDeep } from 'lodash';
 const { Option } = Select;
 const defaultGroup = ['instance_id'];
 const { TextArea } = Input;
@@ -62,13 +60,12 @@ const StrategyOperation = () => {
   const { t } = useTranslation();
   const { post, put, isLoading } = useApiClient();
   const {
-    getSystemChannelList,
     getMetricsGroup,
     getMonitorMetrics,
     getMonitorPlugin,
-    getMonitorPolicy,
     getMonitorObject,
   } = useMonitorApi();
+  const { getMonitorPolicy, getSystemChannelList } = useEventApi();
   const METHOD_LIST = useMethodList();
   const LEVEL_LIST = useLevelList();
   const SCHEDULE_LIST = useScheduleList();
@@ -275,7 +272,7 @@ const StrategyOperation = () => {
   };
 
   const feedbackThreshold = (data: TableDataItem) => {
-    const _threshold = deepClone(threshold);
+    const _threshold = cloneDeep(threshold);
     _threshold.forEach((item: ThresholdField) => {
       const target = data.find(
         (tex: TableDataItem) => tex.level === item.level
@@ -373,7 +370,7 @@ const StrategyOperation = () => {
       const getMetrics = getMonitorMetrics(params);
       Promise.all([getGroupList, getMetrics])
         .then((res) => {
-          const metricData = deepClone(res[1] || []);
+          const metricData = cloneDeep(res[1] || []);
           setMetrics(res[1] || []);
           const groupData = res[0].map((item: GroupInfo) => ({
             ...item,
@@ -462,7 +459,7 @@ const StrategyOperation = () => {
 
   const createStrategy = () => {
     form?.validateFields().then((values) => {
-      const params = deepClone(values);
+      const params = cloneDeep(values);
       const target: any = pluginList.find(
         (item) => item.value === params.collect_type
       );
@@ -986,7 +983,7 @@ const StrategyOperation = () => {
                                     name="no_data_period"
                                     label={
                                       <span className="w-[100px]">
-                                        {t('monitor.intergrations.condition')}
+                                        {t('monitor.integrations.condition')}
                                       </span>
                                     }
                                     rules={[
@@ -1183,36 +1180,78 @@ const StrategyOperation = () => {
                                   </span>
                                 )}
                               </Form.Item>
-                              <Form.Item<StrategyFields>
-                                label={
-                                  <span className="w-[100px]">
-                                    {t('monitor.events.notifier')}
-                                  </span>
+                              <Form.Item
+                                noStyle
+                                shouldUpdate={(prevValues, currentValues) =>
+                                  prevValues.notice_type_id !==
+                                  currentValues.notice_type_id
                                 }
-                                name="notice_users"
-                                rules={[
-                                  {
-                                    required: true,
-                                    message: t('common.required'),
-                                  },
-                                ]}
                               >
-                                <Select
-                                  style={{
-                                    width: '800px',
-                                  }}
-                                  showSearch
-                                  allowClear
-                                  mode="tags"
-                                  maxTagCount="responsive"
-                                  placeholder={t('monitor.events.notifier')}
-                                >
-                                  {userList.map((item) => (
-                                    <Option value={item.id} key={item.id}>
-                                      {item.username}
-                                    </Option>
-                                  ))}
-                                </Select>
+                                {({ getFieldValue }) =>
+                                  channelList.find(
+                                    (item) =>
+                                      item.id ===
+                                      getFieldValue('notice_type_id')
+                                  )?.channel_type === 'email' ? (
+                                      <Form.Item<StrategyFields>
+                                        label={
+                                          <span className="w-[100px]">
+                                            {t('monitor.events.notifier')}
+                                          </span>
+                                        }
+                                        name="notice_users"
+                                        rules={[
+                                          {
+                                            required: true,
+                                            message: t('common.required'),
+                                          },
+                                        ]}
+                                      >
+                                        <Select
+                                          style={{
+                                            width: '800px',
+                                          }}
+                                          showSearch
+                                          allowClear
+                                          mode="tags"
+                                          maxTagCount="responsive"
+                                          placeholder={t(
+                                            'monitor.events.notifier'
+                                          )}
+                                        >
+                                          {userList.map((item) => (
+                                            <Option value={item.id} key={item.id}>
+                                              {item.username}
+                                            </Option>
+                                          ))}
+                                        </Select>
+                                      </Form.Item>
+                                    ) : (
+                                      <Form.Item<StrategyFields>
+                                        label={
+                                          <span className="w-[100px]">
+                                            {t('monitor.events.notifier')}
+                                          </span>
+                                        }
+                                        name="notice_users"
+                                        rules={[
+                                          {
+                                            required: true,
+                                            message: t('common.required'),
+                                          },
+                                        ]}
+                                      >
+                                        <Input
+                                          style={{
+                                            width: '800px',
+                                          }}
+                                          placeholder={t(
+                                            'monitor.events.notifier'
+                                          )}
+                                        />
+                                      </Form.Item>
+                                    )
+                                }
                               </Form.Item>
                             </>
                           ) : null

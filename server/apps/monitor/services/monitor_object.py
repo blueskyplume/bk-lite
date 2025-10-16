@@ -5,11 +5,10 @@ from collections import defaultdict
 from django.db import transaction
 
 from apps.core.exceptions.base_app_exception import BaseAppException
-from apps.monitor.constants import OBJ_ORDER, DEFAULT_OBJ_ORDER, MONITOR_OBJ_KEYS
+from apps.monitor.constants.monitor_object import MonitorObjConstants
 from apps.monitor.models.monitor_metrics import Metric
 from apps.monitor.models.monitor_object import MonitorInstance, MonitorObject, MonitorInstanceOrganization
 from apps.monitor.models.setting import Setting
-from apps.monitor.utils.instance import calculation_status
 from apps.monitor.utils.victoriametrics_api import VictoriaMetricsAPI
 from apps.monitor.tasks.grouping_rule import sync_instance_and_group
 
@@ -18,7 +17,7 @@ class MonitorObjectService:
     @staticmethod
     def get_instances_by_metric(metric: str, instance_id_keys: list):
         """获取监控对象实例"""
-        metrics = VictoriaMetricsAPI().query(metric, "24h")
+        metrics = VictoriaMetricsAPI().query(metric)
         instance_map = {}
         for metric_info in metrics.get("data", {}).get("result", []):
             instance_id = str(tuple([metric_info["metric"].get(i) for i in instance_id_keys]))
@@ -50,10 +49,11 @@ class MonitorObjectService:
 
             conf_info["organization"] = list(org_map.get(conf_info["instance_id"], []))
 
-            if conf_info["time"] == 0:
-                conf_info["status"] = ""
+            if conf_info["time"]:
+                conf_info["status"] = "normal"
             else:
-                conf_info["status"] = calculation_status(conf_info["time"])
+                conf_info["status"] = "unavailable"
+
 
     @staticmethod
     def get_monitor_instance(monitor_object_id, page, page_size, name, qs, add_metrics=False):
@@ -78,7 +78,7 @@ class MonitorObjectService:
         monitor_obj = MonitorObject.objects.filter(id=monitor_object_id).first()
         if not monitor_obj:
             raise BaseAppException("Monitor object does not exist")
-        monitor_objs = MonitorObject.objects.all().values(*MONITOR_OBJ_KEYS)
+        monitor_objs = MonitorObject.objects.all().values(*MonitorObjConstants.OBJ_KEYS)
         obj_metric_map = {i["name"]: i for i in monitor_objs}
         obj_metric_map = obj_metric_map.get(monitor_obj.name)
         if not obj_metric_map:
@@ -158,7 +158,7 @@ class MonitorObjectService:
     @staticmethod
     def set_object_order(order: list):
         """设置监控对象排序"""
-        Setting.objects.update_or_create(name=OBJ_ORDER, defaults={"value": order})
+        Setting.objects.update_or_create(name=MonitorObjConstants.OBJ_ORDER, defaults={"value": order})
 
     @staticmethod
     def sort_items(data):
@@ -167,8 +167,8 @@ class MonitorObjectService:
         :return: 排序后的数据列表
         """
 
-        order_obj = Setting.objects.filter(name=OBJ_ORDER).first()
-        order_obj_value = order_obj.value if order_obj else DEFAULT_OBJ_ORDER
+        order_obj = Setting.objects.filter(name=MonitorObjConstants.OBJ_ORDER).first()
+        order_obj_value = order_obj.value if order_obj else MonitorObjConstants.DEFAULT_OBJ_ORDER
         item_order = {i["type"]: i["name_list"] for i in order_obj_value}
         group_order = [i["type"] for i in order_obj_value]
 

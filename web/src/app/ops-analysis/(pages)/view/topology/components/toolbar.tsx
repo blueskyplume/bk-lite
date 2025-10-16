@@ -8,8 +8,9 @@ import {
   FullscreenOutlined,
   DeleteOutlined,
   SelectOutlined,
-  FontSizeOutlined,
   EditOutlined,
+  UndoOutlined,
+  RedoOutlined,
 } from '@ant-design/icons';
 
 const TopologyToolbar: React.FC<ToolbarProps> = ({
@@ -23,7 +24,10 @@ const TopologyToolbar: React.FC<ToolbarProps> = ({
   onFit,
   onDelete,
   onSelectMode,
-  onAddText,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }) => {
   const { t } = useTranslation();
 
@@ -69,15 +73,22 @@ const TopologyToolbar: React.FC<ToolbarProps> = ({
 
         {isEditMode && (
           <>
-            {false && (
-              <Tooltip title={t('topology.addText')}>
-                <Button
-                  type="text"
-                  icon={<FontSizeOutlined style={{ fontSize: 16 }} />}
-                  onClick={onAddText}
-                />
-              </Tooltip>
-            )}
+            <Tooltip title={t('topology.undo')}>
+              <Button
+                type="text"
+                icon={<UndoOutlined style={{ fontSize: 16 }} />}
+                onClick={onUndo}
+                disabled={!canUndo}
+              />
+            </Tooltip>
+            <Tooltip title={t('topology.redo')}>
+              <Button
+                type="text"
+                icon={<RedoOutlined style={{ fontSize: 16 }} />}
+                onClick={onRedo}
+                disabled={!canRedo}
+              />
+            </Tooltip>
             <Tooltip title={t('topology.selectMode')}>
               <Button
                 type="text"

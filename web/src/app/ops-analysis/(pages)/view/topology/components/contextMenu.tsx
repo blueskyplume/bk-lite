@@ -4,6 +4,7 @@ import { useTranslation } from '@/utils/i18n';
 import type { ContextMenuProps } from '@/app/ops-analysis/types/topology';
 import {
   VerticalAlignTopOutlined,
+  VerticalAlignBottomOutlined,
   UpOutlined,
   DownOutlined,
   LinkOutlined,
@@ -12,6 +13,7 @@ import {
   SettingOutlined,
   DeleteOutlined,
   EditOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 
 const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -36,8 +38,20 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
 
   const getNodeEditMenu = () => (
     <Menu onClick={onMenuClick}>
+      <Menu.Item key="edit" icon={<EditOutlined />}>
+        {t('topology.editNode')}
+      </Menu.Item>
+      <Menu.Item key="copy" icon={<CopyOutlined />}>
+        {t('topology.copyNode')}
+      </Menu.Item>
+      <Menu.Item key="delete" icon={<DeleteOutlined />}>
+        {t('topology.delete')}
+      </Menu.Item>
       <Menu.Item key="bringToFront" icon={<VerticalAlignTopOutlined />}>
         {t('topology.bringToFront')}
+      </Menu.Item>
+      <Menu.Item key="bringToBack" icon={<VerticalAlignBottomOutlined />}>
+        {t('topology.bringToBack')}
       </Menu.Item>
       <Menu.Item key="bringForward" icon={<UpOutlined />}>
         {t('topology.bringForward')}
@@ -56,12 +70,6 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
         {t('topology.doubleArrowConnection')}
       </Menu.Item>
       <Menu.Divider />
-      <Menu.Item key="edit" icon={<EditOutlined />}>
-        {t('topology.editNode')}
-      </Menu.Item>
-      <Menu.Item key="delete" icon={<DeleteOutlined />}>
-        {t('topology.delete')}
-      </Menu.Item>
     </Menu>
   );
 

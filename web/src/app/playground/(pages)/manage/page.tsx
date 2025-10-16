@@ -158,14 +158,14 @@ const PlaygroundManage = () => {
     getAllSampleFile();
   }, []);
 
-  const renderCapabilityNode = (categoryID: number, capabilityData: any[]) => {
+  const renderCapabilityNode = (categoryID: number, capabilityData: any[], categoryType: string) => {
     const filterData = capabilityData.filter(item => {
       const { id } = item.category;
       return categoryID === id;
     });
     return filterData.map((item: any) => ({
       key: item?.id,
-      title: renderCapabilityTitle(item),
+      title: renderCapabilityTitle({...item, categoryType}),
       ...item
     }));
   };
@@ -191,8 +191,29 @@ const PlaygroundManage = () => {
               key: 'anomaly_detection',
               name: 'anomaly_detection',
               selectable: false,
-              title: renderTitle({ name: t(`manage.anomalyDetection`), categoryID: findIDByName('异常检测', categoryData) }),
-              children: renderCapabilityNode(findIDByName('异常检测', categoryData), capabilityData)
+              title: renderTitle({ name: t(`manage.anomalyDetection`), categoryID: findIDByName('异常检测', categoryData), categoryType: 'anomaly' }),
+              children: renderCapabilityNode(findIDByName('异常检测', categoryData), capabilityData, 'anomaly')
+            },
+            {
+              key: 'timeseries_predict',
+              name: 'timeseries_predict',
+              selectable: false,
+              title: renderTitle({ name: t(`manage.timeseriesPredict`), categoryID: findIDByName('时序预测', categoryData), categoryType: 'timeseries_predict' }),
+              children: renderCapabilityNode(findIDByName('时序预测', categoryData), capabilityData, 'timeseries_predict')
+            },
+            {
+              key: 'log_clustering',
+              name: 'log_clustering',
+              selectable: false,
+              title: renderTitle({ name: t(`manage.logClustering`), categoryID: findIDByName('日志聚类', categoryData), categoryType: 'log_clustering' }),
+              children: renderCapabilityNode(findIDByName('日志聚类', categoryData), capabilityData, 'log_clustering')
+            },
+            {
+              key: 'classification',
+              name: 'classification',
+              selectable: false,
+              title: renderTitle({ name: t(`manage.classification`), categoryID: findIDByName('分类任务', categoryData), categoryType: 'classification' }),
+              children: renderCapabilityNode(findIDByName('分类任务', categoryData), capabilityData, 'classification')
             }
           ]
         },
@@ -224,7 +245,7 @@ const PlaygroundManage = () => {
         capability: item?.capability
       }));
       setTableData(data);
-      
+
     } catch (e) {
       console.log(e);
       message.error(t(`manage.getSampleFileError`));
@@ -291,7 +312,7 @@ const PlaygroundManage = () => {
                 <Menu.Item
                   className='!p-0'
                   onClick={() => {
-                    openCategoryModal({ type: `addCapability`, title: `addCapability`, form: { categoryID: data?.categoryID } })
+                    openCategoryModal({ type: `addCapability`, title: `addCapability`, form: { categoryID: data?.categoryID, categoryType: data?.categoryType } })
                   }}>
                   <PermissionWrapper requiredPermissions={['Capability Add']} className='!block'>
                     <Button type='text' className='w-full'>{t(`common.add`)}</Button>

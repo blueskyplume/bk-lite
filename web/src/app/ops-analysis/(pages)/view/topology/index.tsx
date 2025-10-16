@@ -7,16 +7,17 @@ import React, {
   useCallback,
 } from 'react';
 import styles from './index.module.scss';
+import { useTranslation } from '@/utils/i18n';
 import { Spin } from 'antd';
-import { PictureOutlined, MinusOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CloseOutlined } from '@ant-design/icons';
 import { v4 as uuidv4 } from 'uuid';
 import { useTopologyState } from './hooks/useTopologyState';
 import { useGraphOperations } from './hooks/useGraphOperations';
-import { useTextOperations } from './hooks/useTextOperations';
 import { useContextMenuAndModal } from './hooks/useGraphInteractions';
 import { useDataSourceManager } from '@/app/ops-analysis/hooks/useDataSource';
 import {
   NodeType,
+  NodeTypeId,
   DropPosition,
   ViewConfigFormValues,
   NodeConfigFormValues,
@@ -28,7 +29,6 @@ import TopologyToolbar from './components/toolbar';
 import ContextMenu from './components/contextMenu';
 import EdgeConfigPanel from './components/edgeConfPanel';
 import NodeSidebar from './components/nodeSidebar';
-import TextEditInput from './components/textEditInput';
 import NodeConfPanel from './components/nodeConfPanel';
 import ViewConfig from '../dashBoard/components/viewConfig';
 import ViewSelector from '../dashBoard/components/viewSelector';
@@ -49,6 +49,7 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
       y: number;
     } | null>(null);
     const [minimapVisible, setMinimapVisible] = useState(true);
+    const { t } = useTranslation();
     const state = useTopologyState();
     const dataSourceManager = useDataSourceManager();
 
@@ -65,18 +66,19 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
       handleLoadTopology,
       resizeCanvas,
       loading,
-      getEditNodeInitialValues,
       toggleEditMode,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+      startInitialization,
+      finishInitialization,
+      clearOperationHistory,
     } = useGraphOperations(
       containerRef,
       state,
       minimapContainerRef,
       minimapVisible
-    );
-
-    const { handleAddText, finishTextEdit, cancelTextEdit } = useTextOperations(
-      containerRef,
-      state
     );
 
     const { handleEdgeConfigConfirm, closeEdgeConfig, handleMenuClick } =
@@ -187,6 +189,9 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
           id: `node_${uuidv4()}`,
           type: selectedNodeType.id,
           name: values.name || selectedNodeType.name,
+          unit: values.unit,
+          conversionFactor: values.conversionFactor,
+          decimalPlaces: values.decimalPlaces,
           position: dropPosition,
           logoType: values.logoType,
           logoIcon: values.logoIcon,
@@ -205,8 +210,14 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
             borderWidth: values.borderWidth,
             textColor: values.textColor,
             fontSize: values.fontSize,
+            fontWeight: values.fontWeight,
+            renderEffect: values.renderEffect,
+            iconPadding: values.iconPadding,
             lineType: values.lineType,
             shapeType: values.shapeType,
+            nameColor: values.nameColor,
+            nameFontSize: values.nameFontSize,
+            thresholdColors: values.thresholdColors,
           },
         };
         addNewNode(nodeConfig);
@@ -216,24 +227,19 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
       handleNodeEditClose();
     };
 
-    const getNodeInitialValues = () => {
-      return addNodeVisible ? undefined : getEditNodeInitialValues();
-    };
-
-    const getNodeType = () => {
+    const getNodeType = (): NodeTypeId => {
       return addNodeVisible
-        ? (selectedNodeType?.id as 'single-value' | 'icon' | 'basic-shape')
-        : (state.editingNodeData?.type as
-            | 'single-value'
-            | 'icon'
-            | 'basic-shape');
+        ? (selectedNodeType?.id as NodeTypeId)
+        : (state.editingNodeData?.type as NodeTypeId);
     };
 
-    const getNodeTitle = () => {
-      return state.isEditMode ? '编辑节点' : '查看节点';
+    const getNodeTitle = (): string => {
+      return state.isEditMode
+        ? t('topology.nodeEditTitle')
+        : t('topology.nodeViewTitle');
     };
 
-    const getNodeReadonly = () => {
+    const getNodeReadonly = (): boolean => {
       return addNodeVisible ? false : !state.isEditMode;
     };
 
@@ -252,14 +258,22 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
     }));
 
     useEffect(() => {
+      state.resetAllStates();
+      startInitialization();
+      clearOperationHistory();
+
       if (selectedTopology?.data_id && state.graphInstance) {
-        handleLoadTopology(selectedTopology.data_id);
+        handleLoadTopology(selectedTopology.data_id).finally(() => {
+          setTimeout(() => {
+            finishInitialization();
+          }, 100);
+        });
+      } else if (!selectedTopology?.data_id && state.graphInstance) {
+        setTimeout(() => {
+          finishInitialization();
+        }, 100);
       }
     }, [selectedTopology?.data_id, state.graphInstance]);
-
-    useEffect(() => {
-      state.resetAllStates();
-    }, [selectedTopology?.data_id]);
 
     const handleSelectMode = () => {
       state.setIsSelectMode(!state.isSelectMode);
@@ -267,6 +281,26 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
         state.graphInstance.enableSelection();
       }
     };
+
+    // 键盘快捷键监听
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+          if (e.key === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            undo();
+          } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+            e.preventDefault();
+            redo();
+          }
+        }
+      };
+
+      document.addEventListener('keydown', handleKeyDown);
+      return () => {
+        document.removeEventListener('keydown', handleKeyDown);
+      };
+    }, [undo, redo]);
 
     return (
       <div
@@ -282,7 +316,10 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
           onFit={handleFit}
           onDelete={handleDelete}
           onSelectMode={handleSelectMode}
-          onAddText={handleAddText}
+          onUndo={undo}
+          onRedo={redo}
+          canUndo={canUndo}
+          canRedo={canRedo}
           isSelectMode={state.isSelectMode}
           isEditMode={state.isEditMode}
         />
@@ -323,13 +360,12 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
             {minimapVisible && (
               <div className={styles.minimapContainer}>
                 <div className={styles.minimapHeader}>
-                  <span></span>
                   <button
                     onClick={() => setMinimapVisible(false)}
                     className={styles.minimapCloseBtn}
-                    title="收起缩略图"
+                    title={t('topology.minimapCollapse')}
                   >
-                    <MinusOutlined />
+                    <CloseOutlined />
                   </button>
                 </div>
                 <div
@@ -342,21 +378,11 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
               <button
                 onClick={() => setMinimapVisible(true)}
                 className={styles.minimapShowBtn}
-                title="显示缩略图"
+                title={t('topology.minimapShow')}
               >
-                <PictureOutlined />
+                <AppstoreOutlined />
               </button>
             )}
-
-            <TextEditInput
-              isEditingText={state.isEditingText}
-              editPosition={state.editPosition}
-              inputWidth={state.inputWidth}
-              tempTextInput={state.tempTextInput}
-              setTempTextInput={state.setTempTextInput}
-              finishTextEdit={finishTextEdit}
-              cancelTextEdit={cancelTextEdit}
-            />
           </div>
         </div>
 
@@ -381,7 +407,7 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
           title={getNodeTitle()}
           nodeType={getNodeType()}
           readonly={getNodeReadonly()}
-          initialValues={getNodeInitialValues()}
+          editingNodeData={addNodeVisible ? null : state.editingNodeData}
           onClose={handleNodeEditClose}
           onConfirm={handleNodeConfirm}
           onCancel={handleNodeEditClose}

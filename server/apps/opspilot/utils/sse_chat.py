@@ -10,10 +10,10 @@ from django.http import StreamingHttpResponse
 
 from apps.core.logger import opspilot_logger as logger
 from apps.core.utils.async_utils import create_async_compatible_generator
-from apps.opspilot.bot_mgmt.utils import insert_skill_log
 from apps.opspilot.enum import SkillTypeChoices
-from apps.opspilot.model_provider_mgmt.services.llm_service import llm_service
-from apps.opspilot.models import LLMModel, TeamTokenUseInfo
+from apps.opspilot.models import LLMModel
+from apps.opspilot.services.llm_service import llm_service
+from apps.opspilot.utils.bot_utils import insert_skill_log
 from apps.opspilot.utils.chat_server_helper import ChatServerHelper
 
 
@@ -69,7 +69,14 @@ def _process_think_buffer(think_buffer, in_think_block):
     return "".join(output_chunks), think_buffer, in_think_block
 
 
-def _process_think_content(content_chunk, think_buffer, in_think_block, is_first_content, show_think, has_think_tags):
+def _process_think_content(
+    content_chunk,
+    think_buffer,
+    in_think_block,
+    is_first_content,
+    show_think,
+    has_think_tags,
+):
     """处理思考过程相关的内容过滤"""
     if show_think:
         return content_chunk, think_buffer, in_think_block, False, has_think_tags
@@ -120,8 +127,6 @@ def _create_error_chunk(error_message, skill_name):
 def _process_sse_line(
     line,
     accumulated_content,
-    prompt_tokens,
-    completion_tokens,
     think_buffer,
     in_think_block,
     is_first_content,
@@ -132,8 +137,6 @@ def _process_sse_line(
     if not line or not line.strip() or not line.startswith("data: "):
         return (
             accumulated_content,
-            prompt_tokens,
-            completion_tokens,
             think_buffer,
             in_think_block,
             is_first_content,
@@ -147,8 +150,6 @@ def _process_sse_line(
     if data_str.strip() == "[DONE]":
         return (
             accumulated_content,
-            prompt_tokens,
-            completion_tokens,
             think_buffer,
             in_think_block,
             is_first_content,
@@ -160,12 +161,6 @@ def _process_sse_line(
         data = json.loads(data_str)
         output_content = ""
 
-        # 收集token统计信息（在顶层）
-        if "prompt_tokens" in data:
-            prompt_tokens = data["prompt_tokens"]
-        if "completion_tokens" in data:
-            completion_tokens = data["completion_tokens"]
-
         # 检查是否有choices数组并且不为空
         if "choices" in data and data["choices"]:
             choice = data["choices"][0]
@@ -174,8 +169,6 @@ def _process_sse_line(
             if choice.get("finish_reason") == "stop":
                 return (
                     accumulated_content,
-                    prompt_tokens,
-                    completion_tokens,
                     think_buffer,
                     in_think_block,
                     is_first_content,
@@ -206,8 +199,6 @@ def _process_sse_line(
 
         return (
             accumulated_content,
-            prompt_tokens,
-            completion_tokens,
             think_buffer,
             in_think_block,
             is_first_content,
@@ -219,8 +210,6 @@ def _process_sse_line(
         # 忽略无效的JSON数据
         return (
             accumulated_content,
-            prompt_tokens,
-            completion_tokens,
             think_buffer,
             in_think_block,
             is_first_content,
@@ -232,27 +221,35 @@ def _process_sse_line(
 def _generate_sse_stream(url, headers, chat_kwargs, skill_name, show_think):
     """生成SSE流式数据"""
     accumulated_content = ""
-    prompt_tokens = 0
-    completion_tokens = 0
     think_buffer = ""
     in_think_block = False
     is_first_content = True
     has_think_tags = True
-    sse_headers = {**headers, "Accept": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive"}
+    sse_headers = {
+        **headers,
+        "Accept": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+    }
 
     # SSL验证配置 - 从环境变量读取
     ssl_verify = os.getenv("METIS_SSL_VERIFY", "false").lower() == "true"
 
     try:
-        res = requests.post(url, headers=sse_headers, json=chat_kwargs, timeout=300, verify=ssl_verify, stream=True)
+        res = requests.post(
+            url,
+            headers=sse_headers,
+            json=chat_kwargs,
+            timeout=300,
+            verify=ssl_verify,
+            stream=True,
+        )
         res.raise_for_status()
 
         for line in res.iter_lines(decode_unicode=True):
             result = _process_sse_line(
                 line,
                 accumulated_content,
-                prompt_tokens,
-                completion_tokens,
                 think_buffer,
                 in_think_block,
                 is_first_content,
@@ -261,8 +258,6 @@ def _generate_sse_stream(url, headers, chat_kwargs, skill_name, show_think):
             )
             (
                 accumulated_content,
-                prompt_tokens,
-                completion_tokens,
                 think_buffer,
                 in_think_block,
                 is_first_content,
@@ -286,19 +281,24 @@ def _generate_sse_stream(url, headers, chat_kwargs, skill_name, show_think):
         yield f"data: {json.dumps(final_chunk)}\n\n"
 
         # 使用特殊标识返回统计信息
-        yield ("STATS", accumulated_content, prompt_tokens, completion_tokens)
+        yield ("STATS", accumulated_content)
 
     except Exception as e:
         logger.error(f"SSE stream error: {e}")
         error_chunk = _create_error_chunk(f"流式处理错误: {str(e)}", skill_name)
         yield f"data: {json.dumps(error_chunk)}\n\n"
-        yield ("STATS", "", 0, 0)
+        yield ("STATS", "")
 
 
 def _log_and_update_tokens_sync(
-    final_stats, skill_name, skill_id, current_ip, kwargs, user_message, show_think, group, llm_model
+    final_stats,
+    skill_name,
+    skill_id,
+    current_ip,
+    kwargs,
+    user_message,
+    show_think,
 ):
-    """同步记录日志和更新token使用量"""
     try:
         # 处理最终内容
         final_content = final_stats["content"]
@@ -311,36 +311,25 @@ def _log_and_update_tokens_sync(
             "object": "chat.completion",
             "created": int(time.time()),
             "model": skill_name,
-            "usage": {
-                "prompt_tokens": final_stats["prompt_tokens"],
-                "completion_tokens": final_stats["completion_tokens"],
-                "total_tokens": final_stats["prompt_tokens"] + final_stats["completion_tokens"],
-            },
             "choices": [
-                {"message": {"role": "assistant", "content": final_content}, "finish_reason": "stop", "index": 0}
+                {
+                    "message": {"role": "assistant", "content": final_content},
+                    "finish_reason": "stop",
+                    "index": 0,
+                }
             ],
         }
 
         insert_skill_log(current_ip, skill_id, log_data, kwargs, user_message=user_message)
 
-        # 更新token使用量
-        used_token = final_stats["prompt_tokens"] + final_stats["completion_tokens"]
-
-        team_info, is_created = TeamTokenUseInfo.objects.get_or_create(
-            group=group, llm_model=llm_model.name, defaults={"used_token": used_token}
-        )
-        if not is_created:
-            team_info.used_token += used_token
-            team_info.save()
-
     except Exception as e:
-        logger.error(f"Log and token update error: {e}")
+        logger.error(f"Log update error: {e}")
 
 
 def stream_chat(params, skill_name, kwargs, current_ip, user_message, skill_id=None):
     llm_model = LLMModel.objects.get(id=params["llm_model"])
     show_think = params.pop("show_think", True)
-    group = params.pop("group", 0)
+    params.pop("group", 0)
 
     chat_kwargs, doc_map, title_map = llm_service.format_chat_server_kwargs(params, llm_model)
 
@@ -353,7 +342,7 @@ def stream_chat(params, skill_name, kwargs, current_ip, user_message, skill_id=N
         url = f"{settings.METIS_SERVER_URL}/api/agent/invoke_lats_agent_sse"
 
     # 用于存储最终统计信息的共享变量
-    final_stats = {"content": "", "prompt_tokens": 0, "completion_tokens": 0}
+    final_stats = {"content": ""}
 
     def generate_stream():
         try:
@@ -363,14 +352,13 @@ def stream_chat(params, skill_name, kwargs, current_ip, user_message, skill_id=N
             for chunk in stream_gen:
                 if isinstance(chunk, tuple) and chunk[0] == "STATS":
                     # 收集统计信息
-                    _, final_stats["content"], final_stats["prompt_tokens"], final_stats["completion_tokens"] = chunk
-                    logger.info(
-                        f"Token statistics - prompt: {final_stats['prompt_tokens']}, "
-                        f"completion: {final_stats['completion_tokens']}"
-                    )
+                    (
+                        _,
+                        final_stats["content"],
+                    ) = chunk
 
                     # 在流结束时同步处理日志记录
-                    if final_stats["content"] or final_stats["prompt_tokens"] or final_stats["completion_tokens"]:
+                    if final_stats["content"]:
                         # 使用线程异步处理日志记录，避免阻塞流式响应
                         def log_in_background():
                             _log_and_update_tokens_sync(
@@ -381,8 +369,6 @@ def stream_chat(params, skill_name, kwargs, current_ip, user_message, skill_id=N
                                 kwargs,
                                 user_message,
                                 show_think,
-                                group,
-                                llm_model,
                             )
 
                         threading.Thread(target=log_in_background, daemon=True).start()

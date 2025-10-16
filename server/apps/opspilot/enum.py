@@ -14,6 +14,7 @@ class ChannelChoices(models.TextChoices):
 class BotTypeChoice(models.IntegerChoices):
     PILOT = (1, _("Pilot"))
     LOBE = (2, _("LobeChat"))
+    CHAT_FLOW = (3, _("ChatFlow"))
 
 
 class SkillTypeChoices(models.IntegerChoices):
@@ -51,3 +52,16 @@ class ActionChoice(object):
     USE_KNOWLEDGE = 0
 
     CHOICE = ((USE_KNOWLEDGE, _("Use specified knowledge base")),)
+
+
+class WorkFlowExecuteType(models.TextChoices):
+    """工作流执行类型枚举"""
+    OPENAI = "openai", _("OpenAI")
+    RESTFUL = "restful", _("RESTful")
+    CELERY = "celery", _("Celery")
+
+
+class WorkFlowTaskStatus(models.TextChoices):
+    """工作流任务状态枚举"""
+    SUCCESS = "success", _("Success")
+    FAIL = "fail", _("Fail")

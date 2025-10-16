@@ -31,17 +31,19 @@ const UserModal = forwardRef<ModalRef, ModalProps>(({ onSuccess, treeData }, ref
   const [currentUserId, setCurrentUserId] = useState('');
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [type, setType] = useState<'add' | 'edit'>('add');
   const [roleTreeData, setRoleTreeData] = useState<TreeDataNode[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<number[]>([]);
-  const [groupRules, setGroupRules] = useState<{ [key: string]: number[] }>({});
+  const [groupRules, setGroupRules] = useState<{ [key: string]: { [app: string]: number } }>({});
 
   const { addUser, editUser, getUserDetail, getRoleList } = useUserApi();
 
   const fetchRoleInfo = async () => {
     try {
+      setRoleLoading(true);
       const roleData = await getRoleList({ client_list: clientData });
       setRoleTreeData(
         roleData.map((item: any) => ({
@@ -57,6 +59,8 @@ const UserModal = forwardRef<ModalRef, ModalProps>(({ onSuccess, treeData }, ref
       );
     } catch {
       message.error(t('common.fetchFailed'));
+    } finally {
+      setRoleLoading(false);
     }
   };
 
@@ -77,7 +81,7 @@ const UserModal = forwardRef<ModalRef, ModalProps>(({ onSuccess, treeData }, ref
         setSelectedRoles(userDetail.roles?.map((role: { role_id: number }) => role.role_id) || []);
         setSelectedGroups(userDetail.groups?.map((group: { id: number }) => group.id) || []);
 
-        const groupRulesObj = userDetail.groups?.reduce((acc: { [key: string]: { [key: string]: number[] } }, group: { id: number; rules: { [key: string]: number[] } }) => {
+        const groupRulesObj = userDetail.groups?.reduce((acc: { [key: string]: { [app: string]: number } }, group: { id: number; rules: { [key: string]: number } }) => {
           acc[group.id] = group.rules || {};
           return acc;
         }, {});
@@ -117,12 +121,16 @@ const UserModal = forwardRef<ModalRef, ModalProps>(({ onSuccess, treeData }, ref
       setIsSubmitting(true);
       const formData = await formRef.current?.validateFields();
       const { zoneinfo, ...restData } = formData;
+      
+      // 修复 rules 数据处理逻辑，将 groupRules 转换为正确的格式
+      const rules = Object.values(groupRules)
+        .filter(group => group && typeof group === 'object' && Object.keys(group).length > 0)
+        .flatMap(group => Object.values(group))
+        .filter(rule => typeof rule === 'number');
+
       const payload = {
         ...restData,
-        rules: Object.values(groupRules)
-          .filter(group => group && typeof group === 'object' && Object.keys(group).length > 0)
-          .flatMap(group => Object.values(group))
-          .flat(),
+        rules,
         timezone: zoneinfo, 
       };
       if (type === 'add') {
@@ -157,7 +165,7 @@ const UserModal = forwardRef<ModalRef, ModalProps>(({ onSuccess, treeData }, ref
 
   const filteredTreeData = treeData ? transformTreeData(treeData) : [];
 
-  const handleChangeRule = (newKey: number, newRules: number[]) => {
+  const handleChangeRule = (newKey: number, newRules: { [app: string]: number }) => {
     setGroupRules({
       ...groupRules,
       [newKey]: newRules
@@ -254,6 +262,7 @@ const UserModal = forwardRef<ModalRef, ModalProps>(({ onSuccess, treeData }, ref
               groupRules={groupRules}
               treeData={roleTreeData}
               selectedKeys={selectedRoles}
+              loading={roleLoading}
               onChange={newKeys => {
                 setSelectedRoles(newKeys);
                 formRef.current?.setFieldsValue({ roles: newKeys });

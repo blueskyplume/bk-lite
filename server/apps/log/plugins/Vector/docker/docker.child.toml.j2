@@ -11,26 +11,16 @@ include_containers = [{{ include_containers | map('tojson') | join(', ') }}]
 exclude_containers = [{{ exclude_containers | map('tojson') | join(', ') }}]
 {% endif %}
 
-{% if start_pattern %}
-[transforms.multiline_{{ instance_id }}]
-type = "multiline"
-inputs = ["docker_{{ instance_id }}"]
-start_pattern = '{{ start_pattern }}'
-mode = "halt_before"
 
+{% if multiline %}
 # ====================================
-# enrich（字段补全）
+# 多行日志处理
 # ====================================
-[transforms.docker_enrich_{{ instance_id }}]
-type = "remap"
-inputs = ["multiline_{{ instance_id }}"]
-source = '''
-.collect_type = "docker"
-.instance_id = "{{ instance_id }}"
-.streams = ["default"]
-'''
-
-{% else %}
+multiline.condition_pattern = '{{ multiline.condition_pattern }}'
+multiline.mode = "{{ multiline.mode }}"
+multiline.start_pattern = '{{ multiline.start_pattern }}'
+multiline.timeout_ms = {{ multiline.timeout_ms }}
+{% endif %}
 
 # ====================================
 # enrich（字段补全）
@@ -39,50 +29,10 @@ source = '''
 type = "remap"
 inputs = ["docker_{{ instance_id }}"]
 source = '''
+.collector = "Vector"
 .collect_type = "docker"
 .instance_id = "{{ instance_id }}"
-.streams = ["default"]
 '''
-
-{% endif %}
-
-
-{% if streams %}
-# ====================================
-# 日志数据流
-# ====================================
-
-[transforms.router_{{ instance_id }}]
-type = "route"
-inputs = ["docker_enrich_{{ instance_id }}"]
-{% for route in streams %}
-route.{{ instance_id }}_{{ route.stream_id }} = '{{ route.condition }}'
-{% endfor %}
-
-{% for stream in streams %}
-[transforms.{{ instance_id }}_{{ stream.stream_id }}]
-type = "remap"
-inputs = ["router_{{ instance_id }}.{{ instance_id }}_{{ stream.stream_id }}"]
-source = '''
-.streams = push!(get!(.streams, []), "{{ stream.stream_id }}")
-'''
-{% endfor %}
-
-# ====================================
-# sinks
-# ====================================
-
-[sinks.vmlogs_{{ instance_id }}]
-type = "nats"
-inputs = [
-    {% for stream in streams %}
-    "{{ instance_id }}_{{ stream.stream_id }}",
-    {% endfor %}
-]
-subject = "vector"
-url = "nats://${NATS_SERVERS}"
-
-{% else %}
 
 # ====================================
 # sinks
@@ -91,9 +41,7 @@ url = "nats://${NATS_SERVERS}"
 type = "nats"
 inputs = ["docker_enrich_{{ instance_id }}"]
 subject = "vector"
-url = "nats://${NATS_SERVERS}"
-
-{% endif %}
+url = "${NATS_PROTOCOL}://${NATS_SERVERS}"
 
 [sinks.vmlogs_{{ instance_id }}.auth]
 strategy = "user_password"

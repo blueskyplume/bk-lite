@@ -102,12 +102,19 @@ const UpdateConfig = forwardRef<ModalRef, ModalProps>(({ onSuccess }, ref) => {
   };
 
   const operateConfig = async (params: TableDataItem) => {
-    const data = {
-      instance_id: formData.id,
-      collect_type_id: formData.collect_type_id,
-      ...configsInfo.getParams(params, configForm),
-    };
     try {
+      const { id, content_data } = configsInfo.getParams(
+        params,
+        configForm
+      ).child;
+      const data = {
+        instance_id: formData.id,
+        collect_type_id: formData.collect_type_id,
+        child: {
+          id,
+          content_data,
+        },
+      };
       setConfirmLoading(true);
       await updateInstanceCollectConfig(data);
       message.success(t('common.successfullyModified'));
@@ -122,7 +129,7 @@ const UpdateConfig = forwardRef<ModalRef, ModalProps>(({ onSuccess }, ref) => {
 
   return (
     <OperateModal
-      width={400}
+      width={500}
       title={title}
       visible={modalVisible}
       onCancel={handleCancel}

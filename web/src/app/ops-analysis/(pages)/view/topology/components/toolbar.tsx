@@ -1,32 +1,19 @@
 import React from 'react';
 import { Button, Tooltip } from 'antd';
 import { useTranslation } from '@/utils/i18n';
-import { DirItem } from '@/app/ops-analysis/types';
+import { ToolbarProps } from '@/app/ops-analysis/types/topology';
 import {
   ZoomInOutlined,
   ZoomOutOutlined,
   FullscreenOutlined,
   DeleteOutlined,
   SelectOutlined,
-  FontSizeOutlined,
   EditOutlined,
+  UndoOutlined,
+  RedoOutlined,
 } from '@ant-design/icons';
 
-interface Props {
-  isSelectMode: boolean;
-  isEditMode?: boolean;
-  selectedTopology?: DirItem | null;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onEdit: () => void;
-  onSave: () => void;
-  onFit: () => void;
-  onDelete: () => void;
-  onSelectMode: () => void;
-  onAddText: () => void;
-}
-
-const TopologyToolbar: React.FC<Props> = ({
+const TopologyToolbar: React.FC<ToolbarProps> = ({
   isSelectMode,
   isEditMode = false,
   selectedTopology,
@@ -37,24 +24,25 @@ const TopologyToolbar: React.FC<Props> = ({
   onFit,
   onDelete,
   onSelectMode,
-  onAddText,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }) => {
   const { t } = useTranslation();
 
   return (
-    <div className="w-full mb-4 flex items-center justify-between rounded-lg shadow-sm bg-[var(--color-bg-1)] p-4 border border-[var(--color-border-2)]">
+    <div className="w-full mb-2 flex items-center justify-between rounded-lg shadow-sm bg-[var(--color-bg-1)] p-3 border border-[var(--color-border-2)]">
       {/* 左侧：拓扑信息 */}
       <div className="flex-1 mr-8">
         {selectedTopology && (
-          <div>
-            <h2 className="text-xl font-semibold mb-1 text-[var(--color-text-1)] flex items-center">
+          <div className="p-1 pt-0">
+            <h2 className="text-lg font-semibold mb-1 text-[var(--color-text-1)]">
               {selectedTopology.name}
             </h2>
-            {selectedTopology.description && (
-              <p className="text-sm text-[var(--color-text-2)]">
-                {selectedTopology.description}
-              </p>
-            )}
+            <p className="text-sm text-[var(--color-text-2)]">
+              {selectedTopology.desc}
+            </p>
           </div>
         )}
       </div>
@@ -85,11 +73,20 @@ const TopologyToolbar: React.FC<Props> = ({
 
         {isEditMode && (
           <>
-            <Tooltip title={t('topology.addText')}>
+            <Tooltip title={t('topology.undo')}>
               <Button
                 type="text"
-                icon={<FontSizeOutlined style={{ fontSize: 16 }} />}
-                onClick={onAddText}
+                icon={<UndoOutlined style={{ fontSize: 16 }} />}
+                onClick={onUndo}
+                disabled={!canUndo}
+              />
+            </Tooltip>
+            <Tooltip title={t('topology.redo')}>
+              <Button
+                type="text"
+                icon={<RedoOutlined style={{ fontSize: 16 }} />}
+                onClick={onRedo}
+                disabled={!canRedo}
               />
             </Tooltip>
             <Tooltip title={t('topology.selectMode')}>

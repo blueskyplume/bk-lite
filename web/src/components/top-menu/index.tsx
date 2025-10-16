@@ -22,10 +22,11 @@ const TopMenu = () => {
   const { menus: menuItems } = usePermissions();
   const pathname = usePathname();
   const {
-    modelExpList,
+    renderMenu,
     loading: modelExpLoading,
     error: modelExpError,
-    reload } = useModelExperience(pathname?.startsWith('/playground'));
+    reload,
+    isDataReady } = useModelExperience(pathname?.startsWith('/playground'));
   const { clientData, loading } = useClientData();
   const { userId } = useUserInfoContext();
   const [tourOpen, setTourOpen] = useState(false);
@@ -135,37 +136,73 @@ const TopMenu = () => {
   };
 
   const renderSubMenuPanel = useMemo(() => {
-    if (modelExpLoading) return;
-    const renderMenu = () => (
-      modelExpList?.map((item: any, index: number) => {
-        return (
-          <div key={`category_${index}`}>
-            <h3 className='text-base font-bold mb-4'>{item.name}</h3>
-            <div className='flex flex-wrap justify-between'>
-              {item?.children && item.children.map((child: any) => {
-                return (
-                  <div key={`child_${child?.id}`} className='mr-2 mb-4 w-[150px]'>
-                    <Link href={child.url} prefetch={false}>
-                      <div className={`${styles.menuItem} flex items-center cursor-pointer text-sm`}>
-                        <span>{child.name}</span>
+    if (modelExpLoading) {
+      return (
+        <div className='w-[600px] max-w-[80vw] h-32 bg-white rounded-lg shadow-lg border border-gray-200 flex items-center justify-center'>
+          <Spin tip="加载中..." />
+        </div>
+      );
+    }
+
+    const menuData = isDataReady ? renderMenu() : [];
+
+    if (menuData.length === 0) {
+      return (
+        <div className='max-w-[80vw] h-32 bg-white rounded-lg shadow-lg border border-gray-200 flex items-center justify-center'>
+          <div className="text-gray-500 text-sm">暂无可用服务</div>
+        </div>
+      );
+    }
+
+    const renderMenuItems = () => (
+      <div className="flex flex-wrap">
+        {menuData.map(({ category, capabilities }) => (
+          <div key={category.id} className="w-[150px] mr-6">
+            <h3 className='text-sm font-semibold pb-1 border-b text-gray-900 mb-3'>{category.name}</h3>
+            <div className='flex flex-col gap-2'>
+              {capabilities.map((child: any) => (
+                <Link key={`child_${child?.id}`} href={child.url} prefetch={false}>
+                  <div className="group rounded-lg hover:text-blue-50 transition-all duration-200 cursor-pointer h-full">
+                    <div className="flex items-start space-x-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs group-hover:text-blue-700 truncate">
+                          {child.name}
+                        </h4>
+                        {/* <p className="text-xs text-gray-500 group-hover:text-blue-600 mt-1 leading-relaxed overflow-hidden text-ellipsis"
+                          style={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical' as const
+                          }}>
+                          {child.description}
+                        </p> */}
                       </div>
-                      <p className='truncate text-[--color-text-3] text-sm'>{child.description}</p>
-                    </Link>
+                      {/* <div className="flex-shrink-0">
+                        <svg
+                          className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors duration-200"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div> */}
+                    </div>
                   </div>
-                )
-              })}
+                </Link>
+              ))}
             </div>
           </div>
-        )
-      })
-    )
-
-    return (
-      <div className='flex max-w-[80vw] ml-6 max-h-[80vh] overflow-y-auto'>
-        <div>{renderMenu()}</div>
+        ))}
       </div>
     );
-  }, [modelExpList, modelExpLoading, modelExpError, reload]);
+
+    return (
+      <div className='max-w-[100vw] max-h-[70vh] overflow-y-auto bg-white rounded-lg p-4'>
+        {renderMenuItems()}
+      </div>
+    );
+  }, [modelExpLoading, modelExpError, isDataReady, renderMenu, reload]);
 
   const renderContent = loading ? (
     <div className="flex justify-center items-center h-32">
@@ -225,7 +262,7 @@ const TopMenu = () => {
             .map((item: MenuItem) => {
               const isActive = item.url === '/' ? pathname === '/' : pathname?.startsWith(item.url);
 
-              if (isOtherMode && item.name === 'capabilities') {
+              if (isOtherMode && item.name === 'experience') {
 
                 return (
                   <Popover
@@ -238,7 +275,7 @@ const TopMenu = () => {
                   >
                     <div>
                       <Link
-                        href={item.url}
+                        href={"#"}
                         prefetch={false} legacyBehavior>
                         <a
                           ref={menuRefs.current[item.url] || null}

@@ -38,7 +38,7 @@ class MonitorInstance(TimeInfo, MaintainerInfo):
 
 class MonitorInstanceOrganization(TimeInfo, MaintainerInfo):
     monitor_instance = models.ForeignKey(MonitorInstance, on_delete=models.CASCADE, verbose_name='监控对象实例')
-    organization = models.CharField(max_length=100, verbose_name='组织id')
+    organization = models.IntegerField(verbose_name='组织id')
 
     class Meta:
         verbose_name = '监控对象实例组织'
@@ -52,3 +52,4 @@ class MonitorObjectOrganizationRule(TimeInfo, MaintainerInfo):
     organizations = models.JSONField(default=list, verbose_name='所属组织')
     rule = models.JSONField(default=dict, verbose_name='分组规则详情')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
+    monitor_instance_id = models.CharField(db_index=True, max_length=200, default="", verbose_name='关联监控对象实例ID')

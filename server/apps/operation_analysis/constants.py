@@ -2,6 +2,7 @@
 # @File: constants.py
 # @Time: 2025/7/14 16:02
 # @Author: windyzhao
+import os
 
 
 class DashboardType:
@@ -32,3 +33,19 @@ class DashboardType:
         (MAP, "地图"),
         (TEXT, "文本")
     ]
+
+
+class TopologyType:
+    """
+    拓扑类型
+    """
+    SINGLE = "single"
+    ICONS = "icons"
+
+    CHOICES = [
+        (SINGLE, "单一节点"),
+        (ICONS, "图标拓扑")
+    ]
+
+
+SECRET_KEY = os.getenv("SECRET_KEY", "operation_analysis_secret_key_2025")

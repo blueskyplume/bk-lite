@@ -1,5 +1,5 @@
 import React from 'react';
-import { Input, Select, Button } from 'antd';
+import { Input, Select, Button, Tooltip } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { TableDataItem } from '@/app/log/types';
 import { IntegrationLogInstance } from '@/app/log/types/integration';
@@ -11,7 +11,6 @@ const useCommonColumns = () => {
 
   return {
     getCommonColumns: (config: {
-      nodesLoading: boolean;
       nodeList: TableDataItem[];
       dataSource: TableDataItem[];
       initTableItems: IntegrationLogInstance;
@@ -51,11 +50,15 @@ const useCommonColumns = () => {
         config.onTableDataChange(_dataSource);
       };
 
-      const handleAdd = (key: string) => {
-        const index = config.dataSource.findIndex((item) => item.key === key);
+      const handleAdd = (id: string) => {
+        const index = config.dataSource.findIndex(
+          (item) => item.instance_id === id
+        );
         const newData = {
           ...config.initTableItems,
-          instance_id: uuidv4(),
+          instance_id: replaceDynamicUUID(
+            config.initTableItems?.instance_id || ''
+          ),
         };
         const updatedData = [...config.dataSource];
         updatedData.splice(index + 1, 0, newData); // 在当前行下方插入新数据
@@ -64,22 +67,41 @@ const useCommonColumns = () => {
 
       const handleCopy = (row: IntegrationLogInstance) => {
         const index = config.dataSource.findIndex(
-          (item) => item.key === row.key
+          (item) => item.instance_id === row.instance_id
         );
         const newData: IntegrationLogInstance = {
           ...row,
-          instance_id: uuidv4(),
+          instance_id: replaceDynamicUUID(
+            config.initTableItems?.instance_id || ''
+          ),
         };
         const updatedData = [...config.dataSource];
         updatedData.splice(index + 1, 0, newData);
         config.onTableDataChange(updatedData);
       };
 
-      const handleDelete = (key: string) => {
+      const handleDelete = (id: string) => {
         const updatedData = config.dataSource.filter(
-          (item) => item.key !== key
+          (item) => item.instance_id !== id
         );
         config.onTableDataChange(updatedData);
+      };
+
+      const replaceDynamicUUID = (
+        originalStr: string,
+        prefixPattern = '.*'
+      ) => {
+        // UUID格式（8-4-4-4-12）
+        const uuidRegex =
+          /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i;
+        // 构建完整正则：前缀 + UUID
+        const dynamicRegex = new RegExp(
+          `(${prefixPattern}-)${uuidRegex.source}`
+        );
+        if (!dynamicRegex.test(originalStr)) {
+          return uuidv4();
+        }
+        return originalStr.replace(dynamicRegex, `$1${uuidv4()}`);
       };
 
       return [
@@ -91,7 +113,6 @@ const useCommonColumns = () => {
           render: (_: unknown, record: TableDataItem, index: number) => (
             <Select
               showSearch
-              loading={config.nodesLoading}
               value={record.node_ids}
               onChange={(val) => handleFilterNodeChange(val, index)}
               filterOption={(input, option) =>
@@ -124,7 +145,18 @@ const useCommonColumns = () => {
           ),
         },
         {
-          title: t('common.group'),
+          title: (
+            <Tooltip title={t('log.integration.belongingGroupTips')}>
+              {
+                <span
+                  className="pb-[2px]"
+                  style={{ borderBottom: '1px dashed var(--color-border-4)' }}
+                >
+                  {t('common.belongingGroup')}
+                </span>
+              }
+            </Tooltip>
+          ),
           dataIndex: 'group_ids',
           key: 'group_ids',
           width: 200,
@@ -146,7 +178,7 @@ const useCommonColumns = () => {
               <Button
                 type="link"
                 className="mr-[10px]"
-                onClick={() => handleAdd(record.key)}
+                onClick={() => handleAdd(record.instance_id)}
               >
                 {t('common.add')}
               </Button>
@@ -158,7 +190,10 @@ const useCommonColumns = () => {
                 {t('common.copy')}
               </Button>
               {!!index && (
-                <Button type="link" onClick={() => handleDelete(record.key)}>
+                <Button
+                  type="link"
+                  onClick={() => handleDelete(record.instance_id)}
+                >
                   {t('common.delete')}
                 </Button>
               )}

@@ -101,6 +101,7 @@ class AlertStatus:
     PROCESSING = "processing"
     CLOSED = "closed"
     UNASSIGNED = "unassigned"
+    AUTO_CLOSE = "auto_close"
 
     CHOICES = (
         (PENDING, "待响应"),
@@ -108,8 +109,10 @@ class AlertStatus:
         (RESOLVED, "已处理"),
         (CLOSED, "已关闭"),
         (UNASSIGNED, "未分派"),
+        (AUTO_CLOSE, "自动关闭"),
     )
     ACTIVATE_STATUS = (PENDING, PROCESSING, UNASSIGNED)
+    CLOSED_STATUS = (CLOSED, AUTO_CLOSE)
 
 
 class AlertOperate:
@@ -117,13 +120,13 @@ class AlertOperate:
     ACKNOWLEDGE = "acknowledge"
     CLOSE = "close"
     REASSIGN = "reassign"
-    Assign = "assign"
+    ASSIGN = "assign"
 
     CHOICES = (
         (ACKNOWLEDGE, "认领"),
         (CLOSE, "关闭"),
         (REASSIGN, "转派"),
-        (Assign, "分派"),
+        (ASSIGN, "分派"),
     )
 
 
@@ -388,4 +391,34 @@ class LogAction:
         (MODIFY, "修改"),
         (DELETE, "删除"),
         (EXECUTE, "执行")
+    )
+
+
+class WindowType:
+    """
+    窗口类型
+    """
+    SLIDING = "sliding"
+    FIXED = "fixed"
+    SESSION = "session"
+
+    CHOICES = (
+        (SLIDING, '滑动窗口'),
+        (FIXED, '固定窗口'),
+        (SESSION, '会话窗口'),
+    )
+
+
+class Alignment:
+    """
+    窗口对齐方式
+    """
+    DAY = "day"
+    HOUR = "hour"
+    MINUTE = "minute"
+
+    CHOICES = (
+        (DAY, '天对齐'),
+        (HOUR, '小时对齐'),
+        (MINUTE, '分钟对齐'),
     )

@@ -5,7 +5,7 @@ import CustomTable from '@/components/custom-table';
 import AlarmAction from './alarmAction';
 import AlertDetail from './alarmDetail';
 import Icon from '@/components/icon';
-import UserAvatar from '@/app/alarm/components/userAvatar';
+import UserAvatar from '@/components/user-avatar';
 import type { ColumnsType } from 'antd/es/table';
 import { Tag, Button } from 'antd';
 import { AlarmTableProps } from '@/app/alarm/types/alarms';
@@ -117,7 +117,7 @@ const AlarmTable: React.FC<AlarmTableProps> = ({
       width: 170,
     },
     {
-      title: t('common.operator'),
+      title: t('alarmCommon.operator'),
       dataIndex: 'operator_user',
       key: 'operator_user',
       width: 200,
@@ -144,13 +144,19 @@ const AlarmTable: React.FC<AlarmTableProps> = ({
       },
     },
     {
+      title: t('alarms.ruleId'),
+      dataIndex: 'rule_id',
+      key: 'rule_id',
+      width: 250,
+    },
+    {
       title: t('alarms.alertContent'),
       dataIndex: 'content',
       key: 'content',
       width: 250,
     },
     {
-      title: t('common.action'),
+      title: t('alarmCommon.action'),
       key: 'action',
       fixed: 'right',
       width: 220,

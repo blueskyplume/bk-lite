@@ -72,6 +72,9 @@ ENUM = "enum"
 USER = "user"
 ORGANIZATION = "organization"
 
+# 模型内置属性：组织
+INIT_MODEL_GROUP = "group"
+
 # 默认的实例名属性
 INST_NAME_INFOS = [
     {
@@ -118,7 +121,7 @@ CREATE_MODEL_CHECK_ATTR = dict(
 UPDATE_MODEL_CHECK_ATTR_MAP = dict(
     is_only={"model_name": "模型名称"},
     is_required={"model_name": "模型名称"},
-    editable={"model_name": "模型名称", "classification_id": "模型分类ID", "icn": "图标"},
+    editable={"model_name": "模型名称", "classification_id": "模型分类ID", "icn": "图标", "group": "组织"},
 )
 
 # 需要进行类型转换的数据类型
@@ -144,6 +147,17 @@ SUBORDINATE_MODEL = "subordinate_model"
 
 # 加密的属性列表
 ENCRYPTED_KEY = {"password", "secret_key", "encryption_key"}
+
+ATTR_TYPE_MAP = {
+    "str": "字符串",
+    "int": "整数",
+    "enum": "枚举",
+    "time": "时间",
+    "user": " 用户",
+    "pwd": "密码",
+    "bool": "布尔",
+    "organization": "组织"
+}
 
 # ===================
 
@@ -190,7 +204,7 @@ class CollectPluginTypes(object):
     CLOUD = "cloud"
     PROTOCOL = "protocol"
     HOST = "host"
-    REDIS = "redis"
+    DB = "db"
     MIDDLEWARE = "middleware"
     IP = "ip"
     OTHER = "other"
@@ -202,7 +216,7 @@ class CollectPluginTypes(object):
         (CLOUD, "云采集"),
         (PROTOCOL, "协议采集"),
         (HOST, "主机采集"),
-        (REDIS, "Redis采集"),
+        (DB, "数据库采集"),
         (MIDDLEWARE, "中间件采集"),
         (IP, "IP采集"),
         (OTHER, "其他采集"),
@@ -281,7 +295,7 @@ COLLECT_OBJ_TREE = [
                 "id": "redis",
                 "model_id": "redis",
                 "name": "Redis",
-                "task_type": CollectPluginTypes.REDIS,
+                "task_type": CollectPluginTypes.DB,
                 "type": CollectDriverTypes.JOB,
             }
         ],
@@ -333,3 +347,10 @@ COLLECT_OBJ_TREE = [
 VICTORIAMETRICS_HOST = os.getenv("VICTORIAMETRICS_HOST", "")
 
 STARGAZER_URL = os.getenv("STARGAZER_URL", "http://stargazer:8083")
+# ===== 实例权限 =====
+PERMISSION_INSTANCES = "instances"  # 实例
+PERMISSION_TASK = "task"  # 采集任务
+PERMISSION_MODEL = "model"  # 模型
+OPERATE = "Operate"
+VIEW = "View"
+APP_NAME = "cmdb"

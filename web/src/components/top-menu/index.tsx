@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Popover, Spin, Tour } from 'antd';
 import { CaretDownFilled } from '@ant-design/icons';
 import { useTranslation } from '@/utils/i18n';
+import useModelExperience from '@/app/playground/hooks/useModelExperience';
 import { usePermissions } from '@/context/permissions';
 import { useClientData } from '@/context/client';
 import { useUserInfoContext } from '@/context/userInfo';
 import styles from './index.module.scss';
 import type { TourProps } from 'antd';
-import { TourItem } from '@/types/index';
+import { TourItem, MenuItem, ClientData } from '@/types/index';
 import UserInfo from '../user-info';
 import Icon from '@/components/icon';
 
@@ -20,6 +21,12 @@ const TopMenu = () => {
   const { t } = useTranslation();
   const { menus: menuItems } = usePermissions();
   const pathname = usePathname();
+  const {
+    renderMenu,
+    loading: modelExpLoading,
+    error: modelExpError,
+    reload,
+    isDataReady } = useModelExperience(pathname?.startsWith('/playground'));
   const { clientData, loading } = useClientData();
   const { userId } = useUserInfoContext();
   const [tourOpen, setTourOpen] = useState(false);
@@ -29,12 +36,14 @@ const TopMenu = () => {
 
   const menuRefs = useRef<{ [key: string]: React.RefObject<HTMLAnchorElement> }>({});
 
+  const isOtherMode = pathname?.startsWith('/playground');
+
   const getTourViewedKey = () => {
     return `${userId}_${TOUR_VIEWED_KEY_PREFIX}`;
   };
 
   useEffect(() => {
-    menuItems.forEach((item) => {
+    menuItems.forEach((item: MenuItem) => {
       if (item.tour && !menuRefs.current[item.url]) {
         menuRefs.current[item.url] = React.createRef();
       }
@@ -57,15 +66,15 @@ const TopMenu = () => {
 
   const prepareTourSteps = () => {
     const tours = menuItems
-      .filter(item => item.tour)
-      .map(item => ({
+      .filter((item: MenuItem) => item.tour)
+      .map((item: MenuItem) => ({
         menuItem: item,
         tour: item.tour as TourItem
       }))
-      .sort((a, b) => a.tour.order - b.tour.order);
+      .sort((a: { menuItem: MenuItem; tour: TourItem }, b: { menuItem: MenuItem; tour: TourItem }) => a.tour.order - b.tour.order);
 
     if (tours.length > 0) {
-      const steps = tours.map(({ menuItem, tour }) => {
+      const steps = tours.map(({ menuItem, tour }: { menuItem: MenuItem; tour: TourItem }) => {
         const step: NonNullable<TourProps['steps']>[0] = {
           title: tour.title,
           description: tour.description,
@@ -104,7 +113,7 @@ const TopMenu = () => {
     }
   };
 
-  const handleTourChange: TourProps['onChange'] = (current) => {
+  const handleTourChange: TourProps['onChange'] = (current: number) => {
     setCurrentStep(current);
   };
 
@@ -126,13 +135,82 @@ const TopMenu = () => {
     window.open('https://github.com/TencentBlueKing/bk-lite', '_blank');
   };
 
+  const renderSubMenuPanel = useMemo(() => {
+    if (modelExpLoading) {
+      return (
+        <div className='w-[600px] max-w-[80vw] h-32 bg-white rounded-lg shadow-lg border border-gray-200 flex items-center justify-center'>
+          <Spin tip="加载中..." />
+        </div>
+      );
+    }
+
+    const menuData = isDataReady ? renderMenu() : [];
+
+    if (menuData.length === 0) {
+      return (
+        <div className='max-w-[80vw] h-32 bg-white rounded-lg shadow-lg border border-gray-200 flex items-center justify-center'>
+          <div className="text-gray-500 text-sm">暂无可用服务</div>
+        </div>
+      );
+    }
+
+    const renderMenuItems = () => (
+      <div className="flex flex-wrap">
+        {menuData.map(({ category, capabilities }) => (
+          <div key={category.id} className="w-[150px] mr-6">
+            <h3 className='text-sm font-semibold pb-1 border-b text-gray-900 mb-3'>{category.name}</h3>
+            <div className='flex flex-col gap-2'>
+              {capabilities.map((child: any) => (
+                <Link key={`child_${child?.id}`} href={child.url} prefetch={false}>
+                  <div className="group rounded-lg hover:text-blue-50 transition-all duration-200 cursor-pointer h-full">
+                    <div className="flex items-start space-x-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs group-hover:text-blue-700 truncate">
+                          {child.name}
+                        </h4>
+                        {/* <p className="text-xs text-gray-500 group-hover:text-blue-600 mt-1 leading-relaxed overflow-hidden text-ellipsis"
+                          style={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical' as const
+                          }}>
+                          {child.description}
+                        </p> */}
+                      </div>
+                      {/* <div className="flex-shrink-0">
+                        <svg
+                          className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors duration-200"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div> */}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+
+    return (
+      <div className='max-w-[100vw] max-h-[70vh] overflow-y-auto bg-white rounded-lg p-4'>
+        {renderMenuItems()}
+      </div>
+    );
+  }, [modelExpLoading, modelExpError, isDataReady, renderMenu, reload]);
+
   const renderContent = loading ? (
     <div className="flex justify-center items-center h-32">
       <Spin tip="Loading..." />
     </div>
   ) : (
-    <div className="grid grid-cols-3 gap-4 max-h-[350px] overflow-auto">
-      {clientData.map((app) => (
+    <div className="grid grid-cols-4 gap-4 max-h-[420px] overflow-auto">
+      {clientData.map((app: ClientData) => (
         <div
           key={app.name}
           className={`group flex flex-col items-center p-4 rounded-sm cursor-pointer ${styles.navApp}`}
@@ -180,9 +258,39 @@ const TopMenu = () => {
           style={{ whiteSpace: 'nowrap' }}
         >
           {menuItems
-            .filter((item) => item.url && !item.isNotMenuItem)
-            .map((item) => {
+            .filter((item: MenuItem) => item.url && !item.isNotMenuItem)
+            .map((item: MenuItem) => {
               const isActive = item.url === '/' ? pathname === '/' : pathname?.startsWith(item.url);
+
+              if (isOtherMode && item.name === 'experience') {
+
+                return (
+                  <Popover
+                    key={item.url}
+                    content={renderSubMenuPanel}
+                    trigger="hover"
+                    placement="bottom"
+                    overlayClassName="top-menu-submenu-popover"
+                    className='z-40'
+                  >
+                    <div>
+                      <Link
+                        href={"#"}
+                        prefetch={false} legacyBehavior>
+                        <a
+                          ref={menuRefs.current[item.url] || null}
+                          id={item.name}
+                          className={`px-3 py-2 rounded-[10px] flex items-center ${styles.menuCol} ${isActive ? styles.active : ''}`}
+                        >
+                          <Icon type={item.icon} className="mr-2 w-4 h-4" />
+                          {item.title}
+                        </a>
+                      </Link>
+                    </div>
+                  </Popover>
+                );
+              }
+
               return (
                 <Link key={item.url} href={item.url} prefetch={false} legacyBehavior>
                   <a

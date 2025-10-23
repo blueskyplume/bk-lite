@@ -59,7 +59,7 @@ const IntegrationDetail: FC = () => {
 
   const copySecret = (text: string = '') => {
     navigator.clipboard.writeText(text);
-    message.success(t('common.copied'));
+    message.success(t('alarmCommon.copied'));
   };
 
   const fetchEventList = async () => {
@@ -155,6 +155,28 @@ const IntegrationDetail: FC = () => {
             onClick={() => copySecret(source?.secret)}
           />
         </Descriptions.Item>
+        <Descriptions.Item label="CURL">
+          <span
+            dangerouslySetInnerHTML={{
+              __html: source?.config?.examples?.CURL || '',
+            }}
+          />
+          <CopyOutlined
+            className="ml-[10px]"
+            onClick={() => copySecret(source?.config?.examples?.CURL)}
+          />
+        </Descriptions.Item>
+        <Descriptions.Item label="Python">
+          <span
+            dangerouslySetInnerHTML={{
+              __html: source?.config?.examples?.Python || '',
+            }}
+          />
+          <CopyOutlined
+            className="ml-[10px]"
+            onClick={() => copySecret(source?.config?.examples?.Python)}
+          />
+        </Descriptions.Item>
       </Descriptions>
       <h4 className="mt-6 mb-2 font-medium pl-2 border-l-4 border-blue-400 inline-block leading-tight">
         {t('integration.eventFieldsMapping')}
@@ -208,10 +230,10 @@ const IntegrationDetail: FC = () => {
           </div>
         ) : (
           <>
-            <div className="p-4 bg-white rounded">
+            <div className="p-4 bg-[var(--color-bg-1)] rounded">
               <IntegrationHeader />
             </div>
-            <div className="p-4 bg-white rounded pt-0 mt-4">
+            <div className="p-4 bg-[var(--color-bg-1)] rounded pt-0 mt-4">
               <Tabs activeKey={activeTab} onChange={setActiveTab}>
                 <Tabs.TabPane key="event" tab={t('integration.eventTab')}>
                   <div className="mb-4 flex items-center gap-6">

@@ -3,39 +3,37 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Input, Button, Progress, Select } from 'antd';
 import useApiClient from '@/utils/request';
 import useMonitorApi from '@/app/monitor/api';
+import useViewApi from '@/app/monitor/api/view';
 import { useTranslation } from '@/utils/i18n';
 import {
-  deepClone,
   getEnumValueUnit,
   getEnumColor,
   getK8SData,
   getBaseInstanceColumn,
 } from '@/app/monitor/utils/common';
-import { useObjectConfigInfo } from '@/app/monitor/hooks/intergration/common/getObjectConfig';
+import { useObjectConfigInfo } from '@/app/monitor/hooks/integration/common/getObjectConfig';
 import { useRouter } from 'next/navigation';
-import {
-  IntergrationItem,
-  ObjectItem,
-  MetricItem,
-  ViewListProps,
-} from '@/app/monitor/types/monitor';
 import ViewModal from './viewModal';
 import {
   ColumnItem,
   ModalRef,
   Pagination,
   TableDataItem,
+  IntegrationItem,
+  ObjectItem,
+  MetricItem,
 } from '@/app/monitor/types';
+import { ViewListProps } from '@/app/monitor/types/view';
 import CustomTable from '@/components/custom-table';
 import TimeSelector from '@/components/time-selector';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import { useLocalizedTime } from '@/hooks/useLocalizedTime';
-import Permission from '@/components/permission';
 import { ListItem } from '@/types';
 import {
   OBJECT_DEFAULT_ICON,
   DERIVATIVE_OBJECTS,
-} from '@/app/monitor/constants/monitor';
+} from '@/app/monitor/constants';
+import { cloneDeep } from 'lodash';
 const { Option } = Select;
 
 const ViewList: React.FC<ViewListProps> = ({
@@ -45,13 +43,9 @@ const ViewList: React.FC<ViewListProps> = ({
   updateTree,
 }) => {
   const { isLoading } = useApiClient();
-  const {
-    getMonitorMetrics,
-    getInstanceList,
-    getInstanceSearch,
-    getInstanceQueryParams,
-    getMonitorPlugin,
-  } = useMonitorApi();
+  const { getMonitorMetrics, getInstanceList, getMonitorPlugin } =
+    useMonitorApi();
+  const { getInstanceSearch, getInstanceQueryParams } = useViewApi();
   const { t } = useTranslation();
   const router = useRouter();
   const { convertToLocalizedTime } = useLocalizedTime();
@@ -67,7 +61,7 @@ const ViewList: React.FC<ViewListProps> = ({
     pageSize: 20,
   });
   const [frequence, setFrequence] = useState<number>(0);
-  const [plugins, setPlugins] = useState<IntergrationItem[]>([]);
+  const [plugins, setPlugins] = useState<IntegrationItem[]>([]);
   const columns: ColumnItem[] = [
     {
       title: t('monitor.views.reportTime'),
@@ -80,13 +74,13 @@ const ViewList: React.FC<ViewListProps> = ({
       ),
     },
     {
-      title: t('monitor.intergrations.reportingStatus'),
+      title: t('monitor.integrations.reportingStatus'),
       dataIndex: 'status',
       key: 'status',
       width: 160,
       render: (_, record) => (
         <>
-          {record?.status ? t(`monitor.intergrations.${record.status}`) : '--'}
+          {record?.status ? t(`monitor.integrations.${record.status}`) : '--'}
         </>
       ),
     },
@@ -105,14 +99,9 @@ const ViewList: React.FC<ViewListProps> = ({
           >
             {t('common.detail')}
           </Button>
-          <Permission
-            requiredPermissions={['Detail']}
-            instPermissions={record.permission}
-          >
-            <Button type="link" onClick={() => linkToDetial(record)}>
-              {t('monitor.views.dashboard')}
-            </Button>
-          </Permission>
+          <Button type="link" onClick={() => linkToDetial(record)}>
+            {t('monitor.views.dashboard')}
+          </Button>
         </>
       ),
     },
@@ -268,7 +257,7 @@ const ViewList: React.FC<ViewListProps> = ({
         ? getK8SData(k8sQuery || {})
         : (k8sQuery || []).map((item: string) => ({ id: item, child: [] }));
       setQueryData(queryForm);
-      const _plugins = res[1].map((item: IntergrationItem) => ({
+      const _plugins = res[1].map((item: IntegrationItem) => ({
         label: getCollectType(objName as string, item.name as string),
         value: item.id,
       }));
@@ -329,7 +318,7 @@ const ViewList: React.FC<ViewListProps> = ({
             },
           };
         });
-        const originColumns = deepClone([
+        const originColumns = cloneDeep([
           ...getBaseInstanceColumn({
             objects,
             row: targetObject,

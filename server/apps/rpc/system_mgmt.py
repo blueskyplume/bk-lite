@@ -1,10 +1,9 @@
-from apps.rpc.base import RpcClient
+from apps.rpc.base import AppClient, RpcClient
 
 
 class SystemMgmt(object):
-    def __init__(self):
-        self.client = RpcClient()
-        # self.client = AppClient("apps.system_mgmt.nats_api")
+    def __init__(self, is_local_client=False):
+        self.client = AppClient("apps.system_mgmt.nats_api") if is_local_client else RpcClient()
 
     def login(self, username, password):
         """
@@ -12,6 +11,10 @@ class SystemMgmt(object):
         :param password: 密码
         """
         return_data = self.client.run("login", username=username, password=password)
+        return return_data
+
+    def verify_bk_token(self, bk_token):
+        return_data = self.client.run("verify_bk_token", bk_token=bk_token)
         return return_data
 
     def wechat_user_register(self, user_id, nick_name):
@@ -60,9 +63,7 @@ class SystemMgmt(object):
         :param username: 查询用户的用户名
         :param is_superuser: 是否超管
         """
-        return_data = self.client.run(
-            "get_user_menus", client_id=client_id, roles=roles, username=username, is_superuser=is_superuser
-        )
+        return_data = self.client.run("get_user_menus", client_id=client_id, roles=roles, username=username, is_superuser=is_superuser)
         return return_data
 
     def verify_token(self, token):
@@ -114,11 +115,9 @@ class SystemMgmt(object):
         :param channel_id: 1 通道id
         :param title: 邮件主题  企微传空字符串即可
         :param content: 正文
-        :param receivers: ["abc@canway.net"] 企微传用户的ID列表
+        :param receivers: [1,2,3,4] 用户的ID列表
         """
-        return_data = self.client.run(
-            "send_msg_with_channel", channel_id=channel_id, title=title, content=content, receivers=receivers
-        )
+        return_data = self.client.run("send_msg_with_channel", channel_id=channel_id, title=title, content=content, receivers=receivers)
         return return_data
 
     def init_user_default_attributes(self, user_id, group_name, default_group_id):
@@ -127,9 +126,7 @@ class SystemMgmt(object):
         :param group_name: 组名
         :param default_group_id: 默认组ID
         """
-        return_data = self.client.run(
-            "init_user_default_attributes", user_id=user_id, group_name=group_name, default_group_id=default_group_id
-        )
+        return_data = self.client.run("init_user_default_attributes", user_id=user_id, group_name=group_name, default_group_id=default_group_id)
         return return_data
 
     def get_user_rules(self, group_id, username):
@@ -157,8 +154,8 @@ class SystemMgmt(object):
         )
         return return_data
 
-    def create_opspilot_guest_role(self):
-        return_data = self.client.run("create_opspilot_guest_role")
+    def create_guest_role(self):
+        return_data = self.client.run("create_guest_role")
         return return_data
 
     def get_namespace_by_domain(self, domain):
@@ -171,3 +168,22 @@ class SystemMgmt(object):
 
     def get_login_module_domain_list(self):
         return self.client.run("get_login_module_domain_list")
+
+    def get_user_rules_by_app(self, group_id, username, app, module, child_module="", domain="domain.com"):
+        return self.client.run("get_user_rules_by_app", group_id, username, domain, app, module, child_module)
+
+    def get_user_rules_by_module(self, group_id, username, app, module, domain="domain.com"):
+        return self.client.run(
+            "get_user_rules_by_module",
+            group_id,
+            username,
+            domain,
+            app,
+            module,
+        )
+
+    def get_pilot_permission_by_token(self, token, bot_id, group_list):
+        return self.client.run("get_pilot_permission_by_token", token, bot_id, group_list)
+
+    def delete_rules(self, group_ids, instance_id, app, module, child_module=""):
+        return self.client.run("delete_rules", group_ids, instance_id, app, module, child_module)

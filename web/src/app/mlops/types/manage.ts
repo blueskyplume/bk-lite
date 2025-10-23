@@ -17,7 +17,7 @@ interface AnomalyTrainData {
 }
 
 interface AsideProps {
-  children: any,
+  // children: any,
   menuItems: AnomalyTrainData[],
   loading: boolean,
   isChange: boolean,
@@ -55,7 +55,7 @@ interface DataSet {
   icon: string;
   creator: string;
   // user_id: string;
-  tenant_id: number;
+  // tenant_id: number;
 }
 
 interface AnomalyDataSet {
@@ -74,6 +74,14 @@ interface LabelData {
   label?: number
 }
 
+interface AnnotationData {
+  timestamp: number;
+  value: number;
+  label: number;
+  index?: number;
+  [key: string]: unknown;
+}
+
 export type {
   AsideProps,
   TrainingStatus,
@@ -83,5 +91,6 @@ export type {
   TrainDataParams,
   DataSet,
   AnomalyDataSet,
-  LabelData
+  LabelData,
+  AnnotationData
 }

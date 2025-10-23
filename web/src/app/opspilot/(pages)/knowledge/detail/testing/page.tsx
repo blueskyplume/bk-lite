@@ -2,9 +2,8 @@
 
 import React, { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Input, Button, message, Spin, Empty, Skeleton, List, Segmented, Card, Divider } from 'antd';
+import { Input, Button, message, Spin, Empty, Skeleton, List, Segmented, Card, Divider, Tag } from 'antd';
 import ConfigComponent from '@/app/opspilot/components/knowledge/config';
-import { ResultItem } from '@/app/opspilot/types/global';
 import { useTranslation } from '@/utils/i18n';
 import styles from './index.module.scss';
 import ContentDrawer from '@/components/content-drawer';
@@ -14,20 +13,12 @@ import KnowledgeResultItem from '@/app/opspilot/components/block-result';
 import { useKnowledgeApi } from '@/app/opspilot/api/knowledge';
 import useFetchConfigData from '@/app/opspilot/hooks/useFetchConfigData';
 import Icon from '@/components/icon';
+import KnowledgeGraphView from '@/app/opspilot/components/knowledge/knowledgeGraphView';
+import NodeDetailDrawer from '@/app/opspilot/components/knowledge/NodeDetailDrawer';
+import { transformGraphData } from '@/app/opspilot/utils/graphUtils';
+import { TestKnowledgeResponse, GraphNode } from '@/app/opspilot/types/knowledge';
 
 const { TextArea } = Input;
-
-interface QAPair {
-  id: string;
-  question: string;
-  answer: string;
-  score: number;
-}
-
-interface TestKnowledgeResponse {
-  docs: ResultItem[];
-  qa_docs: QAPair[];
-}
 
 const TestingPage: React.FC = () => {
   const { t } = useTranslation();
@@ -36,10 +27,12 @@ const TestingPage: React.FC = () => {
   const { updateKnowledgeSettings, testKnowledge } = useKnowledgeApi();
   const { configData, setConfigData, loading: configLoading, knowledgeBasePermissions } = useFetchConfigData(id);
   const [searchText, setSearchText] = useState<string>('');
-  const [results, setResults] = useState<TestKnowledgeResponse>({ docs: [], qa_docs: [] });
+  const [results, setResults] = useState<TestKnowledgeResponse>({ docs: [], qa_docs: [], graph_data: [] });
   const [loading, setLoading] = useState<boolean>(false);
   const [applyLoading, setApplyLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('docs');
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [nodeDetailVisible, setNodeDetailVisible] = useState(false);
 
   const {
     drawerVisible,
@@ -48,20 +41,70 @@ const TestingPage: React.FC = () => {
     hideDrawer,
   } = useContentDrawer();
 
+  const getSegmentedOptions = () => {
+    const options = [];
+    
+    if (configData.enableNaiveRag) {
+      options.push({
+        value: 'docs',
+        label: t('knowledge.chunks'),
+      });
+    }
+    
+    if (configData.enableQaRag) {
+      options.push({
+        value: 'qa_docs',
+        label: t('knowledge.qaPairs.title'),
+      });
+    }
+    
+    if (configData.enableGraphRag) {
+      options.push({
+        value: 'graph_data',
+        label: t('knowledge.graphRag'),
+      });
+    }
+    
+    return options;
+  };
+
+  const segmentedOptions = getSegmentedOptions();
+
   const getConfigParams = () => {
+    // Calculate rag_k from enabled RAG types - use the maximum value from enabled types
+    let ragK = 10; // default value
+    const enabledSizes = [];
+    
+    if (configData.enableNaiveRag && configData.ragSize > 0) {
+      enabledSizes.push(configData.ragSize);
+    }
+    if (configData.enableQaRag && configData.qaSize > 0) {
+      enabledSizes.push(configData.qaSize);
+    }
+    if (configData.enableGraphRag && configData.graphSize > 0) {
+      enabledSizes.push(configData.graphSize);
+    }
+    
+    if (enabledSizes.length > 0) {
+      ragK = Math.max(...enabledSizes);
+    }
+
     return {
       embed_model: configData.selectedEmbedModel,
       enable_rerank: configData.rerankModel,
       rerank_model: configData.selectedRerankModel,
-      enable_text_search: configData.selectedSearchTypes.includes('textSearch'),
-      text_search_weight: configData.textSearchWeight,
-      text_search_mode: configData.textSearchMode,
-      enable_vector_search: configData.selectedSearchTypes.includes('vectorSearch'),
-      vector_search_weight: configData.vectorSearchWeight,
-      rag_k: configData.quantity,
-      rag_num_candidates: configData.candidate,
+      search_type: configData.searchType,
+      score_threshold: configData.scoreThreshold,
+      rag_k: ragK,
       result_count: configData.resultCount,
       rerank_top_k: configData.rerankTopK,
+      enable_naive_rag: configData.enableNaiveRag,
+      enable_qa_rag: configData.enableQaRag,
+      enable_graph_rag: configData.enableGraphRag,
+      rag_size: configData.ragSize,
+      qa_size: configData.qaSize,
+      graph_size: configData.graphSize,
+      rag_recall_mode: configData.ragRecallMode,
     };
   };
 
@@ -75,18 +118,21 @@ const TestingPage: React.FC = () => {
       message.error(t('common.fieldRequired'));
       return false;
     }
-    if (configData.candidate < configData.quantity) {
-      message.error(t('knowledge.returnQuanityTip'));
-      return false;
-    }
     setLoading(true);
     try {
       const data = await testKnowledge(params);
       message.success(t('knowledge.testingSuccess'));
-      setResults({
+      const newResults = {
         docs: data.docs || [],
-        qa_docs: data.qa_docs || []
-      });
+        qa_docs: data.qa_docs || [],
+        graph_data: data.graph_data || []
+      };
+      setResults(newResults);
+      
+      const availableOptions = getSegmentedOptions();
+      if (availableOptions.length > 0) {
+        setActiveTab(availableOptions[0].value);
+      }
     } catch (error) {
       message.error(t('knowledge.testingFailed'));
       console.error(error);
@@ -120,16 +166,15 @@ const TestingPage: React.FC = () => {
     showDrawer(content);
   };
 
-  const segmentedOptions = [
-    {
-      value: 'docs',
-      label: t('knowledge.chunks'),
-    },
-    {
-      value: 'qa_docs',
-      label: t('knowledge.qaPairs.title'),
-    },
-  ];
+  const handleNodeClick = (node: GraphNode) => {
+    setSelectedNode(node);
+    setNodeDetailVisible(true);
+  };
+
+  const handleCloseNodeDetail = () => {
+    setNodeDetailVisible(false);
+    setSelectedNode(null);
+  };
 
   const renderResults = () => {
     if (loading) {
@@ -147,6 +192,8 @@ const TestingPage: React.FC = () => {
     }
 
     if (activeTab === 'docs') {
+      const shouldShowScore = configData.ragRecallMode === 'chunk';
+      
       return results.docs.length > 0 ? (
         results.docs.map((result, index) => (
           <KnowledgeResultItem
@@ -154,6 +201,7 @@ const TestingPage: React.FC = () => {
             result={result}
             index={index}
             onClick={handleContentClick}
+            showScore={shouldShowScore}
           />
         ))
       ) : (
@@ -172,11 +220,12 @@ const TestingPage: React.FC = () => {
             >
               <div className="space-y-3">
                 <div>
-                  <div className="flex items-start gap-2">
-                    <Icon type="question-circle-fill" className="text-lg mt-1 flex-shrink-0" />
+                  <div className="flex items-center gap-2">
+                    <Icon type="question-circle-fill" className="text-lg flex-shrink-0" />
                     <div className="flex-1">
-                      <div className="text-sm text-[var(--color-text-1)] font-medium leading-6">
+                      <div className="text-xs text-[var(--color-text-1)] font-medium leading-6">
                         {qaPair.question}
+                        <Tag color="geekblue" className="font-mini">{t('knowledge.score')}:  {qaPair.score}</Tag>
                       </div>
                     </div>
                   </div>
@@ -185,10 +234,10 @@ const TestingPage: React.FC = () => {
                 <Divider className="my-3" />
                 
                 <div>
-                  <div className="flex items-start gap-2">
-                    <Icon type="answer" className="text-lg mt-1 flex-shrink-0" />
+                  <div className="flex items-center gap-2">
+                    <Icon type="answer" className="text-lg flex-shrink-0" />
                     <div className="flex-1">
-                      <div className="text-sm text-[var(--color-text-3)] leading-6">
+                      <div className="text-xs text-[var(--color-text-3)] leading-6">
                         {qaPair.answer}
                       </div>
                     </div>
@@ -200,6 +249,17 @@ const TestingPage: React.FC = () => {
         </div>
       ) : (
         <Empty description={t('knowledge.qaPairs.noData')} />
+      );
+    }
+
+    if (activeTab === 'graph_data') {
+      return results.graph_data.length > 0 ? (
+        <KnowledgeGraphView 
+          data={transformGraphData(results.graph_data)} 
+          onNodeClick={handleNodeClick}
+        />
+      ) : (
+        <Empty description={t('common.noData')} />
       );
     }
 
@@ -256,7 +316,7 @@ const TestingPage: React.FC = () => {
         <div className="w-1/2 pl-4">
           <div className="flex justify-between items-center mb-4">
             <h2 className="font-semibold text-base">{t('knowledge.results')}</h2>
-            {(results.docs.length > 0 || results.qa_docs.length > 0) && (
+            {(results.docs.length > 0 || results.qa_docs.length > 0 || results.graph_data.length > 0) && (
               <Segmented
                 options={segmentedOptions}
                 value={activeTab}
@@ -274,6 +334,12 @@ const TestingPage: React.FC = () => {
         visible={drawerVisible}
         onClose={hideDrawer}
         content={drawerContent}
+      />
+      
+      <NodeDetailDrawer
+        visible={nodeDetailVisible}
+        node={selectedNode}
+        onClose={handleCloseNodeDetail}
       />
     </Spin>
   );

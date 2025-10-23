@@ -35,7 +35,6 @@ const GenericModifyModal: React.FC<GenericModifyModalProps> = ({ visible, onCanc
     try {
       setConfirmLoading(true);
       const values = await form.validateFields();
-      console.log('values', values);
       await onConfirm(values);
       form.resetFields();
       setConfirmLoading(false);
@@ -46,6 +45,7 @@ const GenericModifyModal: React.FC<GenericModifyModalProps> = ({ visible, onCanc
 
   return (
     <OperateModal
+      width={800}
       visible={visible}
       title={initialValues ? t('common.edit') : t('common.add')}
       okText={t('common.confirm')}
@@ -56,6 +56,7 @@ const GenericModifyModal: React.FC<GenericModifyModalProps> = ({ visible, onCanc
     >
       <CommonForm 
         form={form} 
+        initialValues={initialValues}
         formType={formType} 
         visible={visible} 
       />

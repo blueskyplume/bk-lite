@@ -8,6 +8,7 @@ import styles from './index.module.scss';
 import { SelectTool } from '@/app/opspilot/types/tool';
 import { useSkillApi } from '@/app/opspilot/api/skill';
 import OperateModal from '@/components/operate-modal';
+import EditablePasswordField from '@/components/dynamic-form/editPasswordField';
 
 interface ToolSelectorProps {
   defaultTools: SelectTool[];
@@ -84,7 +85,7 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({ defaultTools, onChange }) =
   const openEditModal = (tool: SelectTool) => {
     setEditingTool(tool);
     form.setFieldsValue({
-      kwargs: tool.kwargs?.map((item: { key: string; value: string }) => ({ key: item.key, value: item.value })) || [],
+      kwargs: tool.kwargs?.map((item: any) => ({ key: item.key, value: item.value, type: item.type, isRequired: item.isRequired })) || [],  
     });
     setEditModalVisible(true);
   };
@@ -173,9 +174,11 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({ defaultTools, onChange }) =
                     name={[name, 'value']}
                     fieldKey={[fieldKey ?? '', 'value']}
                     label={form.getFieldValue(['kwargs', name, 'key'])}
-                    rules={[{ required: true, message: `${t('common.inputMsg')}${form.getFieldValue(['kwargs', name, 'key'])}` }]}
+                    rules={[{ required: form.getFieldValue(['kwargs', name, 'isRequired']), message: `${t('common.inputMsg')}${form.getFieldValue(['kwargs', name, 'key'])}` }]}
                   >
-                    <Input />
+                    {
+                      form.getFieldValue(['kwargs', name, 'type']) === 'text' ? <Input /> : <EditablePasswordField />
+                    }
                   </Form.Item>
                 ))}
               </>

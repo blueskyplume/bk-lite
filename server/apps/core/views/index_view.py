@@ -133,6 +133,14 @@ def get_wechat_settings(request):
 
 
 @api_exempt
+def get_bk_settings(request):
+    bk_token = request.COOKIES.get("bk_token", "")
+    client = SystemMgmt()
+    res = client.verify_bk_token(bk_token)
+    return JsonResponse(res)
+
+
+@api_exempt
 def reset_pwd(request):
     try:
         data = _parse_request_data(request)
@@ -157,8 +165,8 @@ def reset_pwd(request):
 @api_view(["GET"])
 def login_info(request):
     try:
-        default_group = os.environ.get("TOP_GROUP", "Default")
-        is_first_login = _check_first_login(request.user, default_group)
+        # default_group = os.environ.get("TOP_GROUP", "Default")
+        is_first_login = _check_first_login(request.user, "OpsPilotGuest")
 
         client = _create_system_mgmt_client()
         user_id = _safe_get_user_id_by_username(client, request.user.username)

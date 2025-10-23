@@ -77,7 +77,6 @@
     "successfullyDeleted": "删除成功！",
     "successfullyAdded": "新增成功！",
     "successfulSetted": "设置成功！",
-    "successfulCopied": "复制成功！",
     "successfullyModified": "修改成功！",
     "successfullyExported": "导出成功！",
     "successfullyImported": "导入成功！",
@@ -97,10 +96,7 @@
     "more": "详情",
     "organizations": "组织",
     "all": "全部",
-    "copy": "复制",
     "remove": "删除",
-    "inputPassword": "请输入密码",
-    "reset": "重置",
     "prompt": "提示",
     "batchEdit": "批量编辑"
   },
@@ -353,10 +349,13 @@
       "historicalAlarmsMapTips": "展示所选时间范围内，符合过滤项的所有历史告警分布图。",
       "promQLPlaceholder": "请参考Prometheus的语法撰写PromQL，通常可以查询并过滤相关的指标。",
       "monitoringTarget": "监控目标",
-      "alarmLevel": "告警级别"
+      "alarmLevel": "告警级别",
+      "noticeWay": "暂无通知渠道，可去",
+      "systemManage": "系统管理",
+      "config": "配置。"
     },
-    "intergrations": {
-      "intergration": "集成",
+    "integrations": {
+      "integration": "集成",
       "configure": "配置",
       "configureTitle": "请按照以下指南安装收集器。",
       "metricTitle": "此收集器支持以下监控指标",
@@ -441,6 +440,16 @@
       "privPasswordDes": "用于加密的密码，与选择的加密协议对应。",
       "seviceName": "服务名称",
       "seviceNameDes": "要监控的服务名称，确保其与实际运行的服务一致。",
+      "dataSource": "数据源",
+      "dataSourceDes": "监控数据的来源，用于确保系统准确获取所需数据。",
+      "dbName": "数据库名称",
+      "dbNameDes": "访问所需数据库的具体名字",
+      "dbType": "数据库类型",
+      "dbTypeDes": "采集中所需要的数据库类型",
+      "collectorRefs": "指标配置名称",
+      "collectorRefsDes": "为监控指标配置设定一个明确的名称",
+      "connectionTime": "最长连接时长",
+      "connectionTimeDes": "设备与数据库连接允许的最大持续时间（单位：分钟）",
       "collectionMethod": "采集方法",
       "reportingStatus": "上报状态",
       "lastReportTime": "最后上报时间",
@@ -468,7 +477,16 @@
       "publishPortDes": "程序运行时监听的特定端口，负责接收来自外部的请求和连接",
       "mechanism": "运行机制",
       "mechanismDes": "用于处理和响应通过发布端口接收的请求，包括请求的解析、处理和返回结果的完整流程。",
-      "kafkaVersionDes": "指定当前程序的版本详情"
+      "kafkaVersionDes": "指定当前程序的版本详情",
+      "lcAll": "优先语言",
+      "lcAllDes": "系统首要使用的语言环境",
+      "lang": "基本语言",
+      "langDes": "系统默认的底层语言设置",
+      "libraryPath": "驱动程序的lib日录",
+      "libraryPathDes": "存放驱动程序库文件的路径‌",
+      "dbTimeout": "等待时长",
+      "dbTimeoutDes": "数据库连接的最长等待时间(单位为秒)",
+      "dataTypeDes": "定义数据在计算机中存储、处理及传输时的格式与规则"
     }
   }
 }

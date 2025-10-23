@@ -2,6 +2,7 @@
   "common": {
     "edit": "Edit",
     "delete": "Delete",
+    "detail": "Detail",
     "add": "Add",
     "set": "Set",
     "search": "Search",
@@ -19,6 +20,8 @@
     "batchDelete": "Batch Delete",
     "cancel": "Cancel",
     "confirm": "Confirm",
+    "retry": "Retry",
+    "initializeFailed": "Graph initialization failed",
     "uploadText": "Click or drag files here to upload",
     "supports": "Supports",
     "logout": "Logout",
@@ -43,6 +46,8 @@
     "inputMsg": "Please input the ",
     "input": "Input",
     "select": "Select",
+    "selectTip": "Please select",
+    "inputTip": "Please input",
     "serverError": "Server error, please try again later.",
     "fileType": "is not a supported file type.",
     "invalidData": "Invalid data format",
@@ -95,7 +100,23 @@
       "custom": "Custom",
       "off": "off"
     },
+    "heatMap": {
+      "monthDisplay": "Monthly Display",
+      "dayDisplay": "Daily Display",
+      "selectMonth": "Select Month",
+      "selectDate": "Select Date",
+      "quantity": "Count"
+    },
     "copySuccess": "Copied successfully",
-    "copyFailed": "Failed to copy"
+    "copyFailed": "Failed to copy",
+    "successfullyExported": "Successfully exported",
+    "exportFailed": "Failed to export",
+    "leave": "Leave",
+    "addFail": "Failed to add",
+    "updateFail": "Failed to update",
+    "execute": "Execute",
+    "copy": "Copy",
+    "reset": "Reset",
+    "inputPassword": "Please input the password"
   }
 }

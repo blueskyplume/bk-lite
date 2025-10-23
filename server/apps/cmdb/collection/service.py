@@ -21,10 +21,10 @@ from apps.cmdb.collection.constants import (
     K8S_DEPLOYMENT_ANNOTATIONS, K8S_REPLICASET_ANNOTATIONS, K8S_STATEFULSET_ANNOTATIONS, K8S_DAEMONSET_ANNOTATIONS,
     K8S_JOB_ANNOTATIONS, K8S_CRONJOB_ANNOTATIONS, POD_NODE_RELATION, VMWARE_CLUSTER, VMWARE_COLLECT_MAP,
     NETWORK_COLLECT, NETWORK_INTERFACES_RELATIONS, PROTOCOL_METRIC_MAP, ALIYUN_COLLECT_CLUSTER, HOST_COLLECT_METRIC,
-    REDIS_COLLECT_METRIC, MIDDLEWARE_METRIC_MAP, QCLOUD_COLLECT_CLUSTER,
+    MIDDLEWARE_METRIC_MAP, QCLOUD_COLLECT_CLUSTER, DB_COLLECT_METRIC_MAP,
 )
 from apps.cmdb.constants import INSTANCE
-from apps.cmdb.graph.neo4j import Neo4jClient
+from apps.cmdb.graph.drivers.graph_client import GraphClient
 from apps.cmdb.models import OidMapping
 from apps.core.logger import cmdb_logger as logger
 
@@ -80,7 +80,7 @@ class MetricsCannula:
             if self.filter_collect_task:
                 params.append({"field": "collect_task", "type": "str=", "value": self.task_id})
 
-            with Neo4jClient() as ag:
+            with GraphClient() as ag:
                 already_data, _ = ag.query_entity(INSTANCE, params)
                 management = Management(
                     self.organization,
@@ -273,7 +273,7 @@ class CollectK8sMetrics:
         return labels
 
     def format_workload_metrics(self):
-        """格式化workload，简化关联关系处理"""
+        """格式化workload，优化关联关系处理和数据完整性"""
         # 用于存储ReplicaSet的所有者信息
         replicaset_owner_dict = {}
         # 分别存储ReplicaSet和其他workload的指标
@@ -357,21 +357,46 @@ class CollectK8sMetrics:
             key = (rs_info["namespace"], rs_info["replicaset"])
             owner = replicaset_owner_dict.get(key)
 
-            if owner and owner["owner_kind"] in WORKLOAD_TYPE_DICT.values():
-                replicas = replicas_map.get(inst_name_key, {}).get(rs_info[inst_name_key], 0)
+            replicas = replicas_map.get(inst_name_key, {}).get(rs_info[inst_name_key], 0)
 
+            if owner and owner["owner_kind"] in WORKLOAD_TYPE_DICT.values():
+                # 有有效所有者的ReplicaSet
                 inst_name = f"{rs_info[inst_name_key]}({self.cluster_name}/{owner['owner_name']})"
                 workload_type = owner["owner_kind"]
                 name = owner["owner_name"]
-
-                # 只添加有效的所有者关联
+                
                 result.append({
                     "inst_name": inst_name,
                     "name": name,
                     "labels": annotations_map.get(inst_name_key, {}).get(rs_info[inst_name_key], ""),
                     "workload_type": workload_type,
                     "k8s_namespace": namespace,
-                    "replicaset_name": rs_info["replicaset"],  # 保存ReplicaSet名称用于Pod关联
+                    "replicaset_name": rs_info["replicaset"],
+                    "self_ns": namespace,
+                    "self_cluster": self.cluster_name,
+                    "replicas": int(replicas),
+                    "assos": [{
+                        "model_id": "k8s_namespace",
+                        "inst_name": f"{rs_info['namespace']}({self.cluster_name})",
+                        "asst_id": "belong",
+                        "model_asst_id": WORKLOAD_NAMESPACE_RELATION
+                    }]
+                })
+            else:
+                # 没有有效所有者的ReplicaSet，作为独立workload处理
+                logger.warning(f"ReplicaSet {rs_info['replicaset']} 在命名空间 {rs_info['namespace']} 中没有有效的所有者信息，将作为独立workload处理")
+                
+                inst_name = f"{rs_info[inst_name_key]}({self.cluster_name}/{rs_info['namespace']})"
+                workload_type = "replicaset"  # 明确标记为replicaset类型
+                name = rs_info["replicaset"]
+                
+                result.append({
+                    "inst_name": inst_name,
+                    "name": name,
+                    "labels": annotations_map.get(inst_name_key, {}).get(rs_info[inst_name_key], ""),
+                    "workload_type": workload_type,
+                    "k8s_namespace": namespace,
+                    "replicaset_name": rs_info["replicaset"],
                     "self_ns": namespace,
                     "self_cluster": self.cluster_name,
                     "replicas": int(replicas),
@@ -1022,11 +1047,8 @@ class ProtocolCollectMetrics(CollectBase):
         sql = " or ".join(m for m in self._metrics)
         return sql
 
-    @staticmethod
-    def set_mysql_inst_name(data, *args, **kwargs):
-        # {ip}-mysql-{port}
-        inst_name = f"{data['ip_addr']}-mysql-{data['port']}"
-        return inst_name
+    def get_inst_name(self, data):
+        return f"{data['ip_addr']}-{self.model_id}-{data['port']}"
 
     @property
     def model_field_mapping(self):
@@ -1047,7 +1069,31 @@ class ProtocolCollectMetrics(CollectBase):
                 "slow_query_log_file": "slow_query_log_file",
                 "log_error": "log_error",
                 "wait_timeout": "wait_timeout",
-                "inst_name": self.set_mysql_inst_name
+                "inst_name": self.get_inst_name
+            },
+            "oracle": {
+                "version": "version",
+                "max_mem": "max_mem",
+                "max_conn": "max_conn",
+                "db_name": "db_name",
+                "database_role": "database_role",
+                "sid": "sid",
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "service_name": "service_name",
+                "inst_name": lambda data: f"{data['ip_addr']}-oracle",
+            },
+            "mssql": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "db_name": "db_name",
+                "max_conn": "max_conn",
+                "max_mem": "max_mem",
+                "order_rule": "order_rule",
+                "fill_factor": "fill_factor",
+                "boot_account": "boot_account",
             },
 
         }
@@ -1450,68 +1496,6 @@ class HostCollectMetrics(CollectBase):
             self.result[self.model_id] = result
 
 
-class RedisCollectMetrics(CollectBase):
-    @property
-    def _metrics(self):
-        return REDIS_COLLECT_METRIC
-
-    def format_data(self, data):
-        """格式化数据"""
-        for index_data in data["result"]:
-            metric_name = index_data["metric"]["__name__"]
-            value = index_data["value"]
-            _time, value = value[0], value[1]
-            if not self.timestamp_gt:
-                if timestamp_gt_one_day_ago(_time):
-                    break
-                else:
-                    self.timestamp_gt = True
-
-            index_dict = dict(
-                index_key=metric_name,
-                index_value=value,
-                **index_data["metric"],
-            )
-
-            self.collection_metrics_dict[metric_name].append(index_dict)
-
-    @property
-    def model_field_mapping(self):
-        mapping = {
-            "inst_name": lambda data: f"{data['ip_addr']}-redis-{data['port']}",
-            "ip_addr": "ip_addr",
-            "port": "port",
-            "version": "version",
-            "install_path": "install_path",
-            "max_conn": "max_conn",
-            "max_mem": "max_mem",
-            "database_role": "database_role",
-        }
-
-        return mapping
-
-    def format_metrics(self):
-        for metric_key, metrics in self.collection_metrics_dict.items():
-            result = []
-            for index_data in metrics:
-                data = {}
-                for field, key_or_func in self.model_field_mapping.items():
-                    if isinstance(key_or_func, tuple):
-                        data[field] = key_or_func[0](index_data[key_or_func[1]])
-                    elif callable(key_or_func):
-                        data[field] = key_or_func(index_data)
-                    else:
-                        data[field] = index_data.get(key_or_func, "")
-                if data:
-                    result.append(data)
-            self.result[self.model_id] = result
-
-    def prom_sql(self):
-        sql = " or ".join(
-            "{}{{instance_id=\"{}\"}}".format(m, f"{self.task_id}_{self.inst_name}") for m in self._metrics)
-        return sql
-
-
 class MiddlewareCollectMetrics(CollectBase):
     @property
     def _metrics(self):
@@ -1620,13 +1604,86 @@ class MiddlewareCollectMetrics(CollectBase):
                 "catalina_path": "catalina_path",
                 "version": "version",
                 "xms": "xms",
-                "xmx":"xmx",
-                "max_perm_size":"max_perm_size",
+                "xmx": "xmx",
+                "max_perm_size": "max_perm_size",
                 "permsize": "permsize",
                 "log_path": "log_path",
                 "java_version": "java_version",
-            }
-
+            },
+            "apache":{
+                "inst_name": self.get_inst_name,
+                "ip_addr":"ip_addr",
+                "port":"port",
+                "version":"version",
+                "httpd_path":"httpd_path",
+                "httpd_conf_path":"httpd_conf_path",
+                "doc_root":"doc_root",
+                "error_log":"error_log",
+                "custom_Log":"custom_Log",
+                "include":"include",
+            },
+            "activemq":{
+                "inst_name": self.get_inst_name,
+                "ip_addr":"ip_addr",
+                "port":"port",
+                "version":"version",
+                "install_path":"install_path",
+                "conf_path":"conf_path",
+                "java_path":"java_path",
+                "java_version":"java_version",
+                "xms":"xms",
+                "xmx":"xmx",
+            },
+            "weblogic": {
+                "inst_name": self.get_inst_name,
+                "bk_obj_id": "bk_obj_id",
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "wlst_path": "wlst_path",
+                "java_version": "java_version",
+                "domain_version": "domain_version",
+                "admin_server_name": "admin_server_name",
+                "name": "name",
+            },
+            "keepalived": {
+                "inst_name":  lambda data: f"{data['ip_addr']}-{self.model_id}-{data['virtual_router_id']}",
+                "ip_addr": "ip_addr",
+                "bk_obj_id": "bk_obj_id",
+                "version": "version",
+                "priority": "priority",
+                "state": "state",
+                "virtual_router_id": "virtual_router_id",
+                "user_name": "user_name",
+                "install_path": "install_path",
+                "config_file": "config_file",
+            },
+            "tongweb": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "bin_path": "bin_path",
+                "log_path": "log_path",
+                "java_version": "java_version",
+                "xms": "xms",
+                "xmx": "xmx",
+                "metaspace_size": "metaspace_size",
+                "max_metaspace_size": "max_metaspace_size",
+            },
+            "jetty": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "jetty_home": "jetty_home",
+                "java_version": "java_version",
+                "monitored_dir": "monitored_dir",
+                "bin_path": "bin_path",
+                "java_vendor": "java_vendor",
+                "war_name": "war_name",
+                "jvm_para": "jvm_para",
+                "max_threads": "max_threads",
+            },
         }
 
         return mapping
@@ -1670,8 +1727,6 @@ class QCloudCollectMetrics(CollectBase):
 
     @staticmethod
     def set_instance_inst_name(data, *args, **kwargs):
-        if not data.get("resource_name"):
-            print(data)
         inst_name = f"{data['resource_name']}_{data['resource_id']}"
         return inst_name
 
@@ -1959,3 +2014,163 @@ class QCloudCollectMetrics(CollectBase):
                 if data:
                     result.append(data)
             self.result[model_id] = result
+
+
+class DBCollectCollectMetrics(CollectBase):
+    """数据库 采集指标"""
+
+    @property
+    def _metrics(self):
+        assert self.model_id in DB_COLLECT_METRIC_MAP, f"{self.model_id} needs to be defined in DB_COLLECT_METRIC_MAP"
+        return DB_COLLECT_METRIC_MAP[self.model_id]
+
+    def format_data(self, data):
+        for index_data in data["result"]:
+            metric_name = index_data["metric"]["__name__"]
+            value = index_data["value"]
+            _time, value = value[0], value[1]
+            if not self.timestamp_gt:
+                if timestamp_gt_one_day_ago(_time):
+                    break
+                else:
+                    self.timestamp_gt = True
+
+            index_dict = dict(
+                index_key=metric_name,
+                index_value=value,
+                **index_data["metric"],
+            )
+
+            self.collection_metrics_dict[metric_name].append(index_dict)
+
+    def get_inst_name(self, data):
+        return f"{data['ip_addr']}-{self.model_id}-{data['port']}"
+
+    @property
+    def model_field_mapping(self):
+
+        mapping = {
+            "es": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "log_path": "log_path",
+                "data_path": "data_path",
+                "is_master": "is_master",
+                "node_name": "node_name",
+                "cluster_name": "cluster_name",
+                "java_version": "java_version",
+                "java_path": "java_path",
+                "conf_path": "conf_path",
+                "install_path": "install_path",
+            },
+            "redis": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "install_path": "install_path",
+                "max_conn": "max_conn",
+                "max_mem": "max_mem",
+                "database_role": "database_role",
+            },
+            "mongodb":{
+                "inst_name": self.get_inst_name,
+                "ip_addr":"ip_addr",
+                "port":"port",
+                "version":"version",
+                "mongo_path":"mongo_path",
+                "bin_path":"bin_path",
+                "config":"config",
+                "fork":"fork",
+                "system_log":"system_log",
+                "db_path":"db_path",
+                "max_incoming_conn":"max_incoming_conn",
+                "database_role":"database_role",
+            },
+            "postgresql":{
+                "inst_name": lambda x: f"{x['ip_addr']}-pg-{x['port']}",
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "conf_path": "conf_path",
+                "data_path": "data_path",
+                "max_conn": "max_conn",
+                "cache_memory_mb": "cache_memory_mb",
+                "log_path": "log_path",
+            },
+            "dameng": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "user": "user",
+                "version": "version",
+                "bin_path": "bin_path",
+                "dm_db_name": "dm_db_name",
+            },
+            "db2": {
+                "inst_name": lambda data: f"{data['ip_addr']}-db2",
+                "version": "version",
+                "db_patch": "db_patch",
+                "db_name": "db_name",
+                "db_instance_name": "db_instance_name",
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "db_character_set": "db_character_set",
+                "ha_mode": "ha_mode",
+                "replication_managerole": "replication_managerole",
+                "replication_role": "replication_role",
+                "data_protect_mode": "data_protect_mode",
+            },
+            "tidb": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "dm_db_name": "dm_db_name",
+                "dm_install_path": "dm_install_path",
+                "dm_conf_path": "dm_conf_path",
+                "dm_log_file": "dm_log_file",
+                "dm_home_bash": "dm_home_bash",
+                "dm_db_max_sessions": "dm_db_max_sessions",
+                "dm_redo_log": "dm_redo_log",
+                "dm_datafile": "dm_datafile",
+                "dm_mode": "dm_mode",
+            },
+            "hbase": {
+                "inst_name": self.get_inst_name,
+                "ip_addr": "ip_addr",
+                "port": "port",
+                "version": "version",
+                "install_path": "install_path",
+                "log_path": "log_path",
+                "config_file": "config_file",
+                "tmp_dir": "tmp_dir",
+                "cluster_distributed": "cluster_distributed",
+                "unsafe_stream_capability_enforce": "unsafe_stream_capability_enforce",
+                "java_path": "java_path",
+            }
+        }
+        return mapping
+
+    def format_metrics(self):
+        for metric_key, metrics in self.collection_metrics_dict.items():
+            result = []
+            mapping = self.model_field_mapping.get(self.model_id, {})
+            for index_data in metrics:
+                data = {}
+                for field, key_or_func in mapping.items():
+                    if isinstance(key_or_func, tuple):
+                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                    elif callable(key_or_func):
+                        data[field] = key_or_func(index_data)
+                    else:
+                        data[field] = index_data.get(key_or_func, "")
+                if data:
+                    result.append(data)
+            self.result[self.model_id] = result
+
+    def prom_sql(self):
+        sql = " or ".join(m for m in self._metrics)
+        return sql

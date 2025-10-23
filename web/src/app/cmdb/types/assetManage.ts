@@ -11,6 +11,8 @@ export interface ModelItem {
   classification_id: string;
   model_name: string;
   icn: string;
+  organization?: number;
+  group?: number | number[];
   [key: string]: any;
 }
 
@@ -118,7 +120,6 @@ export interface OriginOrganization {
 export interface AssetDataFieldProps {
   propertyList: AttrFieldType[];
   userList: UserItem[];
-  organizationList: Organization[];
   instDetail: InstDetail;
   onsuccessEdit: () => void;
 }
@@ -126,7 +127,7 @@ export interface AssetDataFieldProps {
 export interface InstDetail {
   inst_name?: string;
   organization?: string;
-  [key: string]: unknown;
+  [permission: string]: any;
 }
 
 export interface EnumList {

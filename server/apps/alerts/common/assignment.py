@@ -340,20 +340,27 @@ class AlertAssignmentOperator:
                         if assignment.notification_frequency:
                             operator._create_reminder_record(alert, str(assignment.id))
 
+                        logger.info(
+                            "== assignment alert notify start ==, assignment={}, alert_id={}".format(assignment.id,
+                                                                                                     alert.alert_id))
                         # 分派成功后 立即发送提醒通知
                         ReminderService._send_reminder_notification(assignment=assignment, alert=alert)
+                        logger.info(
+                            "== assignment alert notify end ==, assignment={}, alert_id={}".format(assignment.id,
+                                                                                                   alert.alert_id))
 
                         results.append({
-                            "alert_id": alert.id,
+                            "alert_id": alert.alert_id,
                             "success": True,
                             "assignment_id": assignment.id,
                             "assigned_to": personnel
                         })
 
                     except Exception as e:
-                        logger.error(f"Error executing assignment for alert {alert.id}: {str(e)}")
+                        import traceback
+                        logger.error(f"Error executing assignment for alert {alert.alert_id}: {traceback.format_exc()}")
                         results.append({
-                            "alert_id": alert.id,
+                            "alert_id": alert.alert_id,
                             "success": False,
                             "message": str(e),
                             "assignment_id": assignment.id
@@ -506,7 +513,8 @@ def execute_auto_assignment_for_alerts(alert_ids: List[str]) -> Dict[str, Any]:
     operator = AlertAssignmentOperator(alert_ids)
     result = operator.execute_auto_assignment()
     logger.info(f"=== Auto assignment completed: {result} ===")
-    not_assignment_ids = set(alert_ids) - set(result.get("assignment_results", []))
+    assignment_alart_ids = [i.get("alert_id") for i in result.get("assignment_results", [])]
+    not_assignment_ids = set(alert_ids) - set(assignment_alart_ids)
     if not_assignment_ids:
         # 去进行兜底分派 使用全局分派 每60分钟分派一次 知道告警被相应后结束
         not_assignment_alert_notify(not_assignment_ids)
@@ -522,5 +530,4 @@ def not_assignment_alert_notify(alert_ids):
     alert_instances = list(Alert.objects.filter(alert_id__in=alert_ids, status=AlertStatus.UNASSIGNED))
     from apps.alerts.tasks import sync_notify
     params = UnDispatchService.notify_un_dispatched_alert_params_format(alerts=alert_instances)
-    for notify_people, channel, title, content, alerts in params:
-        sync_notify.delay(notify_people, channel, title, content)
+    sync_notify.delay(params)

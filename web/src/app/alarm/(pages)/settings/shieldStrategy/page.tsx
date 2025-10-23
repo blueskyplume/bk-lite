@@ -48,10 +48,10 @@ const ShieldStrategy: React.FC = () => {
 
   const handleDelete = async (row: AlertShieldListItem) => {
     Modal.confirm({
-      title: t('deleteTitle'),
-      content: t('deleteContent'),
-      okText: t('confirm'),
-      cancelText: t('cancel'),
+      title: t('common.delConfirm'),
+      content: t('common.delConfirmCxt'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
       centered: true,
       onOk: async () => {
         try {
@@ -132,7 +132,7 @@ const ShieldStrategy: React.FC = () => {
     try {
       const data = await patchShield(row.id, { is_active: checked });
       if (!data) {
-        message.error(t('common.operateFailed'));
+        message.error(t('alarmCommon.operateFailed'));
       } else {
         message.success(
           checked ? t('settings.enableSuccess') : t('settings.disableSuccess')
@@ -140,7 +140,7 @@ const ShieldStrategy: React.FC = () => {
       }
       getTableList();
     } catch {
-      console.error(t('common.operateFailed'));
+      console.error(t('alarmCommon.operateFailed'));
     } finally {
       setLoadingIds((ids) => {
         const nxt = { ...ids };
@@ -230,7 +230,7 @@ const ShieldStrategy: React.FC = () => {
                 size="small"
                 onClick={() => handleEdit('edit', row)}
               >
-                {t('edit')}
+                {t('common.edit')}
               </Button>
             </PermissionWrapper>
             <PermissionWrapper requiredPermissions={['Delete']}>
@@ -239,7 +239,7 @@ const ShieldStrategy: React.FC = () => {
                 size="small"
                 onClick={() => handleDelete(row)}
               >
-                {t('delete')}
+                {t('common.delete')}
               </Button>
             </PermissionWrapper>
           </div>
@@ -258,13 +258,13 @@ const ShieldStrategy: React.FC = () => {
         title={t('settings.shieldStrategy')}
         message={t('settings.shieldStrategyMessage')}
       />
-      <div className="p-4 bg-white rounded-lg shadow">
+      <div className="p-4 bg-[var(--color-bg-1)] rounded-lg shadow">
         <div className="nav-box flex justify-between mb-[20px]">
           <div className="flex items-center">
             <Input
               allowClear
               value={searchKey}
-              placeholder={t('common.searchPlaceHolder')}
+              placeholder={t('common.search')}
               style={{ width: 250 }}
               onChange={(e) => setSearchKey(e.target.value)}
               onPressEnter={handleFilterChange}

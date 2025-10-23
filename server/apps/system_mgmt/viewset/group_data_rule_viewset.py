@@ -1,11 +1,12 @@
 from django.http import JsonResponse
-from django.utils.translation import gettext as _
 from django_filters import filters
 from django_filters.rest_framework import FilterSet
-from rest_framework import viewsets
 from rest_framework.decorators import action
 
 from apps.core.decorators.api_permission import HasPermission
+from apps.core.utils.viewset_utils import LanguageViewSet
+from apps.rpc.cmdb import CMDB
+from apps.rpc.log import Log
 from apps.rpc.monitor import Monitor
 from apps.rpc.node_mgmt import NodeMgmt
 from apps.rpc.opspilot import OpsPilot
@@ -20,8 +21,8 @@ class GroupDataRuleFilter(FilterSet):
     app = filters.CharFilter(field_name="app", lookup_expr="exact")
 
 
-class GroupDataRuleViewSet(viewsets.ModelViewSet):
-    queryset = GroupDataRule.objects.all()
+class GroupDataRuleViewSet(LanguageViewSet):
+    queryset = GroupDataRule.objects.all().order_by("-id")
     serializer_class = GroupDataRuleSerializer
     filterset_class = GroupDataRuleFilter
 
@@ -51,7 +52,8 @@ class GroupDataRuleViewSet(viewsets.ModelViewSet):
             return JsonResponse({"result": False, "message": str(e)})
         fun = getattr(client, "get_module_data", None)
         if fun is None:
-            return JsonResponse({"result": False, "message": _("Module not found")})
+            message = self.loader.get("error.module_not_found") if self.loader else "Module not found"
+            return JsonResponse({"result": False, "message": message})
         params["page"] = int(params.get("page", "1"))
         params["page_size"] = int(params.get("page_size", "10"))
         return_data = fun(**params)
@@ -67,20 +69,30 @@ class GroupDataRuleViewSet(viewsets.ModelViewSet):
             return JsonResponse({"result": False, "message": str(e)})
         fun = getattr(client, "get_module_list", None)
         if fun is None:
-            return JsonResponse({"result": False, "message": _("Module not found")})
+            message = self.loader.get("error.module_not_found") if self.loader else "Module not found"
+            return JsonResponse({"result": False, "message": message})
         return_data = fun()
         for i in return_data:
-            i["display_name"] = _(i["display_name"])
+            translated_name = self.loader.get(f"base_constant.{i['display_name']}") if self.loader else None
+            i["display_name"] = translated_name or i["display_name"]
             if "children" in i:
                 for child in i["children"]:
-                    child["display_name"] = _(child["display_name"])
+                    translated_child_name = self.loader.get(f"base_constant.{child['display_name']}") if self.loader else None
+                    child["display_name"] = translated_child_name or child["display_name"]
         return JsonResponse({"result": True, "data": return_data})
 
     @staticmethod
     def get_client(params):
-        client_map = {"opspilot": OpsPilot, "system-manager": SystemMgmt, "node": NodeMgmt, "monitor": Monitor}
+        client_map = {
+            "opspilot": OpsPilot,
+            "system-manager": SystemMgmt,
+            "node": NodeMgmt,
+            "monitor": Monitor,
+            "log": Log,
+            "cmdb": CMDB,
+        }
         app = params.pop("app")
         if app not in client_map.keys():
-            raise Exception(_("APP not found"))
+            raise Exception("APP not found")
         client = client_map[app]()
         return client

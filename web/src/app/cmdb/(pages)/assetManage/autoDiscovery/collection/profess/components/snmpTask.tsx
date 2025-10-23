@@ -202,7 +202,7 @@ const SNMPTask: React.FC<SNMPTaskFormProps> = ({
                   rules={rules.communityString}
                   required
                 >
-                  <Input.Password placeholder={t('common.pleaseInput')} />
+                  <Input.Password placeholder={t('common.inputTip')} />
                 </Form.Item>
               )}
 
@@ -211,7 +211,7 @@ const SNMPTask: React.FC<SNMPTaskFormProps> = ({
                   <Form.Item
                     label={t('Collection.SNMPTask.securityLevel')}
                     name="level"
-                    rules={[{ required: true }]}
+                    rules={[{ required: true, message: t('common.selectTip') }]}
                     initialValue="authPriv"
                   >
                     <Select onChange={setSecurityLevel}>
@@ -225,23 +225,23 @@ const SNMPTask: React.FC<SNMPTaskFormProps> = ({
                   <Form.Item
                     label={t('Collection.SNMPTask.userName')}
                     name="username"
-                    rules={[{ required: true }]}
+                    rules={[{ required: true, message: t('common.inputTip') }]}
                   >
-                    <Input placeholder={t('common.pleaseInput')} />
+                    <Input placeholder={t('common.inputTip')} />
                   </Form.Item>
 
                   <Form.Item
                     label={t('Collection.SNMPTask.authPassword')}
                     name="authkey"
-                    rules={[{ required: true }]}
+                    rules={[{ required: true, message: t('common.inputTip') }]}
                   >
-                    <Input.Password placeholder={t('common.pleaseInput')} />
+                    <Input.Password placeholder={t('common.inputTip')} />
                   </Form.Item>
 
                   <Form.Item
                     label={t('Collection.SNMPTask.hashAlgorithm')}
                     name="integrity"
-                    rules={[{ required: true }]}
+                    rules={[{ required: true, message: t('common.selectTip') }]}
                   >
                     <Select>
                       <Select.Option value="sha">SHA</Select.Option>
@@ -254,7 +254,9 @@ const SNMPTask: React.FC<SNMPTaskFormProps> = ({
                       <Form.Item
                         label={t('Collection.SNMPTask.encryptAlgorithm')}
                         name="privacy"
-                        rules={[{ required: true }]}
+                        rules={[
+                          { required: true, message: t('common.selectTip') },
+                        ]}
                         initialValue="aes"
                       >
                         <Select>
@@ -266,9 +268,11 @@ const SNMPTask: React.FC<SNMPTaskFormProps> = ({
                       <Form.Item
                         label={t('Collection.SNMPTask.encryptKey')}
                         name="privkey"
-                        rules={[{ required: true }]}
+                        rules={[
+                          { required: true, message: t('common.inputTip') },
+                        ]}
                       >
-                        <Input.Password placeholder={t('common.pleaseInput')} />
+                        <Input.Password placeholder={t('common.inputTip')} />
                       </Form.Item>
                     </>
                   )}

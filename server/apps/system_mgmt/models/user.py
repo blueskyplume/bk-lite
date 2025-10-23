@@ -14,6 +14,7 @@ class User(models.Model):
     temporary_pwd = models.BooleanField(default=False)
     otp_secret = models.CharField(max_length=128, null=True, blank=True)
     domain = models.CharField(max_length=100, default="domain.com")
+    last_login = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("username", "domain")
@@ -30,6 +31,7 @@ class User(models.Model):
             "timezone",
             "domain",
             "role_list",
+            "last_login",
         ]
 
 
@@ -38,6 +40,7 @@ class Group(models.Model):
     description = models.TextField(null=True, blank=True)
     parent_id = models.IntegerField(default=0)
     external_id = models.CharField(max_length=100, null=True, blank=True)
+    # is_virtual = models.BooleanField(default=False, verbose_name="是否虚拟组")
 
     class Meta:
         unique_together = ("name", "parent_id")

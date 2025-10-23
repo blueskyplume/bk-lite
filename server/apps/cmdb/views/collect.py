@@ -5,12 +5,11 @@
 from django.conf import settings
 from django.db.models import Q
 from django.http import JsonResponse
-from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
 
 from apps.cmdb.models import EXECUTE
+from apps.cmdb.permission import InstanceTaskPermission
 from apps.cmdb.utils.change_record import create_change_record
-from apps.core.decorators.api_permission import  HasPermission
+from apps.core.decorators.api_permission import HasPermission
 from apps.rpc.node_mgmt import NodeMgmt
 from config.drf.viewsets import ModelViewSet
 from rest_framework.decorators import action
@@ -35,74 +34,48 @@ class CollectModelViewSet(ModelViewSet):
     ordering = ["-updated_at"]
     filterset_class = CollectModelFilter
     pagination_class = CustomPageNumberPagination
+    permission_classes = [InstanceTaskPermission]
 
-    @swagger_auto_schema(
-        method='get',
-        operation_id="tree",
-        operation_description="查询采集模型对象树",
-    )
-    @HasPermission("discovery_collection-View")
+    @HasPermission("auto_collection-View")
     @action(methods=["get"], detail=False, url_path="collect_model_tree")
     def tree(self, request, *args, **kwargs):
         data = COLLECT_OBJ_TREE
         return WebUtils.response_success(data)
 
-    @swagger_auto_schema(
-        method='get',
-        operation_id="collect_task_list",
-        operation_description="查询采集模型任务列表",
-        manual_parameters=[
-            openapi.Parameter("page", openapi.IN_QUERY, description="第几页", type=openapi.TYPE_STRING),
-            openapi.Parameter("page_size", openapi.IN_QUERY, description="每页条目数", type=openapi.TYPE_STRING),
-            openapi.Parameter("driver_type", openapi.IN_QUERY, description="驱动", type=openapi.TYPE_STRING),
-            openapi.Parameter("search", openapi.IN_QUERY, description="任务名称", type=openapi.TYPE_STRING),
-            openapi.Parameter("ordering", openapi.IN_QUERY, description="排序", type=openapi.TYPE_STRING),
-            openapi.Parameter("exec_status", openapi.IN_QUERY, description="采集状态", type=openapi.TYPE_STRING),
-        ]
-    )
-    @HasPermission("discovery_collection-View")
+    @HasPermission("auto_collection-View")
     @action(methods=["get"], detail=False, url_path="search")
     def search(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = CollectModelLIstSerializer(page, many=True)
+            serializer = CollectModelLIstSerializer(page, many=True, context={"request": request})
             return self.get_paginated_response(serializer.data)
 
-        serializer = CollectModelLIstSerializer(queryset, many=True)
+        serializer = CollectModelLIstSerializer(queryset, many=True, context={"request": request})
         return WebUtils.response_success(serializer.data)
 
-    @HasPermission("discovery_collection-Add")
+    @HasPermission("auto_collection-Add")
     def create(self, request, *args, **kwargs):
         data = CollectModelService.create(request, self)
         return WebUtils.response_success(data)
 
-    @HasPermission("discovery_collection-Edit")
+    @HasPermission("auto_collection-Edit")
     def update(self, request, *args, **kwargs):
         data = CollectModelService.update(request, self)
         return WebUtils.response_success(data)
 
-    @HasPermission("discovery_collection-Delete")
+    @HasPermission("auto_collection-Delete")
     def destroy(self, request, *args, **kwargs):
         data = CollectModelService.destroy(request, self)
         return WebUtils.response_success(data)
 
     @action(methods=["GET"], detail=True)
-    @HasPermission("discovery_collection-View")
+    @HasPermission("auto_collection-View")
     def info(self, request, *args, **kwargs):
         instance = self.get_object()
         return WebUtils.response_success(instance.info)
 
-    @swagger_auto_schema(
-        operation_id="collect_task_exec_task",
-        operation_description="执行配置采集任务",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={},
-            required=[]
-        ),
-    )
-    @HasPermission("discovery_collection-Execute")
+    @HasPermission("auto_collection-Execute")
     @action(methods=["POST"], detail=True)
     def exec_task(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -127,7 +100,7 @@ class CollectModelViewSet(ModelViewSet):
         return WebUtils.response_success(instance.id)
 
     @action(methods=["POST"], detail=True)
-    @HasPermission("discovery_collection-Add")
+    @HasPermission("auto_collection-Add")
     @transaction.atomic
     def approval(self, request, *args, **kwargs):
         """
@@ -146,7 +119,7 @@ class CollectModelViewSet(ModelViewSet):
         return WebUtils.response_success()
 
     @action(methods=["GET"], detail=False)
-    @HasPermission("discovery_collection-View")
+    @HasPermission("auto_collection-View")
     def nodes(self, request, *args, **kwargs):
         """
         获取所有节点
@@ -156,13 +129,18 @@ class CollectModelViewSet(ModelViewSet):
             "page": int(params.get("page", 1)),
             "page_size": int(params.get("page_size", 10)),
             "name": params.get("name", ""),
+            "permission_data": {
+                "username": request.user.username,
+                "domain": request.user.domain,
+                "current_team": request.COOKIES.get("current_team"),
+            },
         }
         node = NodeMgmt()
         data = node.node_list(query_data)
         return WebUtils.response_success(data)
 
     @action(methods=["GET"], detail=False)
-    @HasPermission("discovery_collection-View")
+    @HasPermission("auto_collection-View")
     def model_instances(self, requests, *args, **kwargs):
         """
         获取此模型下发过任务的实例
@@ -176,7 +154,7 @@ class CollectModelViewSet(ModelViewSet):
         return WebUtils.response_success(result)
 
     @action(methods=["POST"], detail=False)
-    @HasPermission("discovery_collection-View")
+    @HasPermission("auto_collection-View")
     def list_regions(self, requests, *args, **kwargs):
         """
         查询云的所有区域
@@ -196,11 +174,11 @@ class OidModelViewSet(ModelViewSet):
     filterset_class = OidModelFilter
     pagination_class = CustomPageNumberPagination
 
-    @HasPermission("discovery_feature_library-View")
+    @HasPermission("soid_library-View")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
-    @HasPermission("discovery_feature_library-Add")
+    @HasPermission("soid_library-Add")
     def create(self, request, *args, **kwargs):
         oid = request.data["oid"]
         if OidMapping.objects.filter(oid=oid).exists():
@@ -208,7 +186,7 @@ class OidModelViewSet(ModelViewSet):
 
         return super().create(request, *args, **kwargs)
 
-    @HasPermission("discovery_feature_library-Edit")
+    @HasPermission("soid_library-Edit")
     def update(self, request, *args, **kwargs):
         oid = request.data["oid"]
         if OidMapping.objects.filter(~Q(id=self.get_object().id), oid=oid).exists():
@@ -216,6 +194,6 @@ class OidModelViewSet(ModelViewSet):
 
         return super().update(request, *args, **kwargs)
 
-    @HasPermission("discovery_feature_library-Delete")
+    @HasPermission("soid_library-Delete")
     def destroy(self, request, *args, **kwargs):
         return super().destroy(request, *args, **kwargs)

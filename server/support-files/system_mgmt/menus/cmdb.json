@@ -3,6 +3,7 @@
   "name": "CMDB",
   "url": "/cmdb/assetSearch",
   "description": "Platform for centralized management of all IT assets and resources of an enterprise, helping organizations effectively track asset lifecycle, optimize resource allocation and ensure system security",
+  "tags": ["资产管理","自动发现","模型自定义"],
   "menus": [
     {
       "name": "Search",
@@ -81,36 +82,6 @@
       "name": "admin",
       "role_name": "cmdb_admin",
       "menus": []
-    },
-    {
-      "name": "manager",
-      "role_name": "cmdb_manager",
-      "menus": [
-        "search-View",
-        "asset_info-View",
-        "asset_info-Add",
-        "asset_info-Edit",
-        "asset_info-Delete",
-        "asset_info-Add Associate",
-        "asset_info-Delete Associate",
-        "model_management-View",
-        "model_management-Add Model",
-        "model_management-Edit Model",
-        "model_management-Delete Model",
-        "model_management-Add Group",
-        "model_management-Edit Group",
-        "model_management-Delete Group",
-        "auto_collection-View",
-        "auto_collection-Add",
-        "auto_collection-Edit",
-        "auto_collection-Delete",
-        "auto_collection-Execute",
-        "soid_library-View",
-        "soid_library-Add",
-        "soid_library-Edit",
-        "soid_library-Delete",
-        "operation_log-View"
-      ]
     },
     {
       "name": "normal",

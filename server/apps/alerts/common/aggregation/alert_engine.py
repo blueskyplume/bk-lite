@@ -11,13 +11,14 @@ import json
 
 from apps.alerts.constants import AlertStatus
 from apps.alerts.models import Alert
+from apps.alerts.utils.util import generate_instance_fingerprint
 from apps.core.logger import alert_logger as logger
 
 
 @dataclass
 class AlertRule:
     name: str
-    condition: Callable[[pd.DataFrame], Tuple[bool, List[str]]]
+    condition: Callable[[pd.DataFrame], Tuple[bool, List[List[str]]]]  # 修正类型注解
     aggregation: Dict[str, List[str]]
     description: str
     rule_id: str
@@ -26,6 +27,7 @@ class AlertRule:
     severity: str = "medium"
     is_active: bool = True
     alert_sources: List[str] = None
+    aggregation_key: List[str] = None
     # 聚合策略配置详解：
     aggregation_strategy: str = "group_by"
     """
@@ -127,7 +129,9 @@ class RuleEngine:
                 # 新增聚合策略配置
                 aggregation_strategy=rule_config.get('aggregation_strategy', 'group_by'),
                 aggregation_window=rule_config.get('aggregation_window', '0'),
-                max_alerts_per_group=rule_config.get('max_alerts_per_group', 100)
+                max_alerts_per_group=rule_config.get('max_alerts_per_group', 100),
+                aggregation_key=rule_config.get("condition", {}).get("aggregation_key") or ["resource_name",
+                                                                                            "resource_type"]
             )
         except Exception as e:
             logger.error(f"Rule {rule_config.get('name')} add failed: {e}")
@@ -320,7 +324,7 @@ class RuleEngine:
 
         # 等级优先级映射
         level_priority = {'info': 3, 'warning': 2, 'error': 1, 'critical': 0}
-        threshold_priority = level_priority.get(target_value, 1)
+        threshold_priority = level_priority.get(target_value, 3)
 
         def condition(df: pd.DataFrame) -> Tuple[bool, List[List[str]]]:
             if df.empty:
@@ -338,8 +342,8 @@ class RuleEngine:
             if filtered_df.empty:
                 return False, []
 
-            # 等级映射
-            filtered_df['level_priority'] = filtered_df[target_value_field].map(level_priority).fillna(0)
+            # 做类型转换，确保 level 列是int类型
+            filtered_df['level_priority'] = filtered_df[target_value_field].astype(int)
 
             if operator == '>=':
                 result_df = filtered_df[filtered_df['level_priority'] >= threshold_priority]
@@ -428,19 +432,17 @@ class RuleEngine:
 
         return condition
 
-    def group_events_by_instance(self, events: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    def group_events_by_instance(self, events: pd.DataFrame, fields: List = []) -> Dict[str, pd.DataFrame]:
         """
         按实例分组事件数据
 
         Args:
             events: 原始事件DataFrame
+            fields: 用于生成实例指纹的字段列表（可选）
 
         Returns:
             按实例指纹分组的事件字典
         """
-        if events.empty:
-            return {}
-
         # 为每个事件生成实例指纹
         events = events.copy()
 
@@ -454,7 +456,7 @@ class RuleEngine:
 
         # 生成实例指纹
         events['instance_fingerprint'] = events.apply(
-            lambda row: self.generate_instance_fingerprint(row.to_dict()),
+            lambda row: generate_instance_fingerprint(row.to_dict(), fields),
             axis=1
         )
 
@@ -475,43 +477,11 @@ class RuleEngine:
         logger.info(f"Grouped {len(events)} events into {len(grouped_events)} instances")
         return grouped_events
 
-    def generate_instance_fingerprint(self, event_data: Dict[str, Any]) -> str:
-        """
-        生成实例指纹，用于标识唯一实例
-
-        Args:
-            event_data: 事件数据
-
-        Returns:
-            32位MD5哈希字符串作为实例指纹
-        """
-        fingerprint_data = {}
-
-        for field in self.INSTANCE_GROUP_FIELDS:
-            value = event_data.get(field)
-
-            # 处理None值和空字符串
-            if value is not None and str(value).strip():
-                fingerprint_data[field] = str(value).strip()
-            else:
-                # 为空值提供默认值，确保指纹的一致性
-                fingerprint_data[field] = 'unknown'
-                logger.debug(f"Field '{field}' is empty or None, using 'unknown' as default")
-
-        # 确保字段顺序一致
-        sorted_data = json.dumps(fingerprint_data, sort_keys=True, ensure_ascii=False)
-        fingerprint = hashlib.md5(sorted_data.encode('utf-8')).hexdigest()
-
-        return fingerprint
-
-    def _check_instance_alert_status(self, instance_events: pd.DataFrame,
-                                     instance_fingerprint: str,
-                                     rule: AlertRule) -> Tuple[bool, List[Dict], str]:
+    def _check_instance_alert_status(self, instance_fingerprint: str, rule: AlertRule) -> Tuple[bool, List[Dict], str]:
         """
         检查实例是否已有活跃告警
 
         Args:
-            instance_events: 实例事件数据
             instance_fingerprint: 实例指纹
             rule: 告警规则
 
@@ -523,6 +493,7 @@ class RuleEngine:
             # 'rule_name': rule.name,
             'status__in': AlertStatus.ACTIVATE_STATUS,
             'fingerprint': instance_fingerprint,  # 使用实例指纹查询
+            'rule_id': rule.rule_id,  # 使用规则ID查询
         }
 
         # 添加时间窗口限制
@@ -553,97 +524,92 @@ class RuleEngine:
         alerts = Alert.objects.filter(**query_conditions).values()
         return list(alerts)
 
-    def _process_instance_events(self, instance_events: pd.DataFrame,
-                                 instance_fingerprint: str) -> Dict[str, Dict[str, Any]]:
+    def _process_instance_events(self, events: pd.DataFrame) -> List[Dict[str, Dict[str, Any]]]:
         """
         处理单个实例的事件
 
         Args:
-            instance_events: 单个实例的事件数据
-            instance_fingerprint: 实例指纹
+            events: 单个实例的事件数据
 
         Returns:
             该实例的规则处理结果
         """
-        results = {}
+        result_list = []
 
         for rule_id, rule in self.rules.items():
             if not rule.is_active:
                 continue
 
-            try:
-                # 对单个实例应用规则（这样保证了持续条件等规则的正确性）
-                triggered, event_groups = rule.condition(instance_events)
+            aggregation_key = self.rules[rule_id].aggregation_key if rule_id in self.rules else []
 
-                if triggered:
-                    # 展平事件ID列表
-                    flat_event_ids = [event_id for group in event_groups for event_id in group]
+            # **关键：按实例分组处理**
+            grouped_events = self.group_events_by_instance(events, fields=aggregation_key)
 
-                    # 检查是否需要创建新告警（基于实例指纹）
-                    should_create_new, related_alerts, operation_type = self._check_instance_alert_status(
-                        instance_events, instance_fingerprint, rule
-                    )
+            if not grouped_events:
+                logger.info("No events to process after grouping")
+                continue
 
-                    results[rule_id] = {
-                        'triggered': True,
-                        'event_ids': flat_event_ids,
-                        'instance_fingerprint': instance_fingerprint,
-                        'instance_events': instance_events,
-                        'severity': rule.severity,
-                        'description': rule.description,
-                        'rule': rule,
-                        'should_create_new': should_create_new,
-                        'related_alerts': related_alerts,
-                        'operation_type': operation_type,
-                    }
-                else:
-                    results[rule_id] = {'triggered': False}
+            # 对每个实例分别应用规则
+            for instance_fingerprint, instance_events in grouped_events.items():
+                logger.debug(f"Processing {len(instance_events)} events for instance: {instance_fingerprint}")
+                results = {}
 
-            except Exception as e:
-                logger.error(f"Rule {rule_id} evaluation failed for instance {instance_fingerprint}: {e}")
-                results[rule_id] = {'triggered': False, 'error': str(e)}
+                try:
+                    # 对单个实例应用规则（这样保证了持续条件等规则的正确性）
+                    triggered, event_groups = rule.condition(instance_events)
 
-        return results
+                    if triggered:
+                        # 展平事件ID列表
+                        flat_event_ids = [event_id for group in event_groups for event_id in group]
+
+                        # 检查是否需要创建新告警（基于实例指纹）
+                        should_create_new, related_alerts, operation_type = self._check_instance_alert_status(
+                            instance_fingerprint, rule
+                        )
+
+                        results[rule_id] = {
+                            'triggered': True,
+                            'event_ids': flat_event_ids,
+                            'instance_fingerprint': instance_fingerprint,
+                            'instance_events': instance_events,
+                            'severity': rule.severity,
+                            'description': rule.description,
+                            'rule': rule,
+                            'should_create_new': should_create_new,
+                            'related_alerts': related_alerts,
+                            'operation_type': operation_type,
+                        }
+                    else:
+                        results[rule_id] = {'triggered': False}
+
+                except Exception as e:
+                    logger.error(f"Rule {rule_id} evaluation failed for instance {instance_fingerprint}: {e}")
+                    results[rule_id] = {'triggered': False, 'error': str(e)}
+
+                finally:
+                    result_list.append(results)
+
+        return result_list
 
     def process_events(self, events: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         """
         处理事件并返回告警结果（按实例分组处理）
         """
+
+        results = {}
+
         if events.empty:
-            return {}
-
-        # 修复时间处理逻辑
-        events = events.copy()
-
-        # 确保 received_at 是 datetime 类型，而不是 timedelta
-        if 'received_at' in events.columns:
-            events['received_at'] = pd.to_datetime(events['received_at'])
-            # 只保留窗口内的数据
-            window_end = events['received_at'].max()
-            events = events[events['received_at'] >= (window_end - self.window_size)]
-        else:
-            logger.warning("'received_at' column not found in events DataFrame")
+            return results
 
         # 确保存在alert_source字段
         events['alert_source'] = events['source__name']
 
-        # **关键：按实例分组处理**
-        grouped_events = self.group_events_by_instance(events)
+        # 按实例分组事件 分别应用规则
+        rule_instance_results = self._process_instance_events(events)
 
-        if not grouped_events:
-            logger.info("No events to process after grouping")
-            return {}
-
-        results = {}
-
-        # 对每个实例分别应用规则
-        for instance_fingerprint, instance_events in grouped_events.items():
-            logger.debug(f"Processing {len(instance_events)} events for instance: {instance_fingerprint}")
-
-            instance_results = self._process_instance_events(instance_events, instance_fingerprint)
-
+        for instance_events in rule_instance_results:
             # 合并结果
-            for rule_name, rule_result in instance_results.items():
+            for rule_name, rule_result in instance_events.items():
                 if rule_name not in results:
                     results[rule_name] = {
                         'triggered': False,
@@ -658,7 +624,7 @@ class RuleEngine:
                 if rule_result['triggered']:
                     results[rule_name]['rule'] = rule_result['rule']
                     results[rule_name]['triggered'] = True
-                    results[rule_name]['instances'][instance_fingerprint] = rule_result
+                    results[rule_name]['instances'][rule_result['instance_fingerprint']] = rule_result
                     results[rule_name]['total_event_ids'].extend(rule_result['event_ids'])
                     results[rule_name]['severity'] = rule_result['severity']
                     results[rule_name]['description'] = rule_result['description']

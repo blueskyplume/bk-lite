@@ -2,22 +2,19 @@
 import React, { useEffect, useState } from 'react';
 import useApiClient from '@/utils/request';
 import useMonitorApi from '@/app/monitor/api';
+import useEventApi from '@/app/monitor/api/event';
 import templateStyle from './index.module.scss';
-import { TreeItem, TableDataItem } from '@/app/monitor/types';
-import { ObjectItem } from '@/app/monitor/types/monitor';
-import { STRATEGY_TEMPLATES } from '@/app/monitor/constants/monitor';
-import {
-  deepClone,
-  findLabelById,
-  getIconByObjectName,
-} from '@/app/monitor/utils/common';
+import { TreeItem, TableDataItem, ObjectItem } from '@/app/monitor/types';
+import { findLabelById, getIconByObjectName } from '@/app/monitor/utils/common';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TreeSelector from '@/app/monitor/components/treeSelector';
 import EntityList from '@/components/entity-list';
+import { cloneDeep } from 'lodash';
 
 const Template: React.FC = () => {
   const { isLoading } = useApiClient();
-  const { getPolicyTemplate, getMonitorObject } = useMonitorApi();
+  const { getMonitorObject } = useMonitorApi();
+  const { getPolicyTemplate, getTemplateObjects } = useEventApi();
   const searchParams = useSearchParams();
   const objId = searchParams.get('objId');
   const router = useRouter();
@@ -65,36 +62,38 @@ const Template: React.FC = () => {
   };
 
   const getObjects = async () => {
-    try {
-      setTreeLoading(true);
-      const data: ObjectItem[] = await getMonitorObject();
-      setObjects(data);
-      const _treeData = getTreeData(deepClone(data));
-      const defaulltId = (_treeData[0]?.children || [])[0]?.key;
-      setDefaultSelectObj(objId ? +objId : defaulltId);
-      setTreeData(_treeData);
-    } finally {
-      setTreeLoading(false);
-    }
+    setTreeLoading(true);
+    Promise.all([getMonitorObject(), getTemplateObjects()])
+      .then((res) => {
+        const monitorObjects = (res[0] || []).filter((item: ObjectItem) =>
+          (res[1] || []).includes(item.id)
+        );
+        setObjects(monitorObjects);
+        const _treeData = getTreeData(cloneDeep(monitorObjects));
+        const defaulltId = (_treeData[0]?.children || [])[0]?.key;
+        setDefaultSelectObj(objId ? +objId : defaulltId);
+        setTreeData(_treeData);
+      })
+      .finally(() => {
+        setTreeLoading(false);
+      });
   };
 
   const getTreeData = (data: ObjectItem[]): TreeItem[] => {
     const groupedData = data.reduce((acc, item) => {
-      if (STRATEGY_TEMPLATES.includes(item.name as string)) {
-        if (!acc[item.type]) {
-          acc[item.type] = {
-            title: item.display_type || '--',
-            key: item.type,
-            children: [],
-          };
-        }
-        acc[item.type].children.push({
-          title: item.display_name || '--',
-          label: item.name || '--',
-          key: item.id,
+      if (!acc[item.type]) {
+        acc[item.type] = {
+          title: item.display_type || '--',
+          key: item.type,
           children: [],
-        });
+        };
       }
+      acc[item.type].children.push({
+        title: item.display_name || '--',
+        label: item.name || '--',
+        key: item.id,
+        children: [],
+      });
       return acc;
     }, {} as Record<string, TreeItem>);
     return Object.values(groupedData);

@@ -8,6 +8,7 @@ from apps.alerts.constants import LogAction, LogTargetType
 from apps.alerts.filters import CorrelationRulesModelFilter, AggregationRulesModelFilter
 from apps.alerts.models import AggregationRules, CorrelationRules, OperatorLog
 from apps.alerts.serializers.rule_serializers import AggregationRulesSerializer, CorrelationRulesSerializer
+from apps.core.decorators.api_permission import HasPermission
 from config.drf.pagination import CustomPageNumberPagination
 from apps.core.logger import alert_logger as logger
 
@@ -21,6 +22,10 @@ class AggregationRulesViewSet(viewsets.ModelViewSet):
     ordering_fields = ["created_at"]
     ordering = ["-created_at"]
     pagination_class = CustomPageNumberPagination
+
+    @HasPermission("correlation_rules-View")
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
 
     def get_queryset(self):
         """获取聚合规则查询集，预加载关联规则数据"""
@@ -77,17 +82,21 @@ class AggregationRulesViewSet(viewsets.ModelViewSet):
         """重新加载数据库规则到告警引擎"""
         try:
             # 移动导入到函数内部避免循环导入
-            from apps.alerts.common.aggregation.alert_processor import AlertProcessor
-            processor = AlertProcessor()
-            processor.reload_database_rules()
+            from apps.alerts.common.rules.rule_manager import get_rule_manager
 
-            # 统计加载的规则数量
-            rule_count = AggregationRules.objects.filter(is_active=True).count()
+            rule_manager = get_rule_manager()
+            rule_manager.reload_rules_from_database()
+
+            # 统计规则信息
+            stats = rule_manager.get_rule_statistics()
+            window_types = rule_manager.get_window_types()
 
             return Response({
                 'success': True,
-                'message': f'成功重新加载 {rule_count} 个规则到告警引擎',
-                'rule_count': rule_count
+                'message': f'成功重新加载 {stats["total_rules"]} 条规则到告警引擎',
+                'window_types': len(window_types),
+                'window_type': window_types[0] if window_types else None,
+                'stats': stats
             })
         except Exception as e:
             logger.error(f"重新加载规则失败: {str(e)}")
@@ -117,6 +126,11 @@ class CorrelationRulesViewSet(viewsets.ModelViewSet):
             )
         )
 
+    @HasPermission("correlation_rules-View")
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @HasPermission("correlation_rules-Add")
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         """创建关联规则"""
@@ -147,6 +161,7 @@ class CorrelationRulesViewSet(viewsets.ModelViewSet):
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
+    @HasPermission("correlation_rules-Edit")
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -172,6 +187,7 @@ class CorrelationRulesViewSet(viewsets.ModelViewSet):
 
         return Response(serializer.data)
 
+    @HasPermission("correlation_rules-Delete")
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

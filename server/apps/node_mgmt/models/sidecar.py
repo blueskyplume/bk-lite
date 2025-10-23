@@ -43,7 +43,7 @@ class Node(TimeInfo, MaintainerInfo):
 
 class NodeOrganization(TimeInfo, MaintainerInfo):
     node = models.ForeignKey(Node, on_delete=models.CASCADE, verbose_name="节点")
-    organization = models.CharField(max_length=100, verbose_name="组织id")
+    organization = models.IntegerField(verbose_name="组织id")
 
     class Meta:
         verbose_name = "节点组织"
@@ -68,6 +68,8 @@ class Collector(TimeInfo, MaintainerInfo):
     introduction = models.TextField(blank=True, verbose_name="采集器介绍")
     icon = models.CharField(max_length=100, default="", verbose_name="图标key")
     controller_default_run = models.BooleanField(default=False, verbose_name="控制器默认运行")
+    enabled_default_config = models.BooleanField(default=False, verbose_name="是否启用默认初始化的配置")
+    default_config = JSONField(default=dict, verbose_name="默认初始化的配置")
 
     class Meta:
         verbose_name = "采集器信息"
@@ -111,10 +113,12 @@ class ChildConfig(TimeInfo, MaintainerInfo):
     content = models.TextField(verbose_name='内容')
     collector_config = models.ForeignKey(CollectorConfiguration, on_delete=models.CASCADE, verbose_name='采集器配置')
     env_config = JSONField(default=dict, verbose_name="环境变量配置")
+    sort_order = models.IntegerField(default=0, verbose_name='排序序号')
 
     class Meta:
         verbose_name = "子配置"
         verbose_name_plural = "子配置"
+        ordering = ['sort_order', 'created_at']  # 默认按排序序号排序，次要按创建时间排序
 
     # uuid
     def save(self, *args, **kwargs):
@@ -133,7 +137,8 @@ class Action(TimeInfo, MaintainerInfo):
 
 
 class SidecarApiToken(TimeInfo, MaintainerInfo):
-    token = models.CharField(max_length=100, verbose_name="Token")
+    node_id = models.CharField(max_length=100, default="", verbose_name="节点ID")
+    token = models.CharField(max_length=250, verbose_name="Token")
 
     class Meta:
         verbose_name = "Sidecar API Token"

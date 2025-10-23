@@ -2,7 +2,7 @@
 import { ModalRef, Option } from "@/app/mlops/types";
 import { forwardRef, useImperativeHandle, useState, useRef, useEffect } from "react";
 import OperateModal from '@/components/operate-modal';
-import { Form, FormInstance, Select, Button, Input, InputNumber, Switch, message } from "antd";
+import { Form, FormInstance, Select, Button, Input, InputNumber, message } from "antd";
 import { useTranslation } from "@/utils/i18n";
 import useMlopsModelReleaseApi from "@/app/mlops/api/modelRelease";
 const { TextArea } = Input;
@@ -10,11 +10,17 @@ const { TextArea } = Input;
 interface ReleaseModalProps {
   trainjobs: Option[],
   onSuccess: () => void;
+  activeTag: string[];
 }
 
-const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, onSuccess }, ref) => {
+const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, activeTag, onSuccess }, ref) => {
   const { t } = useTranslation();
-  const { addAnomalyServings, updateAnomalyServings } = useMlopsModelReleaseApi();
+  const { 
+    addAnomalyServings, updateAnomalyServings,
+    addLogClusteringServings, updateLogClusteringServings,
+    addTimeseriesPredictServings, updateTimeSeriesPredictServings,
+    addClassificationServings, updateClassificationServings
+  } = useMlopsModelReleaseApi();
   const formRef = useRef<FormInstance>(null);
   const [type, setType] = useState<string>('add');
   const [formData, setFormData] = useState<any>(null);
@@ -27,7 +33,6 @@ const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, onSuc
       setFormData(form);
       setModalOpen(true);
       setConfirmLoading(false);
-      console.log(formData);
     }
   }));
 
@@ -37,36 +42,175 @@ const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, onSuc
     }
   }, [modalOpen])
 
+  useEffect(() => {
+    if (modalOpen) {
+      initializeForm();
+    }
+  }, [activeTag])
+
   const initializeForm = () => {
     if (!formRef.current) return;
     formRef.current.resetFields();
+    
+    const [tagName] = activeTag;
+    
     if (type === 'add') {
-      formRef.current.setFieldsValue({
+      const defaultValues: Record<string, any> = {
         model_version: 'latest',
-        anomaly_threshold: 0.5
-      })
+        status: true
+      };
+      
+      // 只有 anomaly 类型才设置默认阈值
+      if (tagName === 'anomaly') {
+        defaultValues.anomaly_threshold = 0.5;
+      }
+      
+      formRef.current.setFieldsValue(defaultValues);
     } else {
-      formRef.current.setFieldsValue({
+      const editValues: Record<string, any> = {
         ...formData,
         status: formData.status === 'active' ? true : false
-      })
+      };
+      
+      formRef.current.setFieldsValue(editValues);
     }
+  };
+
+  // 渲染不同类型的特有字段
+  const renderTypeSpecificFields = () => {
+    const [tagName] = activeTag;
+    
+    switch (tagName) {
+      case 'anomaly':
+        return (
+          <>
+            <Form.Item
+              name='anomaly_detection_train_job'
+              label={t(`traintask.traintask`)}
+              rules={[{ required: true, message: t('common.inputMsg') }]}
+            >
+              <Select options={trainjobs} placeholder={t(`model-release.selectTraintask`)} />
+            </Form.Item>
+            <Form.Item
+              name='anomaly_threshold'
+              label={t(`model-release.modelThreshold`)}
+              rules={[{ required: true, message: t('common.inputMsg') }]}
+            >
+              <InputNumber className="w-full" placeholder={t(`model-release.inputThreshold`)} />
+            </Form.Item>
+          </>
+        );
+      
+      case 'log_clustering':
+        return (
+          <>
+            <Form.Item
+              name='log_clustering_train_job'
+              label={t(`traintask.traintask`)}
+              rules={[{ required: true, message: t('common.inputMsg') }]}
+            >
+              <Select options={trainjobs} placeholder={t(`model-release.selectTraintask`)} />
+            </Form.Item>
+            <Form.Item
+              name='api_endpoint'
+              label={t(`model-release.apiEndpoint`)}
+              rules={[{ required: true, message: t('common.inputMsg') }]}
+            >
+              <Input placeholder={t(`model-release.inputApiEndpoint`)} />
+            </Form.Item>
+            <Form.Item
+              name='max_requests_per_minute'
+              label={t(`model-release.maxRequestsPerMinute`)}
+              rules={[{ required: true, message: t('common.inputMsg') }]}
+            >
+              <InputNumber className="w-full" placeholder={t(`model-release.inputMaxRequests`)} />
+            </Form.Item>
+            <Form.Item
+              name='supported_log_formats'
+              label={t(`model-release.supportedLogFormats`)}
+              rules={[{ required: true, message: t('common.inputMsg') }]}
+            >
+              <TextArea placeholder={t(`model-release.inputLogFormats`)} rows={2} />
+            </Form.Item>
+          </>
+        );
+      
+      case 'timeseries_predict':
+        return (
+          <Form.Item
+            name='time_series_predict_train_job'
+            label={t(`traintask.traintask`)}
+            rules={[{ required: true, message: t('common.inputMsg') }]}
+          >
+            <Select options={trainjobs} placeholder={t(`model-release.selectTraintask`)} />
+          </Form.Item>
+        );
+
+      case 'classification': 
+        return (
+          <Form.Item
+            name='classification_train_job'
+            label={t(`traintask.traintask`)}
+            rules={[{ required: true, message: t('common.inputMsg') }]}
+          >
+            <Select options={trainjobs} placeholder={t(`model-release.selectTraintask`)} />
+          </Form.Item>
+        )
+      
+      default:
+        return null;
+    }
+  };
+
+  const handleAddMap: Record<string, ((params: any) => Promise<void>) | null> = {
+    'anomaly': async (params: any) => {
+      await addAnomalyServings(params);
+    },
+    'rasa': null, // RASA 类型留空
+    'log_clustering': async (params: any) => {
+      await addLogClusteringServings(params);
+    },
+    'timeseries_predict': async (params: any) => {
+      await addTimeseriesPredictServings(params);
+    },
+    'classification': async (params: any) => {
+      await addClassificationServings(params);
+    },
+  };
+
+  const handleUpdateMap: Record<string, ((id: number, params: any) => Promise<void>) | null> = {
+    'anomaly': async (id: number, params: any) => {
+      await updateAnomalyServings(id, params);
+    },
+    'rasa': null, // RASA 类型留空
+    'log_clustering': async (id: number, params: any) => {
+      await updateLogClusteringServings(id, params);
+    },
+    'timeseries_predict': async (id: number, params: any) => {
+      await updateTimeSeriesPredictServings(id, params);
+    },
+    'classification': async (id: number, params: any) => {
+      await updateClassificationServings(id, params);
+    },
   };
 
   const handleConfirm = async () => {
     setConfirmLoading(true);
     try {
+      const [tagName] = activeTag;
       const data = await formRef.current?.validateFields();
-      const params = {
-        ...data,
-        status: data.status ? 'active' : 'inactive'
-      };
 
       if (type === 'add') {
-        await addAnomalyServings(params);
+        if (!handleAddMap[tagName]) {
+          return;
+        }
+        await handleAddMap[tagName]!({ status: 'active', ...data });
         message.success(t(`model-release.publishSuccess`));
       } else {
-        await updateAnomalyServings(formData.id, params);
+        if (!handleUpdateMap[tagName]) {
+          return;
+        }
+        await handleUpdateMap[tagName]!(formData?.id, data);
         message.success(t(`common.updateSuccess`));
       }
       setModalOpen(false);
@@ -95,6 +239,7 @@ const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, onSuc
         ]}
       >
         <Form ref={formRef} layout="vertical">
+          {/* 公共字段 */}
           <Form.Item
             name='name'
             label={t(`model-release.modelName`)}
@@ -102,13 +247,10 @@ const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, onSuc
           >
             <Input placeholder={t(`common.inputMsg`)} />
           </Form.Item>
-          <Form.Item
-            name='anomaly_detection_train_job'
-            label={t(`traintask.traintask`)}
-            rules={[{ required: true, message: t('common.inputMsg') }]}
-          >
-            <Select options={trainjobs} placeholder={t(`model-release.selectTraintask`)} />
-          </Form.Item>
+          
+          {/* 不同类型的特有字段 */}
+          {renderTypeSpecificFields()}
+          
           <Form.Item
             name='model_version'
             label={t(`model-release.modelVersion`)}
@@ -116,25 +258,13 @@ const ReleaseModal = forwardRef<ModalRef, ReleaseModalProps>(({ trainjobs, onSuc
           >
             <Input placeholder={t(`model-release.inputVersionMsg`)} />
           </Form.Item>
-          <Form.Item
-            name='anomaly_threshold'
-            label={t(`model-release.modelThreshold`)}
-            rules={[{ required: true, message: t('common.inputMsg') }]}
-          >
-            <InputNumber className="w-full" placeholder={t(`model-release.inputThreshoid`)} />
-          </Form.Item>
-          <Form.Item
-            name='status'
-            label={t(`common.status`)}
-            layout="horizontal"
-          >
-            <Switch checkedChildren="是" unCheckedChildren="否" defaultChecked />
-          </Form.Item>
+          
           <Form.Item
             name='description'
             label={t(`model-release.modelDescription`)}
+            rules={[{ required: true, message: t('common.inputMsg') }]}
           >
-            <TextArea placeholder={t(`common.inputMsg`)} rows={4} maxLength={6} />
+            <TextArea placeholder={t(`common.inputMsg`)} rows={4} />
           </Form.Item>
         </Form>
       </OperateModal>

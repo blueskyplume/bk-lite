@@ -1,6 +1,10 @@
 import os
 
+install_apps = os.getenv("INSTALL_APPS", "")
+
 for app in os.listdir("apps"):
+    if install_apps and app not in install_apps.split(","):
+        continue
     if app.endswith(".py") or app.startswith("__"):
         continue
     if os.path.exists(f"apps/{app}/config.py"):
@@ -11,7 +15,11 @@ for app in os.listdir("apps"):
         else:
             for _setting in dir(__module):
                 if _setting == _setting.upper():
-                    locals()[_setting] = getattr(__module, _setting)
+                    value = getattr(__module, _setting)
+                    if isinstance(value, dict):
+                        locals().setdefault(_setting, {}).update(value)
+                    else:
+                        locals()[_setting] = getattr(__module, _setting)
 try:
     from local_settings import *  # noqa
 except ImportError:

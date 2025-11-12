@@ -2,27 +2,22 @@ import React, { useState, useEffect } from 'react';
 import dayjs from 'dayjs';
 import TimeSelector from '@/components/time-selector';
 import { Form, Input, Select, DatePicker, Switch, InputNumber } from 'antd';
-import type { FormInstance } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { DatasourceItem, ParamItem } from '@/app/ops-analysis/types/dataSource';
 
-type TimeValue = number | [number, number];
-
 const FormTimeSelector: React.FC<{
-  value?: TimeValue;
+  value?: any;
   disabled?: boolean;
-  onChange?: (value: TimeValue) => void;
+  onChange?: (value: any) => void;
 }> = ({ value, disabled = false, onChange }) => {
-  const [selectValue, setSelectValue] = useState<number | [number, number]>(
-    value ?? 10080
-  );
-  const [rangeValue, setRangeValue] = useState<[number, number] | null>(null);
+  const [selectValue, setSelectValue] = useState(value ?? 10080);
+  const [rangeValue, setRangeValue] = useState<any>(null);
 
   useEffect(() => {
     if (value !== undefined) {
       if (Array.isArray(value)) {
         setSelectValue(0);
-        setRangeValue(value as [number, number]);
+        setRangeValue(value);
       } else {
         setSelectValue(value);
         setRangeValue(null);
@@ -31,11 +26,10 @@ const FormTimeSelector: React.FC<{
   }, [value]);
 
   const handleChange = (range: number[], originValue: number | null) => {
-    if (originValue === 0 && range.length === 2) {
-      const tupleRange: [number, number] = [range[0], range[1]];
+    if (originValue === 0) {
       setSelectValue(0);
-      setRangeValue(tupleRange);
-      onChange?.(tupleRange);
+      setRangeValue(range);
+      onChange?.(range);
     } else if (originValue !== null) {
       setSelectValue(originValue);
       setRangeValue(null);
@@ -43,11 +37,9 @@ const FormTimeSelector: React.FC<{
     }
   };
 
-  const formatRangeValue = (
-    value: TimeValue | null
-  ): [dayjs.Dayjs, dayjs.Dayjs] | null => {
+  const formatRangeValue = (value: any): [dayjs.Dayjs, dayjs.Dayjs] | null => {
     if (Array.isArray(value) && value.length === 2) {
-      return [dayjs(value[0] as number), dayjs(value[1] as number)];
+      return [dayjs(value[0]), dayjs(value[1])];
     }
     return null;
   };
@@ -61,7 +53,7 @@ const FormTimeSelector: React.FC<{
         onlyTimeSelect
         className="w-full"
         defaultValue={{
-          selectValue: typeof selectValue === 'number' ? selectValue : 0,
+          selectValue: selectValue,
           rangePickerVaule: formatRangeValue(rangeValue),
         }}
         onChange={handleChange}
@@ -75,7 +67,7 @@ interface DataSourceParamsConfigProps {
   readonly?: boolean;
   includeFilterTypes?: string[];
   fieldPrefix?: string;
-  form?: FormInstance;
+  form?: any;
   preserveValues?: boolean;
 }
 
@@ -162,10 +154,7 @@ const DataSourceParamsConfig: React.FC<DataSourceParamsConfigProps> = ({
       case 'timeRange':
         return value ?? 10080;
       case 'date':
-        if (value && (typeof value === 'string' || typeof value === 'number')) {
-          return dayjs(value);
-        }
-        return null;
+        return value ? dayjs(value) : null;
       default:
         return value ?? '';
     }

@@ -2,7 +2,6 @@ import React from 'react';
 import { Button, Tooltip } from 'antd';
 import { SaveOutlined, EditOutlined } from '@ant-design/icons';
 import { ArchitectureProps } from '@/app/ops-analysis/types/architecture';
-import PermissionWrapper from '@/components/permission';
 
 interface ArchitectureToolbarProps {
   selectedArchitecture: ArchitectureProps['selectedArchitecture'];
@@ -37,26 +36,24 @@ const ArchitectureToolbar: React.FC<ArchitectureToolbarProps> = ({
 
       {/* 右侧：工具栏 */}
       <div className="flex items-center space-x-2">
-        <PermissionWrapper requiredPermissions={['EditChart']}>
-          {isEditMode ? (
+        {isEditMode ? (
+          <Button
+            icon={<SaveOutlined />}
+            loading={loading}
+            onClick={onSave}
+            type="primary"
+          >
+            保存
+          </Button>
+        ) : (
+          <Tooltip title="编辑">
             <Button
-              icon={<SaveOutlined />}
-              loading={loading}
-              onClick={onSave}
-              type="primary"
-            >
-              保存
-            </Button>
-          ) : (
-            <Tooltip title="编辑">
-              <Button
-                type="text"
-                icon={<EditOutlined style={{ fontSize: 16 }} />}
-                onClick={onEdit}
-              />
-            </Tooltip>
-          )}
-        </PermissionWrapper>
+              type="text"
+              icon={<EditOutlined style={{ fontSize: 16 }} />}
+              onClick={onEdit}
+            />
+          </Tooltip>
+        )}
       </div>
     </div>
   );

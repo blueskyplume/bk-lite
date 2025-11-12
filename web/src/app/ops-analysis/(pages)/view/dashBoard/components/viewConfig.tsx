@@ -10,18 +10,15 @@ import {
 } from '@/app/ops-analysis/constants/common';
 import DataSourceParamsConfig from '@/app/ops-analysis/components/paramsConfig';
 import DataSourceSelect from '@/app/ops-analysis/components/dataSourceSelect';
-import type {
-  DatasourceItem,
-  ParamItem,
-} from '@/app/ops-analysis/types/dataSource';
+import type { DatasourceItem } from '@/app/ops-analysis/types/dataSource';
 
 interface FormValues {
   name: string;
   description?: string;
   chartType: string;
   dataSource: string | number;
-  dataSourceParams?: ParamItem[];
-  params?: Record<string, string | number | boolean | [number, number] | null>;
+  dataSourceParams?: any[];
+  params?: Record<string, any>;
 }
 
 interface ViewConfigPropsWithManager extends ViewConfigProps {

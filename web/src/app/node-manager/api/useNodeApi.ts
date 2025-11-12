@@ -4,7 +4,6 @@ import type {
   NodeItem,
   UpdateConfigReq,
 } from '../types/cloudregion';
-import { SearchFilters } from '../types/node';
 
 /**
  * 节点管理API Hook
@@ -16,9 +15,10 @@ const useNodeApi = () => {
   // 获取节点列表
   const getNodeList = async (params: {
     cloud_region_id?: number;
-    filters?: SearchFilters;
+    name?: string;
+    operating_system?: string;
   }) => {
-    return await post('/node_mgmt/api/node/search/', params);
+    return await get('/node_mgmt/api/node/', { params });
   };
 
   // 删除节点

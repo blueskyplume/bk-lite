@@ -1,30 +1,20 @@
 import { useState, useEffect } from 'react';
-import dayjs, { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 import { useDataSourceApi } from '@/app/ops-analysis/api/dataSource';
-import { useUserInfoContext } from '@/context/userInfo';
-import { addAuthToDataSources } from '@/app/ops-analysis/utils/permissionChecker';
 import { DatasourceItem, ParamItem } from '@/app/ops-analysis/types/dataSource';
-
-type FormParamValue = string | number | boolean | Dayjs | [number, number] | null;
-type FormParams = Record<string, FormParamValue>;
 
 export const useDataSourceManager = () => {
   const [dataSources, setDataSources] = useState<DatasourceItem[]>([]);
   const [dataSourcesLoading, setDataSourcesLoading] = useState(false);
   const [selectedDataSource, setSelectedDataSource] = useState<DatasourceItem | undefined>();
   const { getDataSourceList } = useDataSourceApi();
-  const { selectedGroup } = useUserInfoContext();
 
   const fetchDataSources = async () => {
     try {
       setDataSourcesLoading(true);
-      const data: DatasourceItem[] = await getDataSourceList({
-        all_groups: true,
-      });
-      // 添加权限检查
-      const dataWithAuth = addAuthToDataSources(data || [], selectedGroup?.id);
-      setDataSources(dataWithAuth);
-      return dataWithAuth;
+      const data: DatasourceItem[] = await getDataSourceList();
+      setDataSources(data || []);
+      return data || [];
     } catch {
       setDataSources([]);
       return [];
@@ -43,7 +33,7 @@ export const useDataSourceManager = () => {
     return undefined;
   };
 
-  const setDefaultParamValues = (params: ParamItem[], formParams: FormParams): void => {
+  const setDefaultParamValues = (params: ParamItem[], formParams: any): void => {
     params.forEach((param) => {
       switch (param.type) {
         case 'timeRange':
@@ -56,11 +46,7 @@ export const useDataSourceManager = () => {
           formParams[param.name] = param.value ?? 0;
           break;
         case 'date':
-          if (param.value && (typeof param.value === 'string' || typeof param.value === 'number')) {
-            formParams[param.name] = dayjs(param.value);
-          } else {
-            formParams[param.name] = null;
-          }
+          formParams[param.name] = param.value ? dayjs(param.value) : null;
           break;
         default:
           formParams[param.name] = param.value ?? '';
@@ -68,13 +54,11 @@ export const useDataSourceManager = () => {
     });
   };
 
-  const restoreUserParamValues = (dataSourceParams: ParamItem[], formParams: FormParams): void => {
+  const restoreUserParamValues = (dataSourceParams: any[], formParams: any): void => {
     dataSourceParams.forEach((param) => {
       if (param.value !== undefined) {
         if (param.type === 'date' && param.value) {
-          if (typeof param.value === 'string' || typeof param.value === 'number') {
-            formParams[param.name] = dayjs(param.value);
-          }
+          formParams[param.name] = dayjs(param.value);
         } else {
           formParams[param.name] = param.value;
         }
@@ -83,25 +67,16 @@ export const useDataSourceManager = () => {
   };
 
   const processFormParamsForSubmit = (
-    formParams: FormParams,
+    formParams: any,
     sourceParams: ParamItem[]
-  ): ParamItem[] => {
-    const processedParams: Record<string, string | number | boolean | [number, number] | null> = {};
+  ): any[] => {
+    const processedParams = { ...formParams };
 
     sourceParams.forEach((param) => {
-      const value = formParams[param.name];
-
-      if (param.type === 'date' && value) {
-        // 转换 Dayjs 为字符串
-        if (dayjs.isDayjs(value)) {
-          processedParams[param.name] = value.format('YYYY-MM-DD HH:mm:ss');
-        } else if (typeof value === 'string' || typeof value === 'number') {
-          processedParams[param.name] = value;
-        }
-      } else if (value !== undefined && value !== null) {
-        // 其他类型直接使用（已经是正确的类型）
-        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || Array.isArray(value)) {
-          processedParams[param.name] = value as string | number | boolean | [number, number];
+      if (param.type === 'date' && processedParams[param.name]) {
+        const dateValue = processedParams[param.name];
+        if (dateValue && typeof dateValue.format === 'function') {
+          processedParams[param.name] = dateValue.format('YYYY-MM-DD HH:mm:ss');
         }
       }
     });

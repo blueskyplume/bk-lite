@@ -89,6 +89,12 @@
   ],
   "en": [
     {
+      "title": "Search",
+      "icon": "search-f",
+      "url": "/monitor/search",
+      "name": "search"
+    },
+    {
       "title": "View",
       "icon": "daohang-yunyingfenxishi",
       "url": "/monitor/view",
@@ -100,12 +106,6 @@
           "isNotMenuItem": true
         }
       ]
-    },
-    {
-      "title": "Search",
-      "icon": "search-f",
-      "url": "/monitor/search",
-      "name": "search"
     },
     {
       "title": "Event",

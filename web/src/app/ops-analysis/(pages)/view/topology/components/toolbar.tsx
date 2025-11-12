@@ -3,7 +3,6 @@ import { Button, Tooltip } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { ToolbarProps } from '@/app/ops-analysis/types/topology';
 import TimeSelector from '@/components/time-selector';
-import PermissionWrapper from '@/components/permission';
 import {
   ZoomInOutlined,
   ZoomOutOutlined,
@@ -126,21 +125,19 @@ const TopologyToolbar: React.FC<ToolbarProps> = ({
         )}
 
         <div>
-          <PermissionWrapper requiredPermissions={['EditChart']}>
-            {isEditMode ? (
-              <Button type="primary" onClick={onSave} className="!ml-[20px]">
-                {t('common.save')}
-              </Button>
-            ) : (
-              <Tooltip title={t('common.edit')}>
-                <Button
-                  type="text"
-                  icon={<EditOutlined style={{ fontSize: 16 }} />}
-                  onClick={onEdit}
-                />
-              </Tooltip>
-            )}
-          </PermissionWrapper>
+          {isEditMode ? (
+            <Button type="primary" onClick={onSave} className="!ml-[20px]">
+              {t('common.save')}
+            </Button>
+          ) : (
+            <Tooltip title={t('common.edit')}>
+              <Button
+                type="text"
+                icon={<EditOutlined style={{ fontSize: 16 }} />}
+                onClick={onEdit}
+              />
+            </Tooltip>
+          )}
         </div>
       </div>
     </div>

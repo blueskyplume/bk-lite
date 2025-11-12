@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import BottomTabBar from '@/components/bottom-tab-bar';
 import { useRouter } from 'next/navigation';
-import { Avatar, List } from 'antd-mobile';
+import { SearchBar, Avatar, List } from 'antd-mobile';
 import { ChatItem, mockChatData } from '@/constants/mockData';
 import { useTranslation } from '@/utils/i18n';
 import {
@@ -15,6 +15,7 @@ import {
 export default function ConversationList() {
   const { t } = useTranslation();
   const router = useRouter();
+  const [searchValue, setSearchValue] = useState('');
   const [chatList, setChatList] = useState<ChatItem[]>([]);
 
   useEffect(() => {
@@ -27,6 +28,11 @@ export default function ConversationList() {
     fetchChatList();
   }, []);
 
+  const filteredChats = chatList.filter(
+    (chat) =>
+      chat.name.toLowerCase().includes(searchValue.toLowerCase()) ||
+      chat.lastMessage.toLowerCase().includes(searchValue.toLowerCase())
+  );
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-background-body)]">
@@ -62,7 +68,7 @@ export default function ConversationList() {
               `,
             }}
           />
-          {chatList.map((chat) => (
+          {filteredChats.map((chat) => (
             <List.Item
               key={chat.id}
               arrowIcon={false}
@@ -74,8 +80,8 @@ export default function ConversationList() {
                 />
               }
               description={
-                <div className="mt-1">
-                  <span className="text-sm text-[var(--color-text-3)] line-clamp-1">
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-sm text-[var(--color-text-3)] flex-1 truncate">
                     {chat.lastMessage}
                   </span>
                 </div>

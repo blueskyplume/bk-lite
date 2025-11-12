@@ -1,6 +1,9 @@
 'use client';
-import RedirectToFirstMenu from '@/components/redirect-menu';
+import { redirect } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 
 export default function AssetDetail() {
-  return <RedirectToFirstMenu />;
+  const searchParams = useSearchParams().toString();
+  redirect(`/cmdb/assetManage/management/detail/attributes?${searchParams}`);
+  return null;
 }

@@ -403,7 +403,7 @@ const RuleModal = forwardRef<ModalRef, ModalProps>(
               name="organizations"
               rules={[{ required: true, message: t('common.required') }]}
             >
-              <GroupTreeSelector placeholder={t('common.selectMsg')} />
+              <GroupTreeSelector />
             </Form.Item>
           </Form>
         </OperateModal>

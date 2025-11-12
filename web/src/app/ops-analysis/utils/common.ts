@@ -1,5 +1,4 @@
 // 架构图相关工具函数
-import type { IconWithSize } from '@/app/ops-analysis/types';
 
 export const svgToBase64 = async (svgPath: string): Promise<string> => {
   try {
@@ -15,7 +14,7 @@ export const svgToBase64 = async (svgPath: string): Promise<string> => {
   }
 };
 
-export const patchIconSize = (icon: IconWithSize) => ({
+export const patchIconSize = (icon: any) => ({
   ...icon,
   width: icon.width || icon.size || 48,
   height: icon.height || icon.size || 48,

@@ -126,23 +126,8 @@ export interface ViewQueryKeyValuePairs {
 }
 
 export interface ModalProps {
-  onSuccess?: () => void;
-  organizationList?: Organization[];
-  fields?: string[];
+  onSuccess: () => void;
   [key: string]: any;
-}
-
-// 图表组件 Props
-export interface BasicBarChartProps {
-  data: ChartData[];
-  className?: string;
-  onXRangeChange?: (arr: [Dayjs, Dayjs]) => void;
-}
-
-export interface DashboardBarChartProps {
-  rawData: any;
-  loading?: boolean;
-  onReady?: (ready: boolean) => void;
 }
 
 export interface HexagonData {

@@ -11,5 +11,4 @@ class AlertsConfig(AppConfig):
     name = "apps.operation_analysis"
 
     def ready(self):
-        import apps.operation_analysis.nats.nats  # noqa
-
+        pass

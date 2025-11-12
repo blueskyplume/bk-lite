@@ -150,27 +150,20 @@ class Sidecar:
         node = Node.objects.filter(id=node_id).first()
 
         # 处理标签数据
-        allowed_prefixes = [ControllerConstants.GROUP_TAG, ControllerConstants.CLOUD_TAG, ControllerConstants.INSTALL_METHOD_TAG]
-        tags_data = format_tags_dynamic(request_data.get("tags", []), allowed_prefixes)
+        tags_data = format_tags_dynamic(request_data.get("tags", []), ["group", "cloud"])
 
         if not node:
 
             # 补充云区域关联
-            clouds = tags_data.get(ControllerConstants.CLOUD_TAG, [])
+            clouds = tags_data.get("cloud", [])
             if clouds:
                 request_data.update(cloud_region_id=int(clouds[0]))
-
-            # 补充安装方法
-            install_methods = tags_data.get(ControllerConstants.INSTALL_METHOD_TAG, [])
-            if install_methods:
-                if install_methods[0] in [ControllerConstants.AUTO, ControllerConstants.MANUAL]:
-                    request_data.update(install_method=install_methods[0])
 
             # 创建节点
             node = Node.objects.create(**request_data)
 
             # 关联组织
-            Sidecar.asso_groups(node_id, tags_data.get(ControllerConstants.GROUP_TAG, []))
+            Sidecar.asso_groups(node_id, tags_data.get("group", []))
 
             # 创建默认的配置
             Sidecar.create_default_config(node)
@@ -183,7 +176,7 @@ class Sidecar:
             Node.objects.filter(id=node_id).update(**request_data)
 
             # 更新组织关联(覆盖)
-            Sidecar.update_groups(node_id, tags_data.get(ControllerConstants.GROUP_TAG, []))
+            Sidecar.update_groups(node_id, tags_data.get("group", []))
 
         # 预取相关数据，减少查询次数
         new_obj = Node.objects.prefetch_related('action_set', 'collectorconfiguration_set').get(id=node_id)

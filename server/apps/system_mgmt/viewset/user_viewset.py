@@ -10,7 +10,6 @@ from apps.core.logger import system_mgmt_logger as logger
 from apps.system_mgmt.models import Group, Role, User, UserRule
 from apps.system_mgmt.serializers.user_serializer import UserSerializer
 from apps.system_mgmt.services.role_manage import RoleManage
-from apps.system_mgmt.utils.operation_log_utils import log_operation
 from apps.system_mgmt.utils.viewset_utils import ViewSetUtils
 
 
@@ -128,9 +127,6 @@ class UserViewSet(ViewSetUtils):
                 if rules:
                     add_rule = [UserRule(username=kwargs["username"], group_rule_id=i) for i in rules]
                     UserRule.objects.bulk_create(add_rule, batch_size=100)
-
-                # 记录操作日志
-                log_operation(request, "create", "user", f"新增用户: {kwargs['username']} ({kwargs['lastName']})")
             return JsonResponse({"result": True})
         except Exception as e:
             logger.exception(e)
@@ -142,12 +138,7 @@ class UserViewSet(ViewSetUtils):
         try:
             password = request.data.get("password")
             temporary_pwd = request.data.get("temporary", False)
-            user_id = request.data.get("id")
-            user = User.objects.get(id=user_id)
-            User.objects.filter(id=user_id).update(password=make_password(password), temporary_pwd=temporary_pwd)
-
-            # 记录操作日志
-            log_operation(request, "update", "user", f"重置用户密码: {user.username}")
+            User.objects.filter(id=request.data.get("id")).update(password=make_password(password), temporary_pwd=temporary_pwd)
             return JsonResponse({"result": True})
         except Exception as e:
             logger.exception(e)
@@ -158,15 +149,11 @@ class UserViewSet(ViewSetUtils):
     def delete_user(self, request):
         user_ids = request.data.get("user_ids")
         users = User.objects.filter(id__in=user_ids)
-        usernames = list(users.values_list("username", flat=True))
         keys = []
         for i in users:
             keys.extend(RoleManage.get_cache_keys(i.username))
         cache.delete_many(keys)
         users.delete()
-
-        # 记录操作日志
-        log_operation(request, "delete", "user", f"批量删除用户: {', '.join(usernames)} (共{len(usernames)}个)")
         return JsonResponse({"result": True})
 
     @action(detail=False, methods=["POST"])
@@ -195,9 +182,6 @@ class UserViewSet(ViewSetUtils):
                 role_list=params.get("roles"),
             )
             cache.delete_many(keys)
-
-            # 记录操作日志
-            log_operation(request, "update", "user", f"编辑用户: {params['username']}")
         return JsonResponse({"result": True})
 
     @action(detail=True, methods=["POST"])

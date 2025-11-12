@@ -1,10 +1,10 @@
 package ssh
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/melbahja/goph"
 	"github.com/nats-io/nats.go"
 	"golang.org/x/crypto/ssh"
 	"log"
@@ -17,30 +17,16 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 	log.Printf("[SSH Execute] Instance: %s, Starting SSH connection to %s@%s:%d", instanceId, req.User, req.Host, req.Port)
 	log.Printf("[SSH Execute] Instance: %s, Command: %s, Timeout: %ds", instanceId, req.Command, req.ExecuteTimeout)
 
-	// 配置 SSH 客户端，支持旧版和新版加密算法
-	sshConfig := &ssh.ClientConfig{
-		User:            req.User,
-		Auth:            []ssh.AuthMethod{ssh.Password(req.Password)},
-		Timeout:         30 * time.Second,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		// 支持多种主机密钥算法，包括旧版的 ssh-rsa 和 ssh-dss
-		HostKeyAlgorithms: []string{
-			ssh.KeyAlgoRSA,      // 现代 RSA
-			ssh.KeyAlgoDSA,      // DSA
-			ssh.KeyAlgoECDSA256, // ECDSA 256
-			ssh.KeyAlgoECDSA384, // ECDSA 384
-			ssh.KeyAlgoECDSA521, // ECDSA 521
-			ssh.KeyAlgoED25519,  // ED25519
-			"ssh-rsa",           // 旧版 RSA（兼容老服务器）
-			"ssh-dss",           // 旧版 DSS（兼容老服务器）
-			"rsa-sha2-256",      // RSA SHA2-256
-			"rsa-sha2-512",      // RSA SHA2-512
-		},
-	}
+	auth := goph.Password(req.Password)
+	client, err := goph.NewConn(&goph.Config{
+		User:     req.User,
+		Addr:     req.Host,
+		Port:     req.Port,
+		Auth:     auth,
+		Timeout:  30 * time.Second,
+		Callback: ssh.InsecureIgnoreHostKey(), // 👈 跳过 known_hosts 验证
+	})
 
-	// 连接 SSH 服务器
-	addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
-	client, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to create SSH client: %v", err)
 		log.Printf("[SSH Execute] Instance: %s, Failed to create SSH client for %s@%s:%d - Error: %v", instanceId, req.User, req.Host, req.Port, err)
@@ -58,76 +44,39 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 		log.Printf("[SSH Execute] Instance: %s, SSH connection closed", instanceId)
 	}()
 
-	// 创建 SSH 会话
-	session, err := client.NewSession()
-	if err != nil {
-		errMsg := fmt.Sprintf("Failed to create SSH session: %v", err)
-		log.Printf("[SSH Execute] Instance: %s, Failed to create SSH session - Error: %v", instanceId, err)
-		return ExecuteResponse{
-			InstanceId: instanceId,
-			Success:    false,
-			Output:     errMsg,
-			Error:      errMsg,
-		}
-	}
-	defer session.Close()
-
-	// 设置输出缓冲区
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.ExecuteTimeout)*time.Second)
 	defer cancel()
 
 	log.Printf("[SSH Execute] Instance: %s, Executing command...", instanceId)
 	startTime := time.Now()
+	out, err := client.RunContext(ctx, req.Command)
+	duration := time.Since(startTime)
 
-	// 在 goroutine 中执行命令以支持超时
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- session.Run(req.Command)
-	}()
-
-	select {
-	case <-ctx.Done():
-		duration := time.Since(startTime)
-		errMsg := fmt.Sprintf("Command timed out after %v (timeout: %ds)", duration, req.ExecuteTimeout)
-		log.Printf("[SSH Execute] Instance: %s, %s", instanceId, errMsg)
-		session.Signal(ssh.SIGKILL)
+	if err != nil {
+		var errMsg string
+		if ctx.Err() == context.DeadlineExceeded {
+			errMsg = fmt.Sprintf("Command timed out after %v (timeout: %ds)", duration, req.ExecuteTimeout)
+			log.Printf("[SSH Execute] Instance: %s, Command timed out after %v (timeout: %ds)", instanceId, duration, req.ExecuteTimeout)
+		} else {
+			errMsg = fmt.Sprintf("Command execution failed: %v", err)
+			log.Printf("[SSH Execute] Instance: %s, Command execution failed after %v - Error: %v", instanceId, duration, err)
+		}
+		log.Printf("[SSH Execute] Instance: %s, Output: %s", instanceId, string(out))
 		return ExecuteResponse{
-			Output:     stdout.String() + stderr.String(),
+			Output:     string(out),
 			InstanceId: instanceId,
 			Success:    false,
 			Error:      errMsg,
 		}
-	case err := <-errChan:
-		duration := time.Since(startTime)
-		output := stdout.String()
-		if stderr.Len() > 0 {
-			output += stderr.String()
-		}
+	}
 
-		if err != nil {
-			errMsg := fmt.Sprintf("Command execution failed: %v", err)
-			log.Printf("[SSH Execute] Instance: %s, Command execution failed after %v - Error: %v", instanceId, duration, err)
-			log.Printf("[SSH Execute] Instance: %s, Output: %s", instanceId, output)
-			return ExecuteResponse{
-				Output:     output,
-				InstanceId: instanceId,
-				Success:    false,
-				Error:      errMsg,
-			}
-		}
+	log.Printf("[SSH Execute] Instance: %s, Command executed successfully in %v", instanceId, duration)
+	log.Printf("[SSH Execute] Instance: %s, Output length: %d bytes", instanceId, len(out))
 
-		log.Printf("[SSH Execute] Instance: %s, Command executed successfully in %v", instanceId, duration)
-		log.Printf("[SSH Execute] Instance: %s, Output length: %d bytes", instanceId, len(output))
-
-		return ExecuteResponse{
-			Output:     output,
-			InstanceId: instanceId,
-			Success:    true,
-		}
+	return ExecuteResponse{
+		Output:     string(out),
+		InstanceId: instanceId,
+		Success:    true,
 	}
 }
 
@@ -135,7 +84,7 @@ func SubscribeSSHExecutor(nc *nats.Conn, instanceId *string) {
 	subject := fmt.Sprintf("ssh.execute.%s", *instanceId)
 	log.Printf("[SSH Subscribe] Instance: %s, Subscribing to subject: %s", *instanceId, subject)
 
-	_, err := nc.Subscribe(subject, func(msg *nats.Msg) {
+	nc.Subscribe(subject, func(msg *nats.Msg) {
 		log.Printf("[SSH Subscribe] Instance: %s, Received message, size: %d bytes", *instanceId, len(msg.Data))
 
 		// 解析 request 的标准结构
@@ -171,10 +120,6 @@ func SubscribeSSHExecutor(nc *nats.Conn, instanceId *string) {
 			log.Printf("[SSH Subscribe] Instance: %s, Response sent successfully, size: %d bytes", *instanceId, len(responseContent))
 		}
 	})
-
-	if err != nil {
-		log.Printf("[SSH Subscribe] Instance: %s, Failed to subscribe: %v", *instanceId, err)
-	}
 }
 
 func SubscribeDownloadToRemote(nc *nats.Conn, instanceId *string) {
@@ -225,8 +170,8 @@ func SubscribeDownloadToRemote(nc *nats.Conn, instanceId *string) {
 		}
 		log.Printf("[Download Subscribe] Instance: %s, File downloaded successfully to: %s/%s", *instanceId, localdownloadRequest.TargetPath, localdownloadRequest.FileName)
 
-		// 使用 sshpass 处理带密码的 scp 传输，添加对旧版 SSH 服务器的支持
-		scpCommand := fmt.Sprintf("sshpass -p '%s' scp -o StrictHostKeyChecking=no -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o PubkeyAcceptedKeyTypes=+ssh-rsa,ssh-dss -P %d -r %s/%s %s@%s:%s",
+		// 使用sshpass处理带密码的scp传输
+		scpCommand := fmt.Sprintf("sshpass -p '%s' scp -o StrictHostKeyChecking=no -P %d -r %s/%s %s@%s:%s",
 			downloadRequest.Password,
 			downloadRequest.Port,
 			localdownloadRequest.TargetPath,
@@ -273,7 +218,7 @@ func SubscribeUploadToRemote(nc *nats.Conn, instanceId *string) {
 	subject := fmt.Sprintf("upload.remote.%s", *instanceId)
 	log.Printf("[Upload Subscribe] Instance: %s, Subscribing to subject: %s", *instanceId, subject)
 
-	_, err := nc.Subscribe(subject, func(msg *nats.Msg) {
+	nc.Subscribe(subject, func(msg *nats.Msg) {
 		log.Printf("[Upload Subscribe] Instance: %s, Received upload request, size: %d bytes", *instanceId, len(msg.Data))
 
 		var incoming struct {
@@ -300,8 +245,8 @@ func SubscribeUploadToRemote(nc *nats.Conn, instanceId *string) {
 
 		log.Printf("[Upload Subscribe] Instance: %s, Starting upload from local path %s to remote host %s@%s:%s", *instanceId, uploadRequest.SourcePath, uploadRequest.User, uploadRequest.Host, uploadRequest.TargetPath)
 
-		// 使用 sshpass 处理带密码的 scp 传输，添加对旧版 SSH 服务器的支持
-		scpCommand := fmt.Sprintf("sshpass -p '%s' scp -o StrictHostKeyChecking=no -o HostKeyAlgorithms=+ssh-rsa,ssh-dss -o PubkeyAcceptedKeyTypes=+ssh-rsa,ssh-dss -P %d -r %s %s@%s:%s",
+		// 使用sshpass处理带密码的scp传输
+		scpCommand := fmt.Sprintf("sshpass -p '%s' scp -o StrictHostKeyChecking=no -P %d -r %s %s@%s:%s",
 			uploadRequest.Password,
 			uploadRequest.Port,
 			uploadRequest.SourcePath,
@@ -331,8 +276,4 @@ func SubscribeUploadToRemote(nc *nats.Conn, instanceId *string) {
 			log.Printf("[Upload Subscribe] Instance: %s, Response sent successfully, size: %d bytes", *instanceId, len(responseContent))
 		}
 	})
-
-	if err != nil {
-		log.Printf("[Upload Subscribe] Instance: %s, Failed to subscribe: %v", *instanceId, err)
-	}
 }

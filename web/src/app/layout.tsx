@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Script from 'next/script';
 import { useRouter, usePathname } from 'next/navigation';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
@@ -17,8 +17,6 @@ import { ConfigProvider, message } from 'antd';
 import Spin from '@/components/spin';
 import '@/styles/globals.css';
 import { MenuItem } from '@/types/index'
-import WithSideMenuLayout from '@/components/sub-layout'
-import { shouldRenderSecondLayerMenu } from '@/utils/menuHelpers'
 
 const Loader = () => (
   <div className="flex justify-center items-center h-screen">
@@ -27,26 +25,20 @@ const Loader = () => (
 );
 
 const LayoutWithProviders = ({ children }: { children: React.ReactNode }) => {
-  const { loading: permissionsLoading, hasPermission, menus } = usePermissions();
+  const { loading: permissionsLoading, hasPermission } = usePermissions();
   const { data: session, status } = useSession();
   const { loading: menusLoading, configMenus } = useMenus();
   const router = useRouter();
   const pathname = usePathname();
   const [isAllowed, setIsAllowed] = useState(false);
 
+  // Consider a user with temporary_pwd as not fully authenticated
   const isAuthenticated = status === 'authenticated' && !!session && !session.user?.temporary_pwd;
   const isAuthLoading = status === 'loading';
   
   const isLoading = isAuthLoading || (isAuthenticated && (permissionsLoading || menusLoading));
   const authPaths = ['/auth/signin', '/auth/signout'];
   const excludedPaths = ['/no-permission', '/no-found', '/', ...authPaths];
- 
-  const shouldRenderMenu = useMemo(() => {
-    if (pathname?.startsWith('/ops-console')) {
-      return false;
-    }
-    return shouldRenderSecondLayerMenu(pathname, menus);
-  }, [pathname, menus]);
 
   const isPathInMenu = useCallback((path: string, menus: MenuItem[]): boolean => {
     for (const menu of menus) {
@@ -102,18 +94,7 @@ const LayoutWithProviders = ({ children }: { children: React.ReactNode }) => {
         </header>
       )}
       <main className={`flex-1 p-4 flex text-sm ${!isAuthenticated ? 'h-screen' : ''}`}>
-        <AntdRegistry>
-          {shouldRenderMenu ? (
-            <WithSideMenuLayout
-              layoutType="segmented"
-              menuLevel={1}
-            >
-              {children}
-            </WithSideMenuLayout>
-          ) : (
-            children
-          )}
-        </AntdRegistry>
+        <AntdRegistry>{children}</AntdRegistry>
       </main>
     </div>
   );

@@ -1,3 +1,5 @@
+'use client';
+
 import React, {
   useState,
   useEffect,
@@ -13,22 +15,13 @@ import TimeSelector from '@/components/time-selector';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
 import { Button, Empty, Dropdown, Menu, Modal, message, Spin } from 'antd';
 import { useTranslation } from '@/utils/i18n';
-import {
-  LayoutItem,
-  TimeConfig,
-  OtherConfig,
-  TimeRangeData,
-  LayoutChangeItem,
-  AddComponentConfig,
-  WidgetConfig,
-} from '@/app/ops-analysis/types/dashBoard';
+import { LayoutItem } from '@/app/ops-analysis/types/dashBoard';
 import { DirItem } from '@/app/ops-analysis/types';
 import { useDataSourceManager } from '@/app/ops-analysis/hooks/useDataSource';
 import { SaveOutlined, PlusOutlined, MoreOutlined } from '@ant-design/icons';
 import { useDashBoardApi } from '@/app/ops-analysis/api/dashBoard';
 import type { DatasourceItem } from '@/app/ops-analysis/types/dataSource';
 import WidgetWrapper from './components/widgetWrapper';
-import PermissionWrapper from '@/components/permission';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
@@ -56,18 +49,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
     const [refreshKey, setRefreshKey] = useState(0);
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [otherConfig, setOtherConfig] = useState<OtherConfig>({});
-    const [originalOtherConfig, setOriginalOtherConfig] = useState<OtherConfig>(
-      {}
-    );
-    const timeDefaultValue: TimeConfig = {
+    const [otherConfig, setOtherConfig] = useState<any>({});
+    const [originalOtherConfig, setOriginalOtherConfig] = useState<any>({});
+    const timeDefaultValue = {
       selectValue: 10080,
       rangePickerVaule: null,
     };
 
-    const getInitialTimeRange = (
-      savedTimeConfig?: OtherConfig
-    ): TimeRangeData => {
+    const getInitialTimeRange = (savedTimeConfig?: any) => {
       const endTime = dayjs().valueOf();
       let timeValue = timeDefaultValue.selectValue;
       let rangePickerVaule = null;
@@ -105,7 +94,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
         rangePickerVaule: null,
       };
     };
-    const [globalTimeRange, setGlobalTimeRange] = useState<TimeRangeData>(
+    const [globalTimeRange, setGlobalTimeRange] = useState<any>(
       getInitialTimeRange()
     );
 
@@ -115,7 +104,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
         item.valueConfig?.dataSourceParams &&
         Array.isArray(item.valueConfig.dataSourceParams) &&
         item.valueConfig.dataSourceParams.some(
-          (param) => param.filterType === 'filter' && param.type === 'timeRange'
+          (param: any) =>
+            param.filterType === 'filter' && param.type === 'timeRange'
         )
       );
     });
@@ -205,27 +195,26 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
 
     const handleTimeChange = (range: number[], originValue: number | null) => {
       // 更新全局时间范围
-      const timeData: TimeRangeData = {
+      const timeData = {
         start:
           range[0] ||
           dayjs().subtract(timeDefaultValue.selectValue, 'minute').valueOf(),
         end: range[1] || dayjs().valueOf(),
-        selectValue:
-          originValue !== null ? originValue : timeDefaultValue.selectValue,
+        selectValue: originValue,
         rangePickerVaule:
           originValue === 0 ? [dayjs(range[0]), dayjs(range[1])] : null,
       };
 
       setGlobalTimeRange(timeData);
 
-      const timeSelectorConfig: TimeConfig = {
+      const timeSelectorConfig = {
         selectValue:
           originValue !== null ? originValue : timeDefaultValue.selectValue,
         rangePickerVaule:
           originValue === 0 ? [dayjs(range[0]), dayjs(range[1])] : null,
       };
 
-      setOtherConfig((prev) => ({
+      setOtherConfig((prev: any) => ({
         ...prev,
         timeSelector: timeSelectorConfig,
       }));
@@ -235,10 +224,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
       setRefreshKey((prev) => prev + 1);
     };
 
-    const onLayoutChange = (newLayout: LayoutChangeItem[]) => {
+    const onLayoutChange = (newLayout: any) => {
       setLayout((prevLayout) => {
         return prevLayout.map((item) => {
-          const newItem = newLayout.find((l) => l.i === item.i);
+          const newItem = newLayout.find((l: any) => l.i === item.i);
           if (newItem) {
             return { ...item, ...newItem };
           }
@@ -247,14 +236,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
       });
     };
 
-    const handleAddComponent = (config?: AddComponentConfig) => {
+    const handleAddComponent = (config?: any) => {
       const newWidget: LayoutItem = {
         i: uuidv4(),
         x: (layout.length % 3) * 4,
         y: Infinity,
         w: 4,
         h: 3,
-        name: config?.name || '',
+        name: config?.name,
         description: config?.description || '',
         valueConfig: {
           dataSource: config?.dataSource,
@@ -323,7 +312,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
       setConfigDrawerVisible(true);
     };
 
-    const handleConfigConfirm = (values: WidgetConfig) => {
+    const handleConfigConfirm = (values: any) => {
       if (isNewComponentConfig && currentConfigItem) {
         handleAddComponent(values);
       } else {
@@ -335,9 +324,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                 name: values.name,
                 valueConfig: {
                   ...item.valueConfig,
-                  dataSource: values.dataSource,
-                  chartType: values.chartType,
-                  dataSourceParams: values.dataSourceParams,
+                  ...values,
                 },
               };
             }
@@ -398,26 +385,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                 />
               </div>
             }
-            <PermissionWrapper requiredPermissions={['EditChart']}>
-              <Button
-                icon={<SaveOutlined />}
-                loading={saving}
-                disabled={!selectedDashboard?.data_id}
-                onClick={handleSave}
-              >
-                {t('common.save')}
-              </Button>
-            </PermissionWrapper>
-            <PermissionWrapper requiredPermissions={['EditChart']}>
-              <Button
-                type="dashed"
-                icon={<PlusOutlined />}
-                onClick={openAddModal}
-                style={{ borderColor: '#1677ff', color: '#1677ff' }}
-              >
-                {t('dashboard.addView')}
-              </Button>
-            </PermissionWrapper>
+            <Button
+              icon={<SaveOutlined />}
+              loading={saving}
+              disabled={!selectedDashboard?.data_id}
+              onClick={handleSave}
+            >
+              {t('common.save')}
+            </Button>
+            <Button
+              type="dashed"
+              icon={<PlusOutlined />}
+              onClick={openAddModal}
+              style={{ borderColor: '#1677ff', color: '#1677ff' }}
+            >
+              {t('dashboard.addComponent')}
+            </Button>
           </div>
         </div>
 
@@ -442,15 +425,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                       </span>
                     }
                   >
-                    <PermissionWrapper requiredPermissions={['EditChart']}>
-                      <Button
-                        type="primary"
-                        icon={<PlusOutlined />}
-                        onClick={openAddModal}
-                      >
-                        {t('dashboard.addView')}
-                      </Button>
-                    </PermissionWrapper>
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={openAddModal}
+                    >
+                      {t('dashboard.addView')}
+                    </Button>
                   </Empty>
                 </div>
               );

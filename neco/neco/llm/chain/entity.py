@@ -1,10 +1,9 @@
-import uuid
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
-
 from neco.llm.rag.naive_rag_entity import DocumentRetrieverRequest
+from pydantic import BaseModel
 
+from sympy import false
 
 class BasicLLMResponse(BaseModel):
     message: str
@@ -12,13 +11,11 @@ class BasicLLMResponse(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
-
 class ChatHistory(BaseModel):
     event: str
     message: str
     image_data: List[str] = []
-
-
+    
 class ToolsServer(BaseModel):
     name: str
     url: str
@@ -26,7 +23,6 @@ class ToolsServer(BaseModel):
     args: list = []
     extra_param_prompt: dict = {}
     extra_tools_prompt: str = ''
-
 
 class BasicLLMRequest(BaseModel):
     openai_api_base: str = 'https://api.openai.com'
@@ -50,5 +46,5 @@ class BasicLLMRequest(BaseModel):
     extra_config: Optional[dict] = {}
 
     graph_user_message: Optional[str] = ''
-
+    
     tools_servers: List[ToolsServer] = []

@@ -24,17 +24,15 @@ const useCollectorApi = () => {
     name,
     page,
     page_size,
-    tags,
   }: {
     search?: string;
     node_operating_system?: string;
     name?: string;
     page?: number;
     page_size?: number;
-    tags?: string;
   }) => {
     return await get('/node_mgmt/api/collector/', {
-      params: { search, node_operating_system, name, page, page_size, tags },
+      params: { search, node_operating_system, name, page, page_size },
     });
   };
 

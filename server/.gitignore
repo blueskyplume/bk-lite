@@ -24,4 +24,3 @@ dist
 report.html
 mlruns
 uv.lock
-docs/api/*.md

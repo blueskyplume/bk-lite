@@ -17,7 +17,6 @@
       "icon": "zichan-quanbushebei",
       "url": "/cmdb/assetData",
       "name": "asset_info",
-      "hasDetail": true,
       "children": [
         {
           "title": "基础信息",
@@ -53,7 +52,6 @@
           "icon": "shujumoxingguanli",
           "url": "/cmdb/assetManage/management",
           "name": "model_management",
-          "hasDetail":true,
           "children": [
             {
               "title": "属性",
@@ -118,7 +116,6 @@
       "icon": "zichan-quanbushebei",
       "url": "/cmdb/assetData",
       "name": "asset_info",
-      "hasDetail": true,
       "children": [
         {
           "title": "Basic Information",
@@ -154,7 +151,6 @@
           "icon": "shujumoxingguanli",
           "url": "/cmdb/assetManage/management",
           "name": "model_management",
-          "hasDetail":true,
           "children": [
             {
               "title": "Attributes",

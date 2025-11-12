@@ -1,7 +1,7 @@
 /**
  * Bot 管理相关 API
  */
-import { apiGet } from './request';
+import { apiGet, apiPost } from './request';
 
 /**
  * 获取 Bot 列表

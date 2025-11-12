@@ -22,6 +22,7 @@ const LayoutContent: React.FC<KnowledgeDetailLayoutProps> = ({ children }) => {
   const name = searchParams?.get('name') || '';
   const desc = searchParams?.get('desc') || '';
   
+  // Get current tab state from Context
   const { mainTabKey } = useDocuments();
 
   const handleBackButtonClick = () => {
@@ -42,20 +43,24 @@ const LayoutContent: React.FC<KnowledgeDetailLayoutProps> = ({ children }) => {
     <OnelineEllipsisIntro name={name} desc={desc}></OnelineEllipsisIntro>
   );
 
-  // Show TaskProgress on documents page (source_files/qa_pairs tabs) and result pages
+  // Determine whether to show TaskProgress based on current page and tab state
   const shouldShowTaskProgress = () => {
     if (pathname === '/opspilot/knowledge/detail/documents') {
+      // Only show in source_files and qa_pairs main tabs
       return mainTabKey === 'source_files' || mainTabKey === 'qa_pairs';
     }
     
     if (pathname === '/opspilot/knowledge/detail/documents/result') {
+      // Show TaskProgress for document result pages
       return true;
     }
     
     return false;
   };
 
+  // Determine the activeTabKey to pass to TaskProgress based on current state
   const getTaskProgressActiveKey = (): string | undefined => {
+    // For result pages, we don't need activeTabKey since pageType handles the logic
     if (pathname === '/opspilot/knowledge/detail/documents/result') {
       return undefined;
     }
@@ -65,6 +70,7 @@ const LayoutContent: React.FC<KnowledgeDetailLayoutProps> = ({ children }) => {
     return undefined;
   };
 
+  // Determine the page type for TaskProgress
   const getTaskProgressPageType = (): 'documents' | 'result' => {
     if (pathname === '/opspilot/knowledge/detail/documents/result') {
       return 'result';

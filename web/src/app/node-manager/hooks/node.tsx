@@ -11,7 +11,6 @@ import {
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
 import { TableDataItem, SegmentedItem } from '@/app/node-manager/types';
-import { FieldConfig } from '@/app/node-manager/types/node';
 import { useUserInfoContext } from '@/context/userInfo';
 import Permission from '@/components/permission';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
@@ -422,57 +421,17 @@ const useMenuItem = () => {
   );
 };
 
-const useInstallMethodMap = (): Record<string, { text: string }> => {
+const useFieldOptions = () => {
   const { t } = useTranslation();
-  return useMemo(
-    () => ({
-      auto: {
-        text: t('node-manager.cloudregion.node.auto'),
-      },
-      manual: {
-        text: t('node-manager.cloudregion.node.manual'),
-      },
-    }),
-    [t]
-  );
-};
-
-const useFieldConfigs = (): FieldConfig[] => {
-  const { t } = useTranslation();
-  const installMethodMap = useInstallMethodMap();
-
   return useMemo(
     () => [
+      { value: 'name', label: t('node-manager.cloudregion.node.nodeName') },
       {
-        name: 'name',
-        label: t('node-manager.cloudregion.node.nodeName'),
-        lookup_expr: 'icontains',
-      },
-      {
-        name: 'ip',
-        label: t('node-manager.cloudregion.node.ip'),
-        lookup_expr: 'icontains',
-      },
-      {
-        name: 'operating_system',
+        value: 'operating_system',
         label: t('node-manager.cloudregion.node.system'),
-        lookup_expr: 'in',
-        options: OPERATE_SYSTEMS.map((item) => ({
-          id: item.value,
-          name: item.label,
-        })),
-      },
-      {
-        name: 'install_method',
-        label: t('node-manager.cloudregion.node.installMethod'),
-        lookup_expr: 'in',
-        options: [
-          { id: 'auto', name: installMethodMap['auto']?.text || 'Auto' },
-          { id: 'manual', name: installMethodMap['manual']?.text || 'Manual' },
-        ],
       },
     ],
-    [t, installMethodMap]
+    [t]
   );
 };
 
@@ -485,6 +444,5 @@ export {
   useSidecarItems,
   useCollectorItems,
   useMenuItem,
-  useInstallMethodMap,
-  useFieldConfigs,
+  useFieldOptions,
 };

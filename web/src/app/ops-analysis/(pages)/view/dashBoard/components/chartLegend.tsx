@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
-import type { EChartsInstance } from '@/app/ops-analysis/types/dashBoard';
 import { randomColorForLegend } from '@/app/ops-analysis/utils/randomColorForChart';
 
+interface LegendItem {
+  name: string;
+  [key: string]: any;
+}
+
 interface ChartLegendProps {
-  chart?: EChartsInstance;
-  data: Array<{ name: string }>;
+  chart?: any;
+  data: LegendItem[];
   colors?: string[];
   onToggleSelect?: (name: string) => void;
 }

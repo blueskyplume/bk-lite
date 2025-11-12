@@ -3,12 +3,14 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Tabs, Swiper, ErrorBlock } from 'antd-mobile';
 import { SearchOutline } from 'antd-mobile-icons';
+import { useTranslation } from '@/utils/i18n';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import BottomTabBar from '@/components/bottom-tab-bar';
 import { mockWorkbenchData } from '@/constants/mockData';
 
 export default function WorkbenchPage() {
+    const { t } = useTranslation();
     const router = useRouter();
     const [activeTab, setActiveTab] = useState('0');
     const swiperRef = useRef<any>(null);
@@ -102,7 +104,12 @@ export default function WorkbenchPage() {
                     </div>
 
                     {/* 描述文本 */}
-                    <p className="text-xs text-[var(--color-text-2)] mb-3 leading-relaxed truncate">
+                    <p className="text-xs text-[var(--color-text-2)] mb-3 leading-relaxed overflow-hidden"
+                        style={{
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                        }}>
                         {item.introduction || '暂无简介'}
                     </p>
 

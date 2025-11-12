@@ -4,11 +4,11 @@
     agents = ["udp://{{ ip }}:{{ port }}"]
     version = 2
     community = "{{ community }}"
-    timeout = "{{ timeout }}s"
+    timeout = "{{ timeout }}"
     {% elif version == 3 %}
     agents = ["udp://{{ ip }}:{{ port }}"]
     version = 3
-    timeout = "{{ timeout }}s"
+    timeout = "{{ timeout }}"
     sec_name = "{{ sec_name }}"
     sec_level = "{{ sec_level }}"
     auth_protocol = "{{ auth_protocol }}"

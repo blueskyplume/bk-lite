@@ -7,7 +7,6 @@ from rest_framework.decorators import action
 from apps.core.decorators.api_permission import HasPermission
 from apps.system_mgmt.models import Channel
 from apps.system_mgmt.serializers import ChannelSerializer
-from apps.system_mgmt.utils.operation_log_utils import log_operation
 
 
 class ChannelFilter(FilterSet):
@@ -26,29 +25,11 @@ class ChannelViewSet(viewsets.ModelViewSet):
 
     @HasPermission("Channel_list-Add")
     def create(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-
-        # 记录操作日志
-        if response.status_code == 201:
-            channel_name = response.data.get("name", "")
-            channel_type = response.data.get("channel_type", "")
-            log_operation(request, "create", "channel", f"新增{channel_type}渠道: {channel_name}")
-
-        return response
+        return super().create(request, *args, **kwargs)
 
     @HasPermission("Channel_list-Delete")
     def destroy(self, request, *args, **kwargs):
-        obj = self.get_object()
-        channel_name = obj.name
-        channel_type = obj.channel_type
-
-        response = super().destroy(request, *args, **kwargs)
-
-        # 记录操作日志
-        if response.status_code == 204:
-            log_operation(request, "delete", "channel", f"删除{channel_type}渠道: {channel_name}")
-
-        return response
+        return super().destroy(request, *args, **kwargs)
 
     @action(methods=["POST"], detail=True)
     @HasPermission("Channel_list-Edit")
@@ -70,10 +51,6 @@ class ChannelViewSet(viewsets.ModelViewSet):
             config.setdefault("bot_key", obj.config["bot_key"])
         obj.config = config
         obj.save()
-
-        # 记录操作日志
-        log_operation(request, "update", "channel", f"编辑{obj.channel_type}渠道: {obj.name}")
-
         return JsonResponse({"result": True})
 
 

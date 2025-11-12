@@ -23,7 +23,6 @@ import {
   NodeConfigFormValues,
   TopologyProps,
   TopologyRef,
-  TopologyNodeData,
 } from '@/app/ops-analysis/types/topology';
 import type { DatasourceItem } from '@/app/ops-analysis/types/dataSource';
 import TopologyToolbar from './components/toolbar';
@@ -40,7 +39,6 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
     const canvasContainerRef = useRef<HTMLDivElement>(null);
     const minimapContainerRef = useRef<HTMLDivElement>(null);
     const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
-    const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const [addNodeVisible, setAddNodeVisible] = useState(false);
     const [selectedNodeType, setSelectedNodeType] = useState<NodeType | null>(
       null
@@ -78,7 +76,12 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
       finishInitialization,
       clearOperationHistory,
       refreshAllSingleValueNodes,
-    } = useGraphOperations(containerRef, state, minimapContainerRef);
+    } = useGraphOperations(
+      containerRef,
+      state,
+      minimapContainerRef,
+      minimapVisible
+    );
 
     const { handleEdgeConfigConfirm, closeEdgeConfig, handleMenuClick } =
       useContextMenuAndModal(containerRef, state);
@@ -104,6 +107,14 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
       refreshAllSingleValueNodes();
     }, [refreshAllSingleValueNodes]);
 
+    useEffect(() => {
+      return () => {
+        if (refreshTimerRef.current) {
+          clearInterval(refreshTimerRef.current);
+        }
+      };
+    }, []);
+
     // 监听画布容器大小变化，自动调整画布大小
     const handleCanvasResize = useCallback(() => {
       if (resizeCanvas && canvasContainerRef.current) {
@@ -121,10 +132,8 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
       if (!canvasContainerRef.current) return;
 
       const resizeObserver = new ResizeObserver(() => {
-        if (resizeTimeoutRef.current) {
-          clearTimeout(resizeTimeoutRef.current);
-        }
-        resizeTimeoutRef.current = setTimeout(() => {
+        clearTimeout((window as any).topologyResizeTimeout);
+        (window as any).topologyResizeTimeout = setTimeout(() => {
           handleCanvasResize();
         }, 150);
       });
@@ -133,12 +142,9 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
 
       return () => {
         resizeObserver.disconnect();
-        if (resizeTimeoutRef.current) {
-          clearTimeout(resizeTimeoutRef.current);
-          resizeTimeoutRef.current = null;
-        }
+        clearTimeout((window as any).topologyResizeTimeout);
       };
-    }, [handleCanvasResize]);
+    }, []);
 
     useEffect(() => {
       handleCanvasResize();
@@ -160,8 +166,7 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
 
     const handleChartSelectorConfirm = (item: DatasourceItem) => {
       if (chartDropPosition) {
-        const chartNodeData: TopologyNodeData = {
-          type: 'chart',
+        const chartNodeData = {
           name: item.name,
           description: item.desc,
           position: chartDropPosition,
@@ -305,13 +310,6 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
           finishInitialization();
         }, 100);
       }
-
-      return () => {
-        if (refreshTimerRef.current) {
-          clearInterval(refreshTimerRef.current);
-          refreshTimerRef.current = null;
-        }
-      };
     }, [selectedTopology?.data_id, state.graphInstance]);
 
     const handleSelectMode = () => {
@@ -398,24 +396,23 @@ const Topology = forwardRef<TopologyRef, TopologyProps>(
               tabIndex={-1}
             />
 
-            <div
-              className={styles.minimapContainer}
-              style={{ display: minimapVisible ? 'block' : 'none' }}
-            >
-              <div className={styles.minimapHeader}>
-                <button
-                  onClick={() => setMinimapVisible(false)}
-                  className={styles.minimapCloseBtn}
-                  title={t('topology.minimapCollapse')}
-                >
-                  <CloseOutlined />
-                </button>
+            {minimapVisible && (
+              <div className={styles.minimapContainer}>
+                <div className={styles.minimapHeader}>
+                  <button
+                    onClick={() => setMinimapVisible(false)}
+                    className={styles.minimapCloseBtn}
+                    title={t('topology.minimapCollapse')}
+                  >
+                    <CloseOutlined />
+                  </button>
+                </div>
+                <div
+                  ref={minimapContainerRef}
+                  className={styles.minimapContent}
+                />
               </div>
-              <div
-                ref={minimapContainerRef}
-                className={styles.minimapContent}
-              />
-            </div>
+            )}
             {!minimapVisible && (
               <button
                 onClick={() => setMinimapVisible(true)}

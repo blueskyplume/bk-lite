@@ -69,7 +69,7 @@ export const useContextMenuAndModal = (
       });
 
       if (values.styleConfig) {
-        const lineAttrs: Record<string, any> = {
+        const lineAttrs: any = {
           ...edge.getAttrs().line,
         };
 
@@ -165,7 +165,7 @@ export const useContextMenuAndModal = (
   );
 
   const handleViewModeMenuClick = useCallback(
-    (key: string, sourceNode: Node) => {
+    (key: string, sourceNode: any) => {
       const nodeName = sourceNode.getAttrs()?.label?.text || sourceNode.id;
 
       if (key === 'viewAlarms') {

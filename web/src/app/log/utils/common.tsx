@@ -64,19 +64,13 @@ export const transformTreeData = (nodes: Group[]): CascaderItem[] => {
 };
 
 // 根据分组id找出分组名称(单个id展示)
-export const findGroupNameById = (
-  arr: Array<SubGroupItem>,
-  value: unknown
-): string | null => {
+export const findGroupNameById = (arr: Array<SubGroupItem>, value: unknown) => {
   for (let i = 0; i < arr.length; i++) {
     if (arr[i].value === value) {
-      return arr[i].label || null;
+      return arr[i].label;
     }
     if (arr[i].children && arr[i].children?.length) {
-      const label: string | null = findGroupNameById(
-        arr[i]?.children || [],
-        value
-      );
+      const label: unknown = findGroupNameById(arr[i]?.children || [], value);
       if (label) {
         return label;
       }
@@ -89,14 +83,11 @@ export const findGroupNameById = (
 export const showGroupName = (
   groupIds: string[],
   organizationList: Array<SubGroupItem>
-): string => {
+) => {
   if (!groupIds?.length) return '--';
-  const groupNames: string[] = [];
+  const groupNames: any[] = [];
   groupIds.forEach((el) => {
-    const name = findGroupNameById(organizationList, Number(el));
-    if (name) {
-      groupNames.push(name);
-    }
+    groupNames.push(findGroupNameById(organizationList, Number(el)));
   });
   return groupNames.filter((item) => !!item).join(',') || '--';
 };
@@ -142,10 +133,10 @@ export const escapeArrayToJson = (arr: React.Key[]) => {
 };
 
 // 树形组件根据id查其title
-export const findLabelById = (data: TreeItem[], key: string): string | null => {
+export const findLabelById = (data: any[], key: string): string | null => {
   for (const node of data) {
     if (node.key === key) {
-      return node.label as string;
+      return node.label;
     }
     if (node.children) {
       const result = findLabelById(node.children, key);
@@ -237,8 +228,9 @@ export const formatNumericValue = (value: any): string | number => {
     }
     // 如果不是数字或无法转换，返回原值
     return value;
-  } catch {
+  } catch (error) {
     // 发生任何错误时，返回原值
+    console.warn('Error in formatNumericValue:', error);
     return value;
   }
 };

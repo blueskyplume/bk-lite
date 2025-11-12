@@ -10,7 +10,6 @@ import { useDataSourceApi } from '@/app/ops-analysis/api/dataSource';
 import { NodeConfPanelProps } from '@/app/ops-analysis/types/topology';
 import { iconList } from '@/app/cmdb/utils/common';
 import { NODE_DEFAULTS } from '../constants/nodeDefaults';
-import { DEFAULT_THRESHOLD_COLORS } from '@/app/ops-analysis/constants/threshold';
 import { processDataSourceParams } from '@/app/ops-analysis/utils/widgetDataTransform';
 import { buildTreeData } from '../utils/dataTreeUtils';
 import { useTranslation } from '@/utils/i18n';
@@ -72,7 +71,11 @@ const NodeConfPanel: React.FC<NodeConfPanelProps> = ({
       value: string;
       color: string;
     }>
-  >(DEFAULT_THRESHOLD_COLORS);
+  >([
+    { color: '#fd666d', value: '70' },
+    { color: '#EAB839', value: '30' },
+    { color: '#299C46', value: '0' },
+  ]);
 
   const selectIconRef = useRef<SelectIconRef>(null);
   const { getSourceDataByApiId } = useDataSourceApi();

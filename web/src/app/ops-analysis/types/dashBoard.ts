@@ -1,64 +1,20 @@
 import { TopologyNodeData } from './topology';
-import type { ParamItem, DatasourceItem } from './dataSource';
-import type { Dayjs } from 'dayjs';
-
 export type FilterType = 'selector' | 'fixed';
 
-export interface EChartsInstance {
-  dispatchAction: (action: {
-    type: string;
-    name?: string;
-    [key: string]: unknown;
-  }) => void;
-  setOption: (option: unknown) => void;
-  resize: () => void;
-  dispose: () => void;
-  [key: string]: unknown;
-}
-
-export interface TimeConfig {
-  selectValue: number;
-  rangePickerVaule: [Dayjs, Dayjs] | null;
-}
-
-export interface OtherConfig {
-  timeSelector?: TimeConfig;
-  [key: string]: unknown;
-}
-
-export interface TimeRangeData {
-  start: number;
-  end: number;
-  selectValue: number;
-  rangePickerVaule: [Dayjs, Dayjs] | null;
-}
-
-export interface LayoutChangeItem {
-  i: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface AddComponentConfig {
-  name?: string;
-  description?: string;
-  dataSource?: string | number;
-  chartType?: string;
-  dataSourceParams?: ParamItem[];
-}
-
-export interface ValueConfig {
-  chartType?: string;
-  dataSource?: string | number;
-  params?: Record<string, string | number | boolean | [number, number] | null>;
-  dataSourceParams?: ParamItem[];
-}
-
-export interface WidgetConfig extends ValueConfig {
+export interface DataSourceParam {
   name: string;
-  description?: string;
+  type: string;
+  value: any;
+  alias_name: string;
+  filterType: 'params' | 'fixed' | 'filter';
+}
+
+export interface WidgetConfig {
+  name?: string;
+  chartType?: string;
+  dataSource?: string | number;
+  params?: { [key: string]: any };
+  dataSourceParams?: any[];
 }
 
 export interface LayoutItem {
@@ -69,7 +25,7 @@ export interface LayoutItem {
   h: number;
   name: string;
   description?: string;
-  valueConfig?: ValueConfig;
+  valueConfig?: WidgetConfig;
 }
 
 export type ViewConfigItem = LayoutItem | TopologyNodeData;
@@ -77,21 +33,21 @@ export type ViewConfigItem = LayoutItem | TopologyNodeData;
 export interface ViewConfigProps {
   open: boolean;
   item: ViewConfigItem;
-  onConfirm?: (values: WidgetConfig) => void;
+  onConfirm?: (values: any) => void;
   onClose?: () => void;
 }
 
 export interface ComponentSelectorProps {
   visible: boolean;
   onCancel: () => void;
-  onOpenConfig?: (item: DatasourceItem) => void;
+  onOpenConfig?: (item: any) => void;
 }
 
 export interface BaseWidgetProps {
-  config?: ValueConfig;
-  globalTimeRange?: TimeRangeData;
+  config?: any;
+  globalTimeRange?: any;
   refreshKey?: number;
-  onDataChange?: (data: unknown) => void;
+  onDataChange?: (data: any) => void;
   onReady?: (hasData?: boolean) => void;
 }
 

@@ -47,30 +47,9 @@ const KnowledgeDetailLayout = ({ children }: { children: React.ReactNode }) => {
 
   const processedMenuItems = useMemo(() => {
     const getMenuItemsForPath = (menus: MenuItem[], currentPath: string): MenuItem[] => {
-      const findMatchedMenu = (items: MenuItem[]): MenuItem | null => {
-        for (const menu of items) {
-          // Skip isDirectory and search in children
-          if (menu.isDirectory) {
-            if (menu.children?.length) {
-              const found = findMatchedMenu(menu.children);
-              if (found) return found;
-            }
-            continue;
-          }
-          
-          if (menu.url && menu.url !== currentPath && currentPath.startsWith(menu.url)) {
-            return menu;
-          }
-          
-          if (menu.children?.length) {
-            const found = findMatchedMenu(menu.children);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-      
-      const matchedMenu = findMatchedMenu(menus);
+      const matchedMenu = menus.find(menu => 
+        menu.url && menu.url !== currentPath && currentPath.startsWith(menu.url)
+      );
 
       if (matchedMenu?.children?.length) {
         const validChildren = matchedMenu.children.filter(m => !m.isNotMenuItem);
@@ -81,14 +60,13 @@ const KnowledgeDetailLayout = ({ children }: { children: React.ReactNode }) => {
     };
 
     const originalMenuItems = getMenuItemsForPath(menus, pathname ?? '');
-    console.log('Original Menu Items:', originalMenuItems);
 
-    // Prevent menu flashing while loading bot type
+    // Return empty array to prevent menu flashing if still loading botType
     if (isLoadingBotType) {
       return [originalMenuItems[0]];
     }
     
-    // Filter menu items based on bot type
+    // For bot type 2, only show the first menu item
     if (botType === 2 && originalMenuItems.length > 0) {
       return originalMenuItems.filter(m => !['bot_channel', 'bot_api'].includes(m.name));
     }

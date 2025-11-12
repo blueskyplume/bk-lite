@@ -3,19 +3,17 @@
  * 用于将数据源返回的数据结构转换为 Tree 组件所需的树形结构
  */
 
-import type { TreeNode } from '@/app/ops-analysis/types/topology';
-
 /**
  * 构建树形数据结构
  * @param obj 原始数据对象或数组
  * @returns 树形节点数组
  */
-export const buildTreeData = (obj: unknown): TreeNode[] => {
+export const buildTreeData = (obj: any): any[] => {
   if (typeof obj !== 'object' || obj === null) {
     return [];
   }
 
-  const treeNodes: TreeNode[] = [];
+  const treeNodes: any[] = [];
 
   // 如果是数组，检查第一个元素
   if (Array.isArray(obj) && obj.length > 0) {
@@ -36,7 +34,7 @@ export const buildTreeData = (obj: unknown): TreeNode[] => {
       });
 
       // 添加 data 节点
-      const dataChildren: TreeNode[] = [];
+      const dataChildren: any[] = [];
       if (Array.isArray(firstItem.data) && firstItem.data.length > 0) {
         const dataItem = firstItem.data[0];
         if (typeof dataItem === 'object' && dataItem !== null) {
@@ -92,7 +90,7 @@ export const buildTreeData = (obj: unknown): TreeNode[] => {
 
   // 普通对象处理
   Object.keys(obj).forEach((key) => {
-    const value = (obj as Record<string, unknown>)[key];
+    const value = obj[key];
 
     if (
       typeof value === 'object' &&

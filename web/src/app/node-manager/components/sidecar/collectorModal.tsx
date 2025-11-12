@@ -114,7 +114,7 @@ const CollectorModal = forwardRef<ModalRef, ModalSuccess>(
               })
               .catch(errorCatch);
           } else {
-            handleUpload();
+            handleUpload(values);
           }
         })
         .catch(() => {
@@ -126,7 +126,7 @@ const CollectorModal = forwardRef<ModalRef, ModalSuccess>(
       setFileList(fileList);
     };
 
-    const handleUpload = async () => {
+    const handleUpload = async (values: any) => {
       const file = fileList.length ? fileList[0] : '';
       if (!file) return;
       const fd = new FormData();
@@ -134,21 +134,19 @@ const CollectorModal = forwardRef<ModalRef, ModalSuccess>(
         name: file.name,
         os: formData.system,
         type: key,
+        version: values.version,
         object: formData.name,
         file: file.originFileObj,
       };
       Object.entries(params).forEach(([k, v]) => {
         fd.append(k, v);
       });
-      uploadPackage(params)
-        .then(() => {
-          message.success(t('node-manager.packetManage.uploadSuccess'));
-          onSuccess('upload');
-          setVisible(false);
-        })
-        .finally(() => {
-          setConfirmLoading(false);
-        });
+      uploadPackage(params).then(() => {
+        setConfirmLoading(false);
+        message.success(t('node-manager.packetManage.uploadSuccess'));
+        onSuccess('upload');
+        setVisible(false);
+      });
     };
 
     const props: UploadProps = {
@@ -263,6 +261,15 @@ const CollectorModal = forwardRef<ModalRef, ModalSuccess>(
             )}
             {type === 'upload' && (
               <>
+                <Form.Item
+                  label={t('node-manager.packetManage.version')}
+                  name="version"
+                  rules={[
+                    { required: true, message: t('common.inputRequired') },
+                  ]}
+                >
+                  <Input placeholder={t('common.inputMsg')} />
+                </Form.Item>
                 <Form.Item
                   label={t('node-manager.packetManage.importFile')}
                   name="upload"

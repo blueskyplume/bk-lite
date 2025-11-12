@@ -88,6 +88,7 @@
     "total": "Total",
     "item": "items",
     "checked": "Checked",
+    "includeSubgroups": "Include Subgroups",
     "timeSelector": {
       "15Minutes": "The past 15 minutes",
       "30Minutes": "The past 30 minutes",
@@ -114,6 +115,9 @@
     "leave": "Leave",
     "addFail": "Failed to add",
     "updateFail": "Failed to update",
-    "execute": "Execute"
+    "execute": "Execute",
+    "copy": "Copy",
+    "reset": "Reset",
+    "inputPassword": "Please input the password"
   }
 }

@@ -88,7 +88,7 @@ class AnomalyDetectionTrainJobViewSet(ModelViewSet):
             mlflow.set_tracking_uri(MLFLOW_TRACKER_URL)
 
             # 构造实验名称（与训练时保持一致）
-            experiment_name = f"{train_job.id}_{train_job.name}"
+            experiment_name = f"AnomalyDetection_{train_job.id}_{train_job.name}"
 
             # 查找实验
             experiments = mlflow.search_experiments(filter_string=f"name = '{experiment_name}'")
@@ -361,6 +361,7 @@ class AnomalyDetectionServingViewSet(ModelViewSet):
             data = request.data
             serving_id = data.get('serving_id')
             time_series_data = data.get('data')
+            mlflow.set_tracking_uri(MLFLOW_TRACKER_URL)
 
             # 验证必需参数
             if not serving_id:
@@ -401,7 +402,8 @@ class AnomalyDetectionServingViewSet(ModelViewSet):
                 )
 
             # 从服务配置和训练任务获取模型信息
-            model_name = f"{train_job.algorithm}_{train_job.id}"  # 基于训练任务ID生成模型名称
+            # model_name = f"{train_job.algorithm}_{train_job.id}"  # 基于训练任务ID生成模型名称
+            model_name = f"AnomalyDetection_{train_job.algorithm}_{train_job.id}" 
             model_version = serving.model_version
             anomaly_threshold = serving.anomaly_threshold
             algorithm = train_job.algorithm

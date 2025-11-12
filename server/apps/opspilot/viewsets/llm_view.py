@@ -9,8 +9,7 @@ from apps.core.decorators.api_permission import HasPermission
 from apps.core.logger import opspilot_logger as logger
 from apps.core.mixinx import EncryptMixin
 from apps.core.utils.async_utils import create_async_compatible_generator
-from apps.core.utils.viewset_utils import AuthViewSet
-from apps.core.viewsets.base_viewset import BaseOpsPilotViewSet
+from apps.core.utils.viewset_utils import AuthViewSet, LanguageViewSet
 from apps.opspilot.models import KnowledgeBase, LLMModel, LLMSkill, SkillRequestLog, SkillTools
 from apps.opspilot.serializers.llm_serializer import LLMModelSerializer, LLMSerializer, SkillRequestLogSerializer, SkillToolsSerializer
 from apps.opspilot.utils.quota_utils import get_quota_client
@@ -30,7 +29,7 @@ class LLMFilter(FilterSet):
         return qs.filter(skill_type__in=[int(i.strip()) for i in value.split(",") if i.strip()])
 
 
-class LLMViewSet(BaseOpsPilotViewSet, AuthViewSet):
+class LLMViewSet(AuthViewSet):
     serializer_class = LLMSerializer
     queryset = LLMSkill.objects.all()
     filterset_class = LLMFilter
@@ -86,7 +85,8 @@ class LLMViewSet(BaseOpsPilotViewSet, AuthViewSet):
         instance: LLMSkill = self.get_object()
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, instance, current_team)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, instance, current_team, include_children=include_children)
             if not has_permission:
                 return JsonResponse(
                     {
@@ -191,7 +191,8 @@ class LLMViewSet(BaseOpsPilotViewSet, AuthViewSet):
             skill_obj = LLMSkill.objects.get(id=int(params["skill_id"]))
             if not request.user.is_superuser:
                 current_team = request.COOKIES.get("current_team", "0")
-                has_permission = self.get_has_permission(request.user, skill_obj, current_team, is_check=True)
+                include_children = request.COOKIES.get("include_children", "0") == "1"
+                has_permission = self.get_has_permission(request.user, skill_obj, current_team, is_check=True, include_children=include_children)
                 if not has_permission:
                     message = self.loader.get("no_agent_update_permission") if self.loader else "You do not have permission to update this agent."
                     return self._create_error_stream_response(message)
@@ -232,7 +233,7 @@ class ObjFilter(FilterSet):
         return qs.filter(enabled=enabled)
 
 
-class LLMModelViewSet(BaseOpsPilotViewSet, AuthViewSet):
+class LLMModelViewSet(AuthViewSet):
     serializer_class = LLMModelSerializer
     queryset = LLMModel.objects.all()
     permission_key = "provider.llm_model"
@@ -312,7 +313,7 @@ class LogFilter(FilterSet):
     end_time = filters.DateTimeFilter(field_name="created_at", lookup_expr="lte")
 
 
-class SkillRequestLogViewSet(BaseOpsPilotViewSet):
+class SkillRequestLogViewSet(LanguageViewSet):
     serializer_class = SkillRequestLogSerializer
     queryset = SkillRequestLog.objects.all()
     filterset_class = LogFilter
@@ -330,7 +331,7 @@ class ToolsFilter(FilterSet):
     display_name = filters.CharFilter(field_name="display_name", lookup_expr="icontains")
 
 
-class SkillToolsViewSet(BaseOpsPilotViewSet, AuthViewSet):
+class SkillToolsViewSet(AuthViewSet):
     serializer_class = SkillToolsSerializer
     queryset = SkillTools.objects.all()
     filterset_class = ToolsFilter

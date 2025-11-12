@@ -59,9 +59,10 @@ const useCommonColumns = () => {
         config.onTableDataChange(_dataSource);
       };
 
-      const handleGroupChange = (val: number[], index: number) => {
+      const handleGroupChange = (val: number | number[] | undefined, index: number) => {
+        const groupArray = Array.isArray(val) ? val : (val ? [val] : []);
         const _dataSource = cloneDeep(config.dataSource);
-        _dataSource[index].group_ids = val;
+        _dataSource[index].group_ids = groupArray;
         config.onTableDataChange(_dataSource);
       };
 
@@ -125,7 +126,7 @@ const useCommonColumns = () => {
           render: (_: unknown, record: TableDataItem, index: number) => (
             <Select
               showSearch
-              mode="tags"
+              mode="multiple"
               maxTagCount="responsive"
               loading={config.nodesLoading}
               value={record.node_ids}

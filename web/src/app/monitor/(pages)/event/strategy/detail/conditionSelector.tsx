@@ -182,13 +182,13 @@ const ConditionSelector: React.FC<ConditionSelectorProps> = ({
           }}
           showSearch
           allowClear
-          mode="tags"
+          mode="multiple"
           maxTagCount="responsive"
           placeholder={t('common.group')}
           value={data.group}
           onChange={onGroupChange}
         >
-          {(getGroupIds(monitorName).list || defaultGroup).map(
+          {(getGroupIds(monitorName)?.list || defaultGroup).map(
             (item: string) => (
               <Option value={item} key={item}>
                 {item}

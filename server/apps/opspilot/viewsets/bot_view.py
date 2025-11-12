@@ -6,7 +6,6 @@ from rest_framework.decorators import action
 from apps.core.decorators.api_permission import HasPermission
 from apps.core.logger import opspilot_logger as logger
 from apps.core.utils.viewset_utils import AuthViewSet
-from apps.core.viewsets.base_viewset import BaseOpsPilotViewSet
 from apps.opspilot.enum import BotTypeChoice, ChannelChoices
 from apps.opspilot.models import Bot, BotChannel, BotWorkFlow, Channel, LLMSkill
 from apps.opspilot.serializers import BotSerializer
@@ -26,7 +25,7 @@ class BotFilter(FilterSet):
         return qs.filter(bot_type__in=[int(i.strip()) for i in value.split(",") if i.strip()])
 
 
-class BotViewSet(BaseOpsPilotViewSet, AuthViewSet):
+class BotViewSet(AuthViewSet):
     serializer_class = BotSerializer
     queryset = Bot.objects.all()
     permission_key = "bot"
@@ -74,7 +73,8 @@ class BotViewSet(BaseOpsPilotViewSet, AuthViewSet):
         obj: Bot = self.get_object()
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, obj, current_team)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, obj, current_team, include_children=include_children)
             if not has_permission:
                 return JsonResponse(
                     {
@@ -158,7 +158,8 @@ class BotViewSet(BaseOpsPilotViewSet, AuthViewSet):
         channel = BotChannel.objects.get(id=channel_id)
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, channel.bot, current_team)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, channel.bot, current_team, include_children=include_children)
             if not has_permission:
                 message = self.loader.get("no_bot_update_permission") if self.loader else "You do not have permission to update this bot."
                 return JsonResponse(
@@ -191,7 +192,8 @@ class BotViewSet(BaseOpsPilotViewSet, AuthViewSet):
         bots = Bot.objects.filter(id__in=bot_ids)
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True, include_children=include_children)
             if not has_permission:
                 message = self.loader.get("no_bot_start_permission") if self.loader else "You do not have permission to start this bot."
                 return JsonResponse(
@@ -222,7 +224,8 @@ class BotViewSet(BaseOpsPilotViewSet, AuthViewSet):
         bots = Bot.objects.filter(id__in=bot_ids)
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, bots, current_team, is_list=True, include_children=include_children)
             if not has_permission:
                 message = self.loader.get("no_bot_stop_permission") if self.loader else "You do not have permission to stop this bot"
                 return JsonResponse(

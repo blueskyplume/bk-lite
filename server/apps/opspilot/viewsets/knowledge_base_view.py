@@ -6,7 +6,6 @@ from rest_framework.response import Response
 
 from apps.core.decorators.api_permission import HasPermission
 from apps.core.utils.viewset_utils import AuthViewSet
-from apps.core.viewsets.base_viewset import BaseOpsPilotViewSet
 from apps.opspilot.enum import DocumentStatus
 from apps.opspilot.models import (
     EmbedProvider,
@@ -22,7 +21,7 @@ from apps.opspilot.serializers import KnowledgeBaseSerializer
 from apps.opspilot.tasks import retrain_all
 
 
-class KnowledgeBaseViewSet(BaseOpsPilotViewSet, AuthViewSet):
+class KnowledgeBaseViewSet(AuthViewSet):
     queryset = KnowledgeBase.objects.all()
     serializer_class = KnowledgeBaseSerializer
     ordering = ("-id",)
@@ -99,7 +98,8 @@ class KnowledgeBaseViewSet(BaseOpsPilotViewSet, AuthViewSet):
         instance: KnowledgeBase = self.get_object()
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, instance, current_team)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, instance, current_team, include_children=include_children)
             if not has_permission:
                 return JsonResponse(
                     {

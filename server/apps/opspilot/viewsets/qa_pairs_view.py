@@ -7,8 +7,7 @@ from django_filters.rest_framework import FilterSet
 from rest_framework.decorators import action
 
 from apps.core.decorators.api_permission import HasPermission
-from apps.core.utils.viewset_utils import GenericViewSetFun, MaintainerViewSet
-from apps.core.viewsets.base_viewset import BaseOpsPilotViewSet
+from apps.core.utils.viewset_utils import MaintainerViewSet
 from apps.opspilot.models import KnowledgeBase, KnowledgeTask, LLMModel, QAPairs
 from apps.opspilot.serializers.qa_pairs_serializers import QAPairsSerializer
 from apps.opspilot.tasks import create_qa_pairs, create_qa_pairs_by_chunk, create_qa_pairs_by_custom, create_qa_pairs_by_json, generate_answer
@@ -21,7 +20,7 @@ class QAPairsFilter(FilterSet):
     knowledge_base_id = filters.NumberFilter(field_name="knowledge_base_id", lookup_expr="exact")
 
 
-class QAPairsViewSet(BaseOpsPilotViewSet, MaintainerViewSet, GenericViewSetFun):
+class QAPairsViewSet(MaintainerViewSet):
     queryset = QAPairs.objects.all()
     serializer_class = QAPairsSerializer
     filterset_class = QAPairsFilter
@@ -52,7 +51,8 @@ class QAPairsViewSet(BaseOpsPilotViewSet, MaintainerViewSet, GenericViewSetFun):
         if not request.user.is_superuser:
             knowledge_base = KnowledgeBase.objects.get(id=params["knowledge_base_id"])
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, knowledge_base, current_team)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, knowledge_base, current_team, include_children=include_children)
             if not has_permission:
                 message = self.loader.get("no_update_permission") if self.loader else "You do not have permission to update this instance"
                 return JsonResponse(
@@ -413,7 +413,8 @@ class QAPairsViewSet(BaseOpsPilotViewSet, MaintainerViewSet, GenericViewSetFun):
         instance = QAPairs.objects.get(id=instance_id)
         if not request.user.is_superuser:
             current_team = request.COOKIES.get("current_team", "0")
-            has_permission = self.get_has_permission(request.user, instance.knowledge_base, current_team)
+            include_children = request.COOKIES.get("include_children", "0") == "1"
+            has_permission = self.get_has_permission(request.user, instance.knowledge_base, current_team, include_children=include_children)
             if not has_permission:
                 message = self.loader.get("no_update_permission") if self.loader else "You do not have permission to update this instance"
                 return JsonResponse(

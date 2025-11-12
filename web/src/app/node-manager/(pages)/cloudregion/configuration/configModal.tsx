@@ -16,7 +16,7 @@ import {
   ModalRef,
 } from '@/app/node-manager/types';
 import { useTranslation } from '@/utils/i18n';
-import useApiCloudRegion from '@/app/node-manager/api/cloudRegion';
+import useNodeManagerApi from '@/app/node-manager/api';
 import {
   VarSourceItem,
   VarResItem,
@@ -34,9 +34,9 @@ const ConfigModal = forwardRef<ModalRef, ModalSuccess>(
     const {
       updateCollector,
       createConfig,
-      getVariableList,
       updateChildConfig,
-    } = useApiCloudRegion();
+      getVariableList,
+    } = useNodeManagerApi();
     const cloudId = useCloudId();
     const { t } = useTranslation();
     const columns = useConfigModalColumns();
@@ -93,7 +93,7 @@ const ConfigModal = forwardRef<ModalRef, ModalSuccess>(
     };
 
     const handleSuccess = () => {
-      onSuccess();
+      onSuccess(type);
       setConfirmLoading(false);
       setConfigVisible(false);
     };
@@ -343,6 +343,7 @@ const ConfigModal = forwardRef<ModalRef, ModalSuccess>(
         open={configVisible}
         onCancel={handleCancel}
         width={800}
+        zIndex={999999}
         footer={
           <div>
             <Button
@@ -363,5 +364,5 @@ const ConfigModal = forwardRef<ModalRef, ModalSuccess>(
   }
 );
 
-ConfigModal.displayName = 'configModal';
+ConfigModal.displayName = 'ConfigModal';
 export default ConfigModal;

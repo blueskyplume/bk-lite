@@ -4,10 +4,5 @@
 // Common constants (status maps, type maps, etc.)
 export * from './common';
 
-// Algorithm configurations
-export * from './algorithms/anomaly-detection';
-export * from './algorithms/classification';
-export * from './algorithms/timeseries-predict';
-export * from './algorithms/log-clustering';
-export * from './algorithms/image-classification';
-export * from './algorithms/object-detection';
+// Serving related constants
+export * from './serving';

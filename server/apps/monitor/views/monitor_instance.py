@@ -13,11 +13,12 @@ from apps.monitor.models import (
 )
 from apps.monitor.services.monitor_instance import InstanceSearch
 from apps.monitor.services.monitor_object import MonitorObjectService
+from apps.monitor.services.policy_source_cleanup import cleanup_policy_sources
 from apps.monitor.services.metrics import Metrics as MetricsService
 from apps.rpc.node_mgmt import NodeMgmt
 
 
-class MonitorInstanceVieSet(viewsets.ViewSet):
+class MonitorInstanceViewSet(viewsets.ViewSet):
     @action(
         methods=["get"], detail=False, url_path="query_params_enum/(?P<name>[^/.]+)"
     )
@@ -32,11 +33,13 @@ class MonitorInstanceVieSet(viewsets.ViewSet):
     )
     def monitor_instance_list(self, request, monitor_object_id):
         """非特殊对象的通用列表接口"""
+        include_children = request.COOKIES.get("include_children", "0") == "1"
         permission = get_permission_rules(
             request.user,
             request.COOKIES.get("current_team"),
             "monitor",
             f"{PermissionConstants.INSTANCE_MODULE}.{monitor_object_id}",
+            include_children=include_children,
         )
         qs = permission_filter(
             MonitorInstance,
@@ -82,11 +85,13 @@ class MonitorInstanceVieSet(viewsets.ViewSet):
         if not monitor_obj:
             raise BaseAppException("Monitor object does not exist")
 
+        include_children = request.COOKIES.get("include_children", "0") == "1"
         permission = get_permission_rules(
             request.user,
             request.COOKIES.get("current_team"),
             "monitor",
             f"{PermissionConstants.INSTANCE_MODULE}.{monitor_object_id}",
+            include_children=include_children,
         )
         qs = permission_filter(
             MonitorInstance,
@@ -135,11 +140,13 @@ class MonitorInstanceVieSet(viewsets.ViewSet):
                 "Only primary monitor objects support instance search"
             )
 
+        include_children = request.COOKIES.get("include_children", "0") == "1"
         permission = get_permission_rules(
             request.user,
             request.COOKIES.get("current_team"),
             "monitor",
             f"{PermissionConstants.INSTANCE_MODULE}.{monitor_object_id}",
+            include_children=include_children,
         )
         qs = permission_filter(
             MonitorInstance,
@@ -218,10 +225,12 @@ class MonitorInstanceVieSet(viewsets.ViewSet):
             # 删除配置对象
             config_objs.delete()
 
-        # 同步删除实例关联的分组规则
         MonitorObjectOrganizationRule.objects.filter(
             monitor_instance_id__in=instance_ids
         ).delete()
+
+        cleanup_policy_sources(instance_ids)
+
         return WebUtils.response_success()
 
     @action(methods=["post"], detail=False, url_path="update_monitor_instance")

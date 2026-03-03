@@ -10,8 +10,7 @@ import jinja2
 
 from apps.core.logger import opspilot_logger as logger
 from apps.opspilot.models import LLMModel, LLMSkill
-from apps.opspilot.services.chat_service import ChatService
-from apps.opspilot.services.llm_service import llm_service
+from apps.opspilot.services.chat_service import ChatService, chat_service
 from apps.opspilot.utils.agent_factory import create_agent_instance
 from apps.opspilot.utils.chat_flow_utils.engine.core.base_executor import BaseNodeExecutor
 
@@ -146,6 +145,7 @@ class AgentNode(BaseNodeExecutor):
             "km_llm_model": skill.km_llm_model,
             "enable_suggest": skill.enable_suggest,
             "enable_query_rewrite": skill.enable_query_rewrite,
+            "locale": flow_input.get("locale", "en"),  # 用户语言设置，用于 browser-use 输出国际化
         }
 
     def sse_execute(self, node_id: str, node_config: Dict[str, Any], input_data: Dict[str, Any]):
@@ -175,7 +175,7 @@ class AgentNode(BaseNodeExecutor):
         skill_type = llm_params.get("skill_type")
         llm_params.pop("group", 0)
 
-        chat_kwargs, _, _ = llm_service.format_chat_server_kwargs(llm_params, llm_model)
+        chat_kwargs, _, _ = chat_service.format_chat_server_kwargs(llm_params, llm_model)
         # 创建 agent 实例
         graph, request = create_agent_instance(skill_type, chat_kwargs)
 
@@ -187,20 +187,6 @@ class AgentNode(BaseNodeExecutor):
 
                 chunk_index = 0
                 async for sse_line in graph.agui_stream(request):
-                    # 如果 show_think=False，过滤掉工具调用相关事件
-                    if not show_think and sse_line.startswith("data: "):
-                        try:
-                            data_str = sse_line[6:].strip()
-                            data_json = json.loads(data_str)
-                            event_type = data_json.get("type", "")
-
-                            # 过滤工具调用相关事件
-                            if event_type in ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"]:
-                                continue
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-
-                    chunk_index += 1
                     yield sse_line
 
                 logger.info(f"[AgentNode-AGUI] 流式处理完成 - 生成 {chunk_index} 个chunk")
@@ -259,7 +245,10 @@ class AgentNode(BaseNodeExecutor):
         # 使用同步版本的 invoke_chat,避免异步上下文冲突
         data, _, _ = ChatService.invoke_chat(llm_params)
 
-        return {output_key: data["message"]}
+        result = {output_key: data["message"]}
+        if data.get("browser_steps"):
+            result["browser_steps"] = data["browser_steps"]
+        return result
 
 
 # 向后兼容的别名

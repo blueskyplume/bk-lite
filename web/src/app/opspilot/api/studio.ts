@@ -52,6 +52,14 @@ export const useStudioApi = () => {
   };
 
   /**
+   * Toggles the pin status of a bot.
+   * @param botId - The ID of the bot to toggle pin status.
+   */
+  const toggleBotPin = async (botId: number): Promise<void> => {
+    return post(`/opspilot/bot_mgmt/bot/${botId}/toggle_pin/`);
+  };
+
+  /**
    * Fetches initial data for the studio settings page.
    * @param botId - The ID of the bot.
    */
@@ -119,11 +127,20 @@ export const useStudioApi = () => {
   };
 
   /**
-   * Executes a workflow node manually.
+   * Executes a workflow node manually (JSON response).
    * @param payload - The execution payload including message, bot_id, and node_id.
    */
   const executeWorkflow = async (payload: { message?: string; bot_id: string; node_id: string }): Promise<any> => {
     return post(`/opspilot/bot_mgmt/execute_chat_flow/${payload.bot_id}/${payload.node_id}`, { message: payload.message, is_test: true });
+  };
+
+  /**
+   * Gets the SSE URL for executing a workflow node with streaming.
+   * @param botId - The ID of the bot.
+   * @param nodeId - The ID of the node.
+   */
+  const getExecuteWorkflowSSEUrl = (botId: string, nodeId: string): string => {
+    return `/api/proxy/opspilot/bot_mgmt/execute_chat_flow/${botId}/${nodeId}`;
   };
 
   /**
@@ -198,6 +215,7 @@ export const useStudioApi = () => {
     fetchBotDetail,
     updateChannel,
     deleteStudio,
+    toggleBotPin,
     fetchInitialData,
     saveBotConfig,
     toggleOnlineStatus,
@@ -206,6 +224,7 @@ export const useStudioApi = () => {
     fetchConversations,
     fetchActiveUsers,
     executeWorkflow,
+    getExecuteWorkflowSSEUrl,
     getAllUsers,
     fetchWorkflowLogs,
     fetchWorkflowLogDetail,

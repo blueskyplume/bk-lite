@@ -1,9 +1,16 @@
 from config.drf.viewsets import ModelViewSet
 
+from apps.mlops.constants import TrainJobStatus, DatasetReleaseStatus, MLflowRunStatus
 from apps.core.logger import mlops_logger as logger
 from apps.mlops.models.image_classification import *
+from apps.mlops.models import AlgorithmConfig
 from apps.mlops.serializers.image_classification import *
+from apps.mlops.serializers.algorithm_config import (
+    AlgorithmConfigSerializer,
+    AlgorithmConfigListSerializer,
+)
 from apps.mlops.filters.image_classification import *
+from apps.mlops.filters.algorithm_config import AlgorithmConfigFilter
 from config.drf.pagination import CustomPageNumberPagination
 from apps.core.decorators.api_permission import HasPermission
 from rest_framework import status
@@ -12,11 +19,18 @@ from rest_framework.decorators import action
 from django.db import transaction
 from django.http import FileResponse
 from apps.mlops.utils import mlflow_service
+from apps.mlops.utils.validators import validate_serving_status_change
 from apps.mlops.utils.webhook_client import (
     WebhookClient,
     WebhookError,
     WebhookConnectionError,
     WebhookTimeoutError,
+)
+from apps.mlops.services import (
+    get_image_by_prefix,
+    get_mlflow_train_config,
+    get_mlflow_tracking_uri,
+    ConfigurationError,
 )
 import os
 import pandas as pd
@@ -29,26 +43,26 @@ class ImageClassificationDatasetViewSet(ModelViewSet):
     serializer_class = ImageClassificationDatasetSerializer
     filterset_class = ImageClassificationDatasetFilter
     pagination_class = CustomPageNumberPagination
-    ordering = "-id"
+    ordering = ("-id",)
     permission_key = "dataset.image_classification_dataset"
 
-    @HasPermission("image_classification_datasets-View")
+    @HasPermission("image_classification-View")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
-    @HasPermission("image_classification_datasets-View")
+    @HasPermission("image_classification-View")
     def retrieve(self, request, *args, **kwargs):
         return super().retrieve(request, *args, **kwargs)
 
-    @HasPermission("image_classification_datasets-Delete")
+    @HasPermission("image_classification-Delete")
     def destroy(self, request, *args, **kwargs):
         return super().destroy(request, *args, **kwargs)
 
-    @HasPermission("image_classification_datasets-Add")
+    @HasPermission("image_classification-Add")
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
-    @HasPermission("image_classification_datasets-Edit")
+    @HasPermission("image_classification-Edit")
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
@@ -63,31 +77,23 @@ class ImageClassificationTrainDataViewSet(ModelViewSet):
     ordering = ("-id",)
     permission_key = "dataset.image_classification_train_data"
 
-    @HasPermission("image_classification_train_data-View")
+    @HasPermission("image_classification-View")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_data-View")
+    @HasPermission("image_classification-View")
     def retrieve(self, request, *args, **kwargs):
         return super().retrieve(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_data-Delete")
+    @HasPermission("image_classification-Delete")
     def destroy(self, request, *args, **kwargs):
         """
         删除训练数据实例，自动删除关联的 MinIO ZIP 文件
         """
         try:
-            instance = self.get_object()
-            instance_id = instance.id
-            instance_name = instance.name
-
             # train_data FileField 会在模型的 save() 方法中自动清理
-            logger.info(f"开始删除训练数据实例: ID={instance_id}, 名称={instance_name}")
-
             # 删除实例（模型会自动清理文件）
             super().destroy(request, *args, **kwargs)
-
-            logger.info(f"训练数据实例删除完成: ID={instance_id}")
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         except Exception as e:
@@ -97,14 +103,14 @@ class ImageClassificationTrainDataViewSet(ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @HasPermission("image_classification_train_data-Add")
+    @HasPermission("image_classification-Add")
     def create(self, request, *args, **kwargs):
         """
         创建训练数据：上传 ZIP 压缩包 + metadata
         """
         return super().create(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_data-Edit")
+    @HasPermission("image_classification-Edit")
     def update(self, request, *args, **kwargs):
         """
         更新训练数据：可替换 ZIP 文件或更新 metadata
@@ -112,7 +118,7 @@ class ImageClassificationTrainDataViewSet(ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     @action(detail=True, methods=["get"], url_path="download")
-    @HasPermission("image_classification_train_data-View")
+    @HasPermission("image_classification-View")
     def download(self, request, pk=None):
         """下载训练数据 ZIP 文件"""
         try:
@@ -130,7 +136,6 @@ class ImageClassificationTrainDataViewSet(ModelViewSet):
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
             response["Content-Length"] = instance.train_data.size
 
-            logger.info(f"下载训练数据: {instance.name} (ID: {instance.id})")
             return response
 
         except Exception as e:
@@ -141,7 +146,7 @@ class ImageClassificationTrainDataViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["get"], url_path="download_metadata")
-    @HasPermission("image_classification_train_data-View")
+    @HasPermission("image_classification-View")
     def download_metadata(self, request, pk=None):
         """下载训练数据 metadata JSON 文件"""
         try:
@@ -173,28 +178,28 @@ class ImageClassificationDatasetReleaseViewSet(ModelViewSet):
     ordering = ("-created_at",)
     permission_key = "dataset.image_classification_dataset_release"
 
-    @HasPermission("image_classification_dataset_releases-View")
+    @HasPermission("image_classification-View")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
-    @HasPermission("image_classification_dataset_releases-View")
+    @HasPermission("image_classification-View")
     def retrieve(self, request, *args, **kwargs):
         return super().retrieve(request, *args, **kwargs)
 
-    @HasPermission("image_classification_dataset_releases-Delete")
+    @HasPermission("image_classification-Delete")
     def destroy(self, request, *args, **kwargs):
         return super().destroy(request, *args, **kwargs)
 
-    @HasPermission("image_classification_dataset_releases-Add")
+    @HasPermission("image_classification-Add")
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
-    @HasPermission("image_classification_dataset_releases-Edit")
+    @HasPermission("image_classification-Edit")
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
     @action(detail=True, methods=["get"], url_path="download")
-    @HasPermission("image_classification_dataset_releases-View")
+    @HasPermission("image_classification-View")
     def download(self, request, *args, **kwargs):
         """下载数据集发布版本的压缩包"""
         try:
@@ -211,7 +216,6 @@ class ImageClassificationDatasetReleaseViewSet(ModelViewSet):
             response = FileResponse(file, content_type="application/zip")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
 
-            logger.info(f"下载数据集版本: {instance.dataset.name} - {instance.version}")
             return response
 
         except Exception as e:
@@ -222,24 +226,20 @@ class ImageClassificationDatasetReleaseViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["post"], url_path="archive")
-    @HasPermission("image_classification_dataset_releases-Edit")
+    @HasPermission("image_classification-Edit")
     def archive(self, request, pk=None):
         """归档数据集版本"""
         try:
             instance = self.get_object()
 
-            if instance.status == "archived":
+            if instance.status == DatasetReleaseStatus.ARCHIVED:
                 return Response(
                     {"error": "数据集版本已经是归档状态"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            instance.status = "archived"
+            instance.status = DatasetReleaseStatus.ARCHIVED
             instance.save(update_fields=["status"])
-
-            logger.info(
-                f"数据集版本已归档: {instance.dataset.name} - {instance.version}"
-            )
 
             serializer = self.get_serializer(instance)
             return Response(serializer.data)
@@ -252,24 +252,20 @@ class ImageClassificationDatasetReleaseViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["post"], url_path="unarchive")
-    @HasPermission("image_classification_dataset_releases-Edit")
+    @HasPermission("image_classification-Edit")
     def unarchive(self, request, pk=None):
         """恢复归档的数据集版本"""
         try:
             instance = self.get_object()
 
-            if instance.status != "archived":
+            if instance.status != DatasetReleaseStatus.ARCHIVED:
                 return Response(
                     {"error": "只能恢复归档状态的数据集版本"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            instance.status = "published"
+            instance.status = DatasetReleaseStatus.PUBLISHED
             instance.save(update_fields=["status"])
-
-            logger.info(
-                f"数据集版本已恢复: {instance.dataset.name} - {instance.version}"
-            )
 
             serializer = self.get_serializer(instance)
             return Response(serializer.data)
@@ -297,28 +293,28 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
     # MLflow 前缀
     MLFLOW_PREFIX = "ImageClassification"
 
-    @HasPermission("image_classification_train_jobs-View")
+    @HasPermission("image_classification-View")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_jobs-View")
+    @HasPermission("image_classification-View")
     def retrieve(self, request, *args, **kwargs):
         return super().retrieve(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_jobs-Delete")
+    @HasPermission("image_classification-Delete")
     def destroy(self, request, *args, **kwargs):
         return super().destroy(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_jobs-Add")
+    @HasPermission("image_classification-Add")
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
 
-    @HasPermission("image_classification_train_jobs-Edit")
+    @HasPermission("image_classification-Edit")
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="train")
-    @HasPermission("image_classification_train_jobs-Train")
+    @HasPermission("image_classification-Train")
     def train(self, request, pk=None):
         """
         启动图片分类训练任务
@@ -327,34 +323,16 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             train_job = self.get_object()
 
             # 检查任务状态
-            if train_job.status == "running":
+            if train_job.status == TrainJobStatus.RUNNING:
                 return Response(
                     {"error": "训练任务已在运行中"}, status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # 获取环境变量
-            bucket = os.getenv("MINIO_PUBLIC_BUCKETS", "munchkin-public")
-            minio_endpoint = os.getenv("MLFLOW_S3_ENDPOINT_URL", "")
-            mlflow_tracking_uri = os.getenv("MLFLOW_TRACKER_URL", "")
-            minio_access_key = os.getenv("MINIO_ACCESS_KEY", "")
-            minio_secret_key = os.getenv("MINIO_SECRET_KEY", "")
-
-            if not minio_endpoint:
-                logger.error("MinIO endpoint not configured")
-                return Response(
-                    {"error": "系统配置错误，请联系管理员"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            if not mlflow_tracking_uri:
-                logger.error("MLflow tracking URI not configured")
-                return Response(
-                    {"error": "系统配置错误，请联系管理员"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            if not minio_access_key or not minio_secret_key:
-                logger.error("MinIO credentials not configured")
+            # 获取训练配置
+            try:
+                config = get_mlflow_train_config()
+            except ConfigurationError as e:
+                logger.error(str(e))
                 return Response(
                     {"error": "系统配置错误，请联系管理员"},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -381,35 +359,32 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
                 train_job_id=train_job.id,
             )
 
-            logger.info(f"启动图片分类训练任务: {job_id}")
-
             # 从 hyperopt_config 中提取 device 参数
             device = None
             if train_job.hyperopt_config:
                 hyperparams = train_job.hyperopt_config.get("hyperparams", {})
                 device = hyperparams.get("device")
-                if device:
-                    logger.info(f"  Device: {device}")
+
+            # 动态获取训练镜像
+            train_image = get_image_by_prefix(self.MLFLOW_PREFIX, train_job.algorithm)
 
             # 调用 WebhookClient 启动训练
             WebhookClient.train(
                 job_id=job_id,
-                bucket=bucket,
+                bucket=config.bucket,
                 dataset=train_job.dataset_version.dataset_file.name,
                 config=train_job.config_url.name,
-                minio_endpoint=minio_endpoint,
-                mlflow_tracking_uri=mlflow_tracking_uri,
-                minio_access_key=minio_access_key,
-                minio_secret_key=minio_secret_key,
-                train_image="classify-image-classification:latest",  # YOLO 训练镜像
+                minio_endpoint=config.minio_endpoint,
+                mlflow_tracking_uri=config.mlflow_tracking_uri,
+                minio_access_key=config.minio_access_key,
+                minio_secret_key=config.minio_secret_key,
+                train_image=train_image,
                 device=device,
             )
 
             # 更新任务状态
-            train_job.status = "running"
+            train_job.status = TrainJobStatus.RUNNING
             train_job.save(update_fields=["status"])
-
-            logger.info(f"图片分类训练任务已启动: {job_id}")
 
             return Response(
                 {
@@ -441,7 +416,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["post"], url_path="stop")
-    @HasPermission("image_classification_train_jobs-Stop")
+    @HasPermission("image_classification-Stop")
     def stop(self, request, *args, **kwargs):
         """
         停止图片分类训练任务
@@ -450,7 +425,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             train_job = self.get_object()
 
             # 检查任务状态
-            if train_job.status != "running":
+            if train_job.status != TrainJobStatus.RUNNING:
                 return Response(
                     {"error": "训练任务未在运行中"}, status=status.HTTP_400_BAD_REQUEST
                 )
@@ -462,16 +437,13 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
                 train_job_id=train_job.id,
             )
 
-            logger.info(f"停止图片分类训练任务: {job_id}")
-
             # 调用 WebhookClient 停止任务（默认删除容器）
             result = WebhookClient.stop(job_id)
 
             # 更新任务状态
-            train_job.status = "pending"
+            train_job.status = TrainJobStatus.PENDING
             train_job.save(update_fields=["status"])
 
-            logger.info(f"图片分类训练任务已停止: {job_id}")
 
             return Response(
                 {
@@ -503,7 +475,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["get"], url_path="model_versions")
-    @HasPermission("image_classification_train_jobs-View")
+    @HasPermission("image_classification-View")
     def get_model_versions(self, request, pk=None):
         """
         获取训练任务对应模型的所有版本列表（从MLflow）
@@ -522,12 +494,9 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             version_data = mlflow_service.get_model_versions(model_name)
 
             if not version_data:
-                logger.info(f"模型未找到版本: {model_name}")
+                logger.warning(f"模型未找到版本: {model_name}")
                 return Response({"model_name": model_name, "versions": [], "total": 0})
 
-            logger.info(
-                f"获取模型版本列表成功: {model_name}, 共 {len(version_data)} 个版本"
-            )
 
             return Response(
                 {
@@ -545,7 +514,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             )
 
     @action(detail=False, methods=["get"], url_path="download_model/(?P<run_id>[^/]+)")
-    @HasPermission("image_classification_train_jobs-View")
+    @HasPermission("image_classification-View")
     def download_model(self, request, run_id: str):
         """
         从 MLflow 下载模型并直接返回 ZIP 文件
@@ -586,7 +555,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["get"], url_path="runs_data_list")
-    @HasPermission("train_tasks-View")
+    @HasPermission("image_classification-View")
     def get_run_data_list(self, request, pk=None):
         try:
             # 获取训练任务
@@ -684,20 +653,12 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
                     continue
 
             # 同步最新运行状态到 TrainJob
-            if latest_run_status and train_job.status == "running":
-                status_map = {
-                    "FINISHED": "completed",
-                    "FAILED": "failed",
-                    "KILLED": "failed",
-                }
-                new_status = status_map.get(latest_run_status)
+            if latest_run_status and train_job.status == TrainJobStatus.RUNNING:
+                new_status = MLflowRunStatus.TO_TRAIN_JOB_STATUS.get(latest_run_status)
 
                 if new_status:
                     train_job.status = new_status
                     train_job.save(update_fields=["status"])
-                    logger.info(
-                        f"自动同步 TrainJob {train_job.id} 状态: running -> {new_status} (基于 MLflow: {latest_run_status})"
-                    )
 
             return Response(
                 {
@@ -717,7 +678,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             )
 
     @action(detail=False, methods=["get"], url_path="runs_metrics_list/(?P<run_id>.+?)")
-    @HasPermission("train_tasks-View")
+    @HasPermission("image_classification-View")
     def get_runs_metrics_list(self, request, run_id: str):
         try:
             # 获取运行的指标列表（过滤系统指标）
@@ -738,7 +699,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
         methods=["get"],
         url_path="runs_metrics_history/(?P<run_id>.+?)/(?P<metric_name>.+?)",
     )
-    @HasPermission("train_tasks-View")
+    @HasPermission("image_classification-View")
     def get_metric_data(self, request, run_id: str, metric_name: str):
         """
         获取指定 run 的指定指标的历史数据
@@ -757,8 +718,6 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
                     }
                 )
 
-            logger.info(f"返回 {len(metric_data)} 条指标数据")
-
             return Response(
                 {
                     "run_id": run_id,
@@ -776,7 +735,7 @@ class ImageClassificationTrainJobViewSet(ModelViewSet):
             )
 
     @action(detail=False, methods=["get"], url_path="run_params/(?P<run_id>.+?)")
-    @HasPermission("train_tasks-View")
+    @HasPermission("image_classification-View")
     def get_run_params(self, request, run_id: str):
         """
         获取指定 run 的配置参数（用于查看历史训练的配置）
@@ -830,7 +789,7 @@ class ImageClassificationServingViewSet(ModelViewSet):
     # MLflow 前缀
     MLFLOW_PREFIX = "ImageClassification"
 
-    @HasPermission("image_classification_servings-View")
+    @HasPermission("image_classification-View")
     def list(self, request, *args, **kwargs):
         """列表查询，实时同步容器状态"""
         response = super().list(request, *args, **kwargs)
@@ -896,15 +855,15 @@ class ImageClassificationServingViewSet(ModelViewSet):
 
         return response
 
-    @HasPermission("image_classification_servings-View")
+    @HasPermission("image_classification-View")
     def retrieve(self, request, *args, **kwargs):
         return super().retrieve(request, *args, **kwargs)
 
-    @HasPermission("image_classification_servings-Delete")
+    @HasPermission("image_classification-Delete")
     def destroy(self, request, *args, **kwargs):
         return super().destroy(request, *args, **kwargs)
 
-    @HasPermission("image_classification_servings-Add")
+    @HasPermission("image_classification-Add")
     def create(self, request, *args, **kwargs):
         """创建 serving 服务并自动启动容器"""
         response = super().create(request, *args, **kwargs)
@@ -913,8 +872,8 @@ class ImageClassificationServingViewSet(ModelViewSet):
         try:
             serving = ImageClassificationServing.objects.get(id=serving_id)
 
-            # 获取环境变量
-            mlflow_tracking_uri = os.getenv("MLFLOW_TRACKER_URL", "")
+            # 获取 MLflow tracking URI
+            mlflow_tracking_uri = get_mlflow_tracking_uri()
             if not mlflow_tracking_uri:
                 logger.error("环境变量 MLFLOW_TRACKER_URL 未配置")
                 serving.container_info = {
@@ -949,27 +908,24 @@ class ImageClassificationServingViewSet(ModelViewSet):
                 hyperparams = serving.train_job.hyperopt_config.get("hyperparams", {})
                 device = hyperparams.get("device")
 
-            logger.info(
-                f"自动启动 serving 服务: {container_id}, Model URI: {model_uri}, Port: {serving.port or 'auto'}, Device: {device or 'default'}"
-            )
-
             try:
+                # 动态获取推理镜像
+                train_image = get_image_by_prefix(
+                    self.MLFLOW_PREFIX, serving.train_job.algorithm
+                )
+
                 # 调用 WebhookClient 启动服务
                 result = WebhookClient.serve(
                     container_id,
                     mlflow_tracking_uri,
                     model_uri,
                     port=serving.port,
-                    train_image="classify-image-classification:latest",
+                    train_image=train_image,
                     device=device,
                 )
 
                 serving.container_info = result
                 serving.save(update_fields=["container_info"])
-
-                logger.info(
-                    f"Serving 服务已自动启动: {container_id}, Port: {result.get('port')}"
-                )
 
                 response.data["container_info"] = result
                 response.data["message"] = "服务已创建并启动"
@@ -1020,12 +976,138 @@ class ImageClassificationServingViewSet(ModelViewSet):
 
         return response
 
-    @HasPermission("image_classification_servings-Edit")
+    @HasPermission("image_classification-Edit")
     def update(self, request, *args, **kwargs):
-        return super().update(request, *args, **kwargs)
+        """
+        更新 serving 配置，自动检测并重启容器
+
+        基于实际容器运行状态决策：
+        - 容器 running + 配置变更 → 自动重启
+        - 容器非 running → 仅更新数据库，用户自行决定是否启动
+        """
+        instance = self.get_object()
+
+        # 兜底校验：容器未运行时不允许设置 status=active
+        new_status = request.data.get("status")
+        if error_response := validate_serving_status_change(instance, new_status):
+            return error_response
+
+        # 保存旧值用于判断变更
+        old_port = instance.port
+        old_model_version = instance.model_version
+        old_train_job_id = instance.train_job.id
+
+        # 检测是否更新了影响容器的字段（基于请求数据与旧值对比）
+        model_version_changed = "model_version" in request.data and str(
+            request.data["model_version"]
+        ) != str(old_model_version)
+        train_job_changed = (
+            "train_job" in request.data
+            and int(request.data["train_job"]) != old_train_job_id
+        )
+        port_changed = "port" in request.data and request.data.get("port") != old_port
+
+        container_id = f"ImageClassification_Serving_{instance.id}"
+
+        # 获取容器实际状态（更新前），防御性处理 container_info 为空的情况
+        container_info = instance.container_info or {}
+        container_state = container_info.get("state")
+        container_port = container_info.get("port")
+
+        # 更新数据库
+        response = super().update(request, *args, **kwargs)
+        instance.refresh_from_db()
+
+        # 只有容器在运行时才考虑重启
+        if container_state != "running":
+            return response
+
+        # 决策：是否需要重启
+        need_restart = False
+
+        # 1. model/train_job 变更，必须重启
+        if model_version_changed or train_job_changed:
+            need_restart = True
+
+        # 2. 仅 port 变更，检查策略
+        elif port_changed:
+            new_port = instance.port
+            if new_port is None and old_port is not None:
+                # 有值 → None：不重启（当前端口视为自动分配，下次再应用）
+                need_restart = False
+            elif new_port is not None and old_port is None:
+                # None → 有值：需要重启（用户明确要指定端口）
+                need_restart = True
+            elif new_port is not None and old_port is not None:
+                # 有值 → 另一个有值：检查是否与实际端口一致
+                if container_port and str(new_port) != str(container_port):
+                    need_restart = True
+
+        # 如果需要重启，先删除旧容器
+        if need_restart:
+            try:
+                logger.warning(f"配置变更需要重启，删除旧容器: {container_id}")
+                WebhookClient.remove(container_id)
+            except WebhookError as e:
+                logger.warning(f"删除旧容器失败（可能已不存在）: {e}")
+                # 继续执行，尝试启动新容器
+
+            try:
+                # 获取环境变量
+                mlflow_tracking_uri = get_mlflow_tracking_uri()
+                if not mlflow_tracking_uri:
+                    raise ValueError("环境变量 MLFLOW_TRACKER_URL 未配置")
+
+                # 解析新的 model_uri
+                model_uri = self._resolve_model_uri(instance)
+
+                # 从关联训练任务的 hyperopt_config 中提取 device 参数
+                device = None
+                if instance.train_job and instance.train_job.hyperopt_config:
+                    hyperparams = instance.train_job.hyperopt_config.get("hyperparams", {})
+                    device = hyperparams.get("device")
+
+                # 动态获取推理镜像
+                train_image = get_image_by_prefix(
+                    self.MLFLOW_PREFIX, instance.train_job.algorithm
+                )
+
+                # 启动新容器
+                result = WebhookClient.serve(
+                    container_id,
+                    mlflow_tracking_uri,
+                    model_uri,
+                    port=instance.port,
+                    train_image=train_image,
+                    device=device,
+                )
+
+                # 更新容器信息（status 由用户控制，不修改）
+                instance.container_info = result
+                instance.save(update_fields=["container_info"])
+
+                # 更新返回数据
+                response.data["container_info"] = result
+                response.data["message"] = "配置已更新并重启服务"
+
+            except Exception as e:
+                logger.error(f"自动重启失败: {str(e)}", exc_info=True)
+
+                # 启动失败，仅更新容器信息
+                instance.container_info = {
+                    "status": "error",
+                    "message": f"配置已更新但重启失败: {str(e)}",
+                }
+                instance.save(update_fields=["container_info"])
+
+                response.data["container_info"] = instance.container_info
+                response.data["message"] = f"配置已更新但重启失败: {str(e)}"
+                response.data["warning"] = "请手动调用 start 接口重新启动服务"
+
+        return response
 
     @action(detail=True, methods=["post"], url_path="start")
-    @HasPermission("image_classification_servings-Start")
+    @HasPermission("image_classification-Start")
     def start(self, request, *args, **kwargs):
         """
         启动图片分类 serving 服务
@@ -1033,8 +1115,8 @@ class ImageClassificationServingViewSet(ModelViewSet):
         try:
             serving = self.get_object()
 
-            # 获取环境变量
-            mlflow_tracking_uri = os.getenv("MLFLOW_TRACKER_URL", "")
+            # 获取 MLflow tracking URI
+            mlflow_tracking_uri = get_mlflow_tracking_uri()
             if not mlflow_tracking_uri:
                 logger.error("MLflow tracking URI not configured")
                 return Response(
@@ -1057,28 +1139,26 @@ class ImageClassificationServingViewSet(ModelViewSet):
                 hyperparams = serving.train_job.hyperopt_config.get("hyperparams", {})
                 device = hyperparams.get("device")
 
-            logger.info(
-                f"启动图片分类 serving 服务: {serving_id}, Model URI: {model_uri}, Port: {serving.port or 'auto'}, Device: {device or 'default'}"
-            )
-
             try:
+                # 动态获取推理镜像
+                train_image = get_image_by_prefix(
+                    self.MLFLOW_PREFIX, serving.train_job.algorithm
+                )
+
                 # 调用 WebhookClient 启动服务
                 result = WebhookClient.serve(
                     serving_id,
                     mlflow_tracking_uri,
                     model_uri,
                     port=serving.port,
-                    train_image="classify-image-classification:latest",  # YOLO 推理镜像
+                    train_image=train_image,
                     device=device,
                 )
 
-                # 正常启动成功，仅更新容器信息
+                # 正常启动成功，更新容器信息以及将status设为 'active'
                 serving.container_info = result
-                serving.save(update_fields=["container_info"])
-
-                logger.info(
-                    f"图片分类 Serving 服务已启动: {serving_id}, Port: {result.get('port')}"
-                )
+                serving.status = "active"
+                serving.save(update_fields=["container_info", "status"])
 
                 return Response(
                     {
@@ -1131,7 +1211,7 @@ class ImageClassificationServingViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["post"], url_path="stop")
-    @HasPermission("image_classification_servings-Stop")
+    @HasPermission("image_classification-Stop")
     def stop(self, request, *args, **kwargs):
         """
         停止图片分类 serving 服务（停止并删除容器）
@@ -1142,12 +1222,12 @@ class ImageClassificationServingViewSet(ModelViewSet):
             # 构建 serving ID
             serving_id = f"ImageClassification_Serving_{serving.id}"
 
-            logger.info(f"停止图片分类 serving 服务: {serving_id}")
-
             # 调用 WebhookClient 停止服务（默认删除容器）
             result = WebhookClient.stop(serving_id)
 
-            logger.info(f"图片分类 Serving 服务已停止: {serving_id}")
+            # 停止容器时同时将status改为'inactive'
+            serving.status = "inactive"
+            serving.save(update_fields=["status"])
 
             return Response(
                 {
@@ -1178,7 +1258,7 @@ class ImageClassificationServingViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["post"], url_path="remove")
-    @HasPermission("image_classification_servings-Remove")
+    @HasPermission("image_classification-Remove")
     def remove(self, request, *args, **kwargs):
         """
         删除图片分类 serving 容器（可处理运行中的容器）
@@ -1188,8 +1268,6 @@ class ImageClassificationServingViewSet(ModelViewSet):
 
             # 构建 serving ID
             serving_id = f"ImageClassification_Serving_{serving.id}"
-
-            logger.info(f"删除图片分类 serving 容器: {serving_id}")
 
             # 调用 WebhookClient 删除容器
             result = WebhookClient.remove(serving_id)
@@ -1202,8 +1280,6 @@ class ImageClassificationServingViewSet(ModelViewSet):
                 "message": "容器已删除",
             }
             serving.save(update_fields=["container_info"])
-
-            logger.info(f"图片分类 Serving 容器已删除: {serving_id}")
 
             return Response(
                 {
@@ -1234,7 +1310,7 @@ class ImageClassificationServingViewSet(ModelViewSet):
             )
 
     @action(detail=True, methods=["post"], url_path="predict")
-    @HasPermission("image_classification_servings-Predict")
+    @HasPermission("image_classification-Predict")
     def predict(self, request, *args, **kwargs):
         """
         调用 serving 服务进行图片分类预测
@@ -1245,6 +1321,13 @@ class ImageClassificationServingViewSet(ModelViewSet):
         """
         try:
             serving = self.get_object()
+
+            # 校验服务状态
+            if serving.status != "active":
+                return Response(
+                    {"error": "服务未发布，请先发布服务"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             # 获取参数
             url = request.data.get("url")
@@ -1261,8 +1344,8 @@ class ImageClassificationServingViewSet(ModelViewSet):
                     {"error": "image 参数不能为空"}, status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # 获取实际运行端口
-            port = serving.container_info.get("port")
+            # 获取实际运行端口，防御性处理 container_info 为空的情况
+            port = (serving.container_info or {}).get("port")
             if not port:
                 return Response(
                     {"error": "服务端口未配置，请确认服务已启动"},
@@ -1275,10 +1358,6 @@ class ImageClassificationServingViewSet(ModelViewSet):
             # 构建请求体
             payload = {"image": image}
 
-            logger.info(
-                f"调用图片分类预测服务: serving_id={serving.id}, url={predict_url}"
-            )
-
             # 发起 HTTP POST 请求
             response = requests.post(
                 predict_url,
@@ -1290,7 +1369,6 @@ class ImageClassificationServingViewSet(ModelViewSet):
             # 处理响应
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"预测成功: serving_id={serving.id}")
                 return Response(result)
             else:
                 error_msg = f"预测服务返回错误: HTTP {response.status_code}"
@@ -1339,3 +1417,99 @@ class ImageClassificationServingViewSet(ModelViewSet):
         )
 
         return mlflow_service.resolve_model_uri(model_name, serving.model_version)
+
+
+class ImageClassificationAlgorithmConfigViewSet(ModelViewSet):
+    """图片分类算法配置视图集"""
+
+    queryset = AlgorithmConfig.objects.filter(algorithm_type="image_classification")
+    serializer_class = AlgorithmConfigSerializer
+    filterset_class = AlgorithmConfigFilter
+    pagination_class = CustomPageNumberPagination
+    ordering = ("id",)
+    permission_key = "algorithm.image_classification_algorithm_config"
+
+    def get_serializer_class(self):
+        if (
+            self.action == "list"
+            and not self.request.query_params.get(
+                "include_form_config", "false"
+            ).lower()
+            == "true"
+        ):
+            return AlgorithmConfigListSerializer
+        return AlgorithmConfigSerializer
+
+    @HasPermission("image_classification-View")
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @HasPermission("image_classification-View")
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+
+    @HasPermission("image_classification-Add")
+    def create(self, request, *args, **kwargs):
+        request.data["algorithm_type"] = "image_classification"
+        return super().create(request, *args, **kwargs)
+
+    @HasPermission("image_classification-Edit")
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @HasPermission("image_classification-Edit")
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        is_active_new = request.data.get("is_active")
+        if instance.is_active and is_active_new is False:
+            task_count = ImageClassificationTrainJob.objects.filter(
+                algorithm=instance.name
+            ).count()
+            if task_count > 0:
+                return Response(
+                    {
+                        "error": f"无法禁用：有 {task_count} 个训练任务正在使用此算法",
+                        "task_count": task_count,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        return super().partial_update(request, *args, **kwargs)
+
+    @HasPermission("image_classification-Delete")
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        task_count = ImageClassificationTrainJob.objects.filter(
+            algorithm=instance.name
+        ).count()
+        if task_count > 0:
+            return Response(
+                {
+                    "error": f"无法删除：有 {task_count} 个训练任务正在使用此算法",
+                    "task_count": task_count,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=["get"], url_path="by_type")
+    @HasPermission("image_classification-View")
+    def by_type(self, request):
+        queryset = self.get_queryset().filter(is_active=True)
+        serializer = AlgorithmConfigSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="get_image")
+    @HasPermission("image_classification-View")
+    def get_image(self, request):
+        name = request.query_params.get("name")
+        if not name:
+            return Response({"error": "name 参数必填"}, status=400)
+        try:
+            config = AlgorithmConfig.objects.get(
+                algorithm_type="image_classification", name=name, is_active=True
+            )
+            return Response({"image": config.image})
+        except AlgorithmConfig.DoesNotExist:
+            return Response(
+                {"error": f"未找到算法配置: image_classification/{name}"}, status=404
+            )

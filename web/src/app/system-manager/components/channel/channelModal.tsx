@@ -32,7 +32,7 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
   const [confirmLoading, setConfirmLoading] = useState<boolean>(false);
   const [channelData, setChannelData] = useState<any>({ config: {} });
   const [originalSmtpPwd, setOriginalSmtpPwd] = useState<string | undefined>(undefined);
-  const [originalBotKey, setOriginalBotKey] = useState<string | undefined>(undefined);
+  const [originalWebhookUrl, setOriginalWebhookUrl] = useState<string | undefined>(undefined);
 
   const fetchChannelDetail = async (id: string) => {
     setLoading(true);
@@ -40,7 +40,7 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
       const data = await getChannelDetail(id);
       setChannelData(data);
       setOriginalSmtpPwd(data.config?.smtp_pwd);
-      setOriginalBotKey(data.config?.bot_key);
+      setOriginalWebhookUrl(data.config?.webhook_url);
       form.setFieldsValue({
         ...data,
         ...data.config
@@ -70,8 +70,12 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
           smtp_usessl: false,
           smtp_usetls: false,
           mail_sender: '',
+        } : channelType === 'nats' ? {
+          namespace: '',
+          method_name: '',
+          timeout: 60,
         } : {
-          bot_key: '',
+          webhook_url: '',
         },
       });
     }
@@ -81,19 +85,20 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
     try {
       setConfirmLoading(true);
       const values = await form.validateFields();
-      const { name, description, smtp_pwd, bot_key, ...config } = values;
+      const { name, description, team, smtp_pwd, webhook_url, ...config } = values;
 
-      // Exclude smtp_pwd and bot_key if they haven't changed
+      // Exclude smtp_pwd and webhook_url if they haven't changed
       const finalConfig = {
         ...config,
         ...(smtp_pwd !== originalSmtpPwd ? { smtp_pwd } : {}),
-        ...(bot_key !== originalBotKey ? { bot_key } : {}),
+        ...(webhook_url !== originalWebhookUrl ? { webhook_url } : {}),
       };
 
       const payload = {
         channel_type: channelType,
         name,
         description,
+        team,
         config: finalConfig,
       };
 
@@ -125,8 +130,11 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
     if (['smtp_usessl', 'smtp_usetls'].includes(key)) {
       return 'switch';
     }
-    if (['smtp_pwd', 'bot_key'].includes(key)) {
+    if (['smtp_pwd', 'webhook_url'].includes(key)) {
       return 'editablePwd';
+    }
+    if (key === 'timeout') {
+      return 'inputNumber';
     }
     return 'input';
   };
@@ -149,6 +157,13 @@ const ChannelModal: React.FC<ChannelModalProps> = ({
         placeholder: `${t('common.inputMsg')}${t('system.channel.settings.description')}`,
         rows: 4,
         rules: [{ required: true, message: `${t('common.inputMsg')}${t('system.channel.settings.description')}` }],
+      },
+      {
+        name: 'team',
+        type: 'groupTreeSelect',
+        label: t('system.channel.settings.team'),
+        placeholder: `${t('common.selectMsg')}${t('system.channel.settings.team')}`,
+        rules: [{ required: true, message: `${t('common.selectMsg')}${t('system.channel.settings.team')}` }],
       },
     ];
 

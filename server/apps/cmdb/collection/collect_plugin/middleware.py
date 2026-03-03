@@ -7,6 +7,7 @@ from apps.cmdb.collection.collect_util import timestamp_gt_one_day_ago
 from apps.cmdb.collection.constants import MIDDLEWARE_METRIC_MAP
 import codecs
 import json
+from apps.core.logger import cmdb_logger as logger
 
 class MiddlewareCollectMetrics(CollectBase):
     @property
@@ -35,7 +36,7 @@ class MiddlewareCollectMetrics(CollectBase):
                         unescaped_json = codecs.decode(
                             result_json, 'unicode_escape')
                         result_data = json.loads(unescaped_json)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - JSON解析失败时使用空dict
                         result_data = {}
                 if isinstance(result_data, dict) and not result_data:
                     continue
@@ -304,7 +305,7 @@ class MiddlewareCollectMetrics(CollectBase):
             return value
         try:
             return json.dumps(value, ensure_ascii=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 - JSON序列化失败时返回空字符串
             return ""
 
     @staticmethod
@@ -326,7 +327,7 @@ class MiddlewareCollectMetrics(CollectBase):
                     first = parsed[0]
                     if isinstance(first, dict):
                         return first.get("host_port") or first.get("container_port") or ""
-            except Exception:
+            except Exception:  # noqa: BLE001 - 端口解析失败时返回空字符串
                 return ""
         return ""
 
@@ -338,9 +339,15 @@ class MiddlewareCollectMetrics(CollectBase):
                 data = {}
                 for field, key_or_func in mapping.items():
                     if isinstance(key_or_func, tuple):
-                        data[field] = key_or_func[0](index_data[key_or_func[1]])
+                        try:
+                            data[field] = key_or_func[0](index_data[key_or_func[1]])
+                        except Exception as e:
+                            logger.error(f"数据转换失败 field:{field}, value:{index_data[key_or_func[1]]}, error:{e}")
                     elif callable(key_or_func):
-                        data[field] = key_or_func(index_data)
+                        try:
+                            data[field] = key_or_func(index_data)
+                        except Exception as e:
+                            logger.error(f"数据处理转换失败 field:{field}, error:{e}")
                     else:
                         data[field] = index_data.get(key_or_func, "")
                 if data:

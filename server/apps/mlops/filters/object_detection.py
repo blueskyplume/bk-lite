@@ -8,7 +8,13 @@ from django_filters import (
 )
 from django_filters.filters import DateFromToRangeFilter
 
-from apps.mlops.models.object_detection import *
+from apps.mlops.models.object_detection import (
+    ObjectDetectionDataset,
+    ObjectDetectionTrainJob,
+    ObjectDetectionTrainData,
+    ObjectDetectionDatasetRelease,
+    ObjectDetectionServing,
+)
 
 
 class ObjectDetectionDatasetFilter(FilterSet):
@@ -86,16 +92,8 @@ class ObjectDetectionTrainJobFilter(FilterSet):
     """目标检测训练任务过滤器"""
 
     name = CharFilter(field_name="name", lookup_expr="icontains", label="任务名称")
-    algorithm = ChoiceFilter(
-        field_name="algorithm",
-        choices=[
-            ("YOLOv11n", "YOLO11-Nano"),
-            ("YOLOv11s", "YOLO11-Small"),
-            ("YOLOv11m", "YOLO11-Medium"),
-            ("YOLOv11l", "YOLO11-Large"),
-            ("YOLOv11x", "YOLO11-XLarge"),
-        ],
-        label="算法模型",
+    algorithm = CharFilter(
+        field_name="algorithm", lookup_expr="exact", label="算法模型"
     )
     status = ChoiceFilter(
         field_name="status",
@@ -133,15 +131,9 @@ class ObjectDetectionServingFilter(FilterSet):
     train_job__name = CharFilter(
         field_name="train_job__name", lookup_expr="icontains", label="训练任务名称"
     )
-    train_job__algorithm = ChoiceFilter(
+    train_job__algorithm = CharFilter(
         field_name="train_job__algorithm",
-        choices=[
-            ("YOLOv11n", "YOLO11-Nano"),
-            ("YOLOv11s", "YOLO11-Small"),
-            ("YOLOv11m", "YOLO11-Medium"),
-            ("YOLOv11l", "YOLO11-Large"),
-            ("YOLOv11x", "YOLO11-XLarge"),
-        ],
+        lookup_expr="exact",
         label="算法模型",
     )
     status = ChoiceFilter(

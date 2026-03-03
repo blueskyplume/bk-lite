@@ -17,7 +17,7 @@ from apps.core.utils.exempt import api_exempt
 from apps.core.utils.loader import LanguageLoader
 from apps.opspilot.models import Bot, BotChannel, BotConversationHistory, BotWorkFlow, LLMSkill
 from apps.opspilot.services.chat_service import ChatService
-from apps.opspilot.services.skill_excute_service import SkillExecuteService
+from apps.opspilot.services.skill_execute_service import SkillExecuteService
 from apps.opspilot.utils.bot_utils import insert_skill_log, set_time_range
 from apps.opspilot.utils.chat_flow_utils.engine.factory import create_chat_flow_engine
 from apps.opspilot.utils.dingtalk_chat_flow_utils import DingTalkChatFlowUtils, start_dingtalk_stream_client
@@ -26,6 +26,7 @@ from apps.opspilot.utils.wechat_chat_flow_utils import WechatChatFlowUtils
 from apps.opspilot.utils.wechat_official_chat_flow_utils import WechatOfficialChatFlowUtils
 from apps.opspilot.viewsets.llm_view import LLMViewSet
 from apps.rpc.system_mgmt import SystemMgmt
+from apps.system_mgmt.models import User
 
 
 def get_loader(request=None, default_lang="en"):
@@ -96,93 +97,66 @@ def validate_openai_token(token, team=None, is_mobile=False):
     """Validate the OpenAI API token"""
     loader = LanguageLoader(app="opspilot", default_lang="en")
     if not token:
-        return False, {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": loader.get("error.no_authorization", "No authorization"),
-                    }
-                }
-            ]
-        }
+        return False, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.no_authorization", "No authorization")}}]}
     token = token.split("Bearer ")[-1]
     user = UserAPISecret.objects.filter(api_secret=token).first()
     if not user:
         if team is None and not is_mobile:
-            return False, {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": loader.get("error.no_authorization", "No authorization"),
-                        }
-                    }
-                ]
-            }
+            return False, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.no_authorization", "No authorization")}}]}
         team = team or 0
         client = SystemMgmt()
         result = client.verify_token(token)
         if not result.get("result"):
-            return False, {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": loader.get("error.no_authorization", "No authorization"),
-                        }
-                    }
-                ]
-            }
+            return False, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.no_authorization", "No authorization")}}]}
         user_info = result.get("data")
         user = UserAPISecret(
             username=user_info["username"],
             domain=user_info["domain"],
             team=int(team),
         )
+        # Token 认证：从 verify_token 结果获取 locale
+        user.locale = user_info.get("locale", "en")
+    else:
+        # UserAPISecret 认证：查询用户信息获取 locale
+        user.locale = _get_user_locale(user.username, user.domain)
     return True, user
+
+
+def _get_user_locale(username: str, domain: str) -> str:
+    """获取用户语言设置
+
+    从 User 表查询用户的 locale 设置。
+
+    Args:
+        username: 用户名
+        domain: 域名
+
+    Returns:
+        用户语言设置，默认 "en"
+    """
+
+    try:
+        user_obj = User.objects.filter(username=username, domain=domain).first()
+        if user_obj:
+            return user_obj.locale or "en"
+    except Exception as e:
+        logger.warning(f"Failed to get user locale for {username}@{domain}: {e}")
+    return "en"
 
 
 def validate_header_token(token, bot_id):
     loader = LanguageLoader(app="opspilot", default_lang="en")
     if not token:
-        return False, {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": loader.get("error.no_authorization", "No authorization"),
-                    }
-                }
-            ]
-        }
+        return False, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.no_authorization", "No authorization")}}]}
     bot_obj = Bot.objects.filter(id=bot_id, online=True).first()
     if not bot_obj:
-        return False, {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": loader.get("error.bot_not_online", "No bot online"),
-                    }
-                }
-            ]
-        }
+        return False, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.bot_not_online", "No bot online")}}]}
     token = token.split("Bearer ")[-1]
     client = SystemMgmt()
     # res = client.verify_token(token)
     res = client.get_pilot_permission_by_token(token, bot_id, bot_obj.team)
     if not res.get("result"):
-        return False, {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": loader.get("error.no_authorization", "No authorization"),
-                    }
-                }
-            ]
-        }
+        return False, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.no_authorization", "No authorization")}}]}
     return True, {"username": res["data"]["username"]}
 
 
@@ -200,35 +174,16 @@ def get_skill_and_params(kwargs, team, bot_id=None):
         skill_obj = LLMSkill.objects.filter(name=skill_id, team__contains=int(team)).first()
         # 如果未找到，尝试按 instance_id 查询
         if not skill_obj:
-            try:
-                skill_obj = LLMSkill.objects.filter(instance_id=skill_id, team__contains=int(team)).first()
-            except Exception:
-                pass
+            skill_obj = LLMSkill.objects.filter(instance_id=skill_id, team__contains=int(team)).first()
     else:
         # 先尝试按 name 查询
         skill_obj = LLMSkill.objects.filter(name=skill_id, bot=bot_id).first()
         # 如果未找到，尝试按 instance_id 查询
         if not skill_obj:
-            try:
-                skill_obj = LLMSkill.objects.filter(instance_id=skill_id, bot=bot_id).first()
-            except Exception:
-                pass
+            skill_obj = LLMSkill.objects.filter(instance_id=skill_id, bot=bot_id).first()
 
     if not skill_obj:
-        return (
-            None,
-            None,
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": loader.get("error.skill_not_found", "No skill"),
-                        }
-                    }
-                ]
-            },
-        )
+        return (None, None, {"choices": [{"message": {"role": "assistant", "content": loader.get("error.skill_not_found", "No skill")}}]})
     num = kwargs.get("conversation_window_size") or skill_obj.conversation_window_size
     chat_history = [{"message": i["content"], "event": i["role"]} for i in kwargs.get("messages", [])[-1 * num :]]
 
@@ -448,9 +403,9 @@ def get_skill_execute_result(bot_id, channel, chat_history, kwargs, request, sen
         return {"content": loader.get("error.bot_not_found", "No bot found")}
     try:
         result = SkillExecuteService.execute_skill(bot, skill_id, user_message, chat_history, sender_id, channel)
-    except Exception as e:
-        logger.exception(e)
-        result = {"content": str(e)}
+    except Exception:
+        logger.exception("Skill execution failed: bot_id=%s, skill_id=%s", bot_id, skill_id)
+        result = {"content": "Skill execution error"}
     if getattr(request, "api_pass", False):
         current_ip, _ = get_client_ip(request)
         insert_skill_log(
@@ -499,11 +454,7 @@ def get_active_users_line_data(request):
     end_time_str = request.GET.get("end_time")
     end_time, start_time = set_time_range(end_time_str, start_time_str)
     queryset = (
-        BotConversationHistory.objects.filter(
-            created_at__range=[start_time, end_time],
-            bot_id=request.GET.get("bot_id"),
-            conversation_role="user",
-        )
+        BotConversationHistory.objects.filter(created_at__range=[start_time, end_time], bot_id=request.GET.get("bot_id"), conversation_role="user")
         .annotate(date=TruncDate("created_at"))
         .values("channel_user__channel_type", "date")
         .annotate(count=Count("channel_user", distinct=True))
@@ -546,12 +497,7 @@ def execute_chat_flow(request, bot_id, node_id):
     """执行ChatFlow流程（支持流式响应）"""
     loader = get_loader(request)
     if not bot_id or not node_id:
-        return JsonResponse(
-            {
-                "result": False,
-                "message": loader.get("error.bot_node_id_required", "Bot ID and Node ID are required."),
-            }
-        )
+        return JsonResponse({"result": False, "message": loader.get("error.bot_node_id_required", "Bot ID and Node ID are required.")})
 
     # 读取请求体
     kwargs = json.loads(request.body)
@@ -582,12 +528,7 @@ def execute_chat_flow(request, bot_id, node_id):
         filter_dict["online"] = True
     bot_obj = Bot.objects.filter(**filter_dict).first()
     if not bot_obj:
-        return JsonResponse(
-            {
-                "result": False,
-                "message": loader.get("error.bot_not_online", "No bot online"),
-            }
-        )
+        return JsonResponse({"result": False, "message": loader.get("error.bot_not_online", "No bot online")})
 
     # 获取Bot的工作流配置
     bot_chat_flow = BotWorkFlow.objects.filter(bot_id=bot_obj.id).first()
@@ -615,9 +556,11 @@ def execute_chat_flow(request, bot_id, node_id):
         # 创建ChatFlow引擎 - 使用数据库中的工作流配置
         engine = create_chat_flow_engine(bot_chat_flow, node_id)
 
-        # 获取当前节点类型
+        # 获取当前节点类型并设置 entry_type
         node_obj = engine._get_node_by_id(node_id)
         node_type = node_obj.get("type") if node_obj else None
+        engine.entry_type = node_type  # 设置入口类型
+
         # 准备输入数据
         input_data = {
             "last_message": message,
@@ -625,6 +568,7 @@ def execute_chat_flow(request, bot_id, node_id):
             "bot_id": bot_id,
             "node_id": node_id,
             "session_id": session_id,
+            "locale": getattr(user, "locale", "en"),  # 用户语言设置，用于 browser-use 输出国际化
         }
 
         logger.info(f"开始执行ChatFlow流程，bot_id: {bot_id}, node_id: {node_id}, user: {user.username}, node_type: {node_type}")
@@ -644,10 +588,9 @@ def execute_chat_flow(request, bot_id, node_id):
         return JsonResponse({"result": True, "data": {"content": result, "execution_time": time.time()}})
 
     except Exception as e:
-        logger.error(f"ChatFlow流程执行失败，bot_id: {bot_id}, node_id: {node_id}, 错误: {str(e)}")
-        logger.exception(e)
+        logger.exception("ChatFlow execution failed: bot_id=%s, node_id=%s", bot_id, node_id)
         # 流式错误响应，参考 llm_view.py
-        return LLMViewSet._create_error_stream_response(str(e))
+        return LLMViewSet.create_error_stream_response(str(e))
 
 
 @api_exempt
@@ -752,12 +695,7 @@ def execute_chat_flow_dingtalk(request, bot_id):
     # 1. 验证Bot ID
     if not bot_id:
         logger.error("钉钉ChatFlow执行失败：缺少Bot ID")
-        return JsonResponse(
-            {
-                "success": False,
-                "message": loader.get("error.missing_bot_id", "Missing bot_id"),
-            }
-        )
+        return JsonResponse({"success": False, "message": loader.get("error.missing_bot_id", "Missing bot_id")})
 
     # 2. 创建工具类实例并验证Bot和工作流配置
     dingtalk_utils = DingTalkChatFlowUtils(bot_id)
@@ -777,21 +715,9 @@ def execute_chat_flow_dingtalk(request, bot_id):
             # 启动Stream客户端
             success = start_dingtalk_stream_client(bot_id, bot_chat_flow, dingtalk_config)
             if success:
-                return JsonResponse(
-                    {
-                        "success": True,
-                        "message": "DingTalk Stream client started successfully",
-                        "mode": "stream",
-                    }
-                )
+                return JsonResponse({"success": True, "message": "DingTalk Stream client started successfully", "mode": "stream"})
             else:
-                return JsonResponse(
-                    {
-                        "success": False,
-                        "message": "Failed to start DingTalk Stream client",
-                        "mode": "stream",
-                    }
-                )
+                return JsonResponse({"success": False, "message": "Failed to start DingTalk Stream client", "mode": "stream"})
     except json.JSONDecodeError:
         pass
 
@@ -805,9 +731,4 @@ def test(request):
     kwargs = request.GET.dict()
     data = json.loads(request.body) if request.body else {}
     kwargs.update(data)
-    return JsonResponse(
-        {
-            "result": True,
-            "data": {"ip": ip, "is_routable": is_routable, "kwargs": kwargs},
-        }
-    )
+    return JsonResponse({"result": True, "data": {"ip": ip, "is_routable": is_routable, "kwargs": kwargs}})

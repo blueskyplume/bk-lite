@@ -8,14 +8,13 @@ import { useUnitTransform } from '@/app/monitor/hooks/useUnitTransform';
 import {
   TooltipMetricDataItem,
   TooltipDimensionDataItem,
-  MetricDimensionTooltipProps,
+  MetricDimensionTooltipProps
 } from '@/app/monitor/types/view';
 
 const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
   instanceId,
-  metricId,
   monitorObjectId,
-  metricItem,
+  metricInfo
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState<boolean>(false);
@@ -25,20 +24,19 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
   const { getMetricsInstanceQuery } = useViewApi();
   const { getEnumValueUnit } = useUnitTransform();
 
+  const { metricItem, metricUnit } = metricInfo;
+  const metricId = metricItem?.id;
   const dimensions = metricItem?.dimensions || [];
 
   const formatMetricData = useCallback(
-    (
-      metricsData: TooltipMetricDataItem[],
-      unit: string
-    ): TooltipDimensionDataItem[] => {
+    (metricsData: TooltipMetricDataItem[]): TooltipDimensionDataItem[] => {
       if (!metricsData?.length || !dimensions?.length) {
         return [];
       }
       return metricsData.map((item) => {
         const metric = item.metric;
         const rawValue = item.value[1];
-        const value = getEnumValueUnit({ ...metricItem, unit }, rawValue);
+        const value = getEnumValueUnit(metricItem, rawValue, metricUnit);
         const dimensionParts = dimensions
           .map((dim) => {
             const dimValue = metric[dim.name];
@@ -51,11 +49,11 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
         const label = [dimensionParts.join('-')].filter(Boolean).join('');
         return {
           label,
-          value,
+          value
         };
       });
     },
-    [dimensions, metricItem, getEnumValueUnit]
+    [dimensions, metricItem, metricUnit, getEnumValueUnit]
   );
 
   const fetchDimensionData = useCallback(async () => {
@@ -65,10 +63,10 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
         monitor_object_id: monitorObjectId,
         instance_id: instanceId,
         metric_id: metricId,
-        auto_convert: false,
+        auto_convert: false
       });
       const data = responseData?.data || {};
-      const formattedData = formatMetricData(data.result || [], data.unit);
+      const formattedData = formatMetricData(data.result || []);
       setDimensionData(formattedData);
     } catch {
       setDimensionData([]);
@@ -80,7 +78,7 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
     metricId,
     monitorObjectId,
     getMetricsInstanceQuery,
-    formatMetricData,
+    formatMetricData
   ]);
 
   const handleOpenChange = (open: boolean) => {
@@ -90,7 +88,7 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
   };
 
   const tooltipContent = (
-    <div className="min-w-[200px] max-w-[800px] max-h-[500px] overflow-y-auto">
+    <div className="min-w-[200px]">
       {loading ? (
         <div className="flex justify-center items-center py-[20px]">
           <Spin size="small" />
@@ -100,12 +98,10 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
           {dimensionData.map((item, index) => (
             <div
               key={index}
-              className="flex justify-between items-start gap-[16px]"
+              className="flex justify-between items-start gap-[16px] whitespace-nowrap"
             >
-              <span className="whitespace-pre-line">{item.label}</span>
-              <span className="font-medium whitespace-nowrap">
-                {item.value}
-              </span>
+              <span>{item.label}</span>
+              <span className="font-medium">{item.value}</span>
             </div>
           ))}
         </div>
@@ -118,14 +114,22 @@ const MetricDimensionTooltip: React.FC<MetricDimensionTooltipProps> = ({
   );
 
   return (
-    <Tooltip
-      title={tooltipContent}
-      placement="left"
-      trigger="hover"
-      onOpenChange={handleOpenChange}
-    >
-      <UnorderedListOutlined className="text-[var(--color-text-3)] hover:text-[var(--color-primary)] cursor-pointer ml-[8px]" />
-    </Tooltip>
+    <>
+      <style>{`
+        .metric-dimension-tooltip.ant-tooltip {
+          max-width: none;
+        }
+      `}</style>
+      <Tooltip
+        title={tooltipContent}
+        placement="left"
+        trigger="hover"
+        overlayClassName="metric-dimension-tooltip"
+        onOpenChange={handleOpenChange}
+      >
+        <UnorderedListOutlined className="text-[var(--color-text-3)] hover:text-[var(--color-primary)] cursor-pointer ml-[8px]" />
+      </Tooltip>
+    </>
   );
 };
 

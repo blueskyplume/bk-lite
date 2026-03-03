@@ -2,7 +2,7 @@ import { BUILD_IN_MODEL, CREDENTIAL_LIST } from '@/app/cmdb/constants/asset';
 import { getSvgIcon } from './utils';
 import dayjs from 'dayjs';
 import { AttrFieldType } from '@/app/cmdb/types/assetManage';
-import { Tag, Select, Input, DatePicker, Tooltip } from 'antd';
+import { Tag, Select, Input, InputNumber, DatePicker, Tooltip } from 'antd';
 import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import GroupTreeSelector from '@/components/group-tree-select';
 import { useUserInfoContext } from '@/context/userInfo';
@@ -16,7 +16,84 @@ import {
   OriginOrganization,
   OriginSubGroupItem,
   EnumList,
+  TimeAttrOption,
+  StrAttrOption,
+  IntAttrOption,
+  AttrLike,
 } from '@/app/cmdb/types/assetManage';
+import useAssetDataStore from '@/app/cmdb/store/useAssetDataStore';
+
+type UserDisplayContext = 'table' | 'detail';
+
+interface UserDisplayResult {
+  users: UserItem[];
+  isEmpty: boolean;
+}
+
+const resolveUsers = (
+  value: unknown,
+  userList: UserItem[]
+): UserDisplayResult => {
+  if (Array.isArray(value) && value.length > 0) {
+    const userIdsStr = value.map((id) => String(id));
+    const users = userList.filter((user) => userIdsStr.includes(String(user.id)));
+    return { users, isEmpty: users.length === 0 };
+  }
+  if (value !== null && value !== undefined && value !== '') {
+    const user = userList.find((item) => String(item.id) === String(value));
+    return { users: user ? [user] : [], isEmpty: !user };
+  }
+  return { users: [], isEmpty: true };
+};
+
+const formatUserName = (user: UserItem): string =>
+  `${user.display_name}(${user.username})`;
+
+export const renderUserDisplay = (
+  value: unknown,
+  userList: UserItem[],
+  context: UserDisplayContext,
+  hideUserAvatar = false
+): React.ReactNode => {
+  const { users, isEmpty } = resolveUsers(value, userList);
+  
+  if (isEmpty) {
+    return context === 'detail' ? '--' : <>--</>;
+  }
+
+  if (context === 'table') {
+    return (
+      <div className="flex items-center gap-2 max-h-[28px] overflow-hidden">
+        <UserAvatar key={users[0].id} userName={formatUserName(users[0])} size="small" />
+        {users.length > 1 && (
+          <Tooltip
+            title={
+              <div className="flex flex-col gap-1">
+                {users.map((user) => (
+                  <div key={user.id}>{formatUserName(user)}</div>
+                ))}
+              </div>
+            }
+          >
+            <span className="text-[var(--color-text-3)] cursor-pointer">...</span>
+          </Tooltip>
+        )}
+      </div>
+    );
+  }
+
+  if (hideUserAvatar) {
+    return users.map((u) => formatUserName(u)).join('，');
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {users.map((user) => (
+        <UserAvatar key={user.id} userName={formatUserName(user)} />
+      ))}
+    </div>
+  );
+};
 
 // 查找组织对象
 const findOrganizationById = (arr: Array<any>, targetValue: unknown) => {
@@ -49,7 +126,7 @@ const getOrganizationFullPath = (org: any, flatGroups: Array<any>): string => {
 };
 
 // 通用的组织显示文本处理函数
-const getOrganizationDisplayText = (value: any, flatGroups: Array<any>) => {
+export const getOrganizationDisplayText = (value: any, flatGroups: Array<any>) => {
   if (Array.isArray(value)) {
     if (value.length === 0) return '--';
     const groupNames = value
@@ -226,59 +303,13 @@ export const getAssetColumns = (config: {
         showTitle: false,
       },
     };
-    // 表格中，用户字段为多选
     switch (attrType) {
       case 'user':
         return {
           ...columnItem,
-          render: (_: unknown, record: any) => {
-            const userIds = record[attrId];
-
-            // 处理数组情况
-            if (Array.isArray(userIds) && userIds.length > 0) {
-              const userIdsStr = userIds.map((id: any) => String(id));
-              const users = (config.userList || []).filter((user) =>
-                userIdsStr.includes(String(user.id))
-              );
-
-              // 处理没有用户的情况
-              if (users.length === 0) return <>--</>;
-
-              return (
-                <div className="flex items-center gap-2 max-h-[28px] overflow-hidden">
-                  <UserAvatar key={users[0].id} userName={`${users[0].display_name}(${users[0].username})`} size="small" />
-                  {users.length > 0 && (
-                    <Tooltip
-                      title={
-                        <div className="flex flex-col gap-1">
-                          {users.map((user) => (
-                            <div key={user.id}>
-                              {String(user.display_name || '')}({user.username})
-                            </div>
-                          ))}
-                        </div>
-                      }
-                    >
-                      <span className="text-[var(--color-text-3)] cursor-pointer">...</span>
-                    </Tooltip>
-                  )}
-                </div>
-              );
-
-            }
-
-            // 处理单个值情况
-            if (userIds !== null && userIds !== undefined && userIds !== '') {
-              const user = (config.userList || []).find(
-                (item) => String(item.id) === String(userIds)
-              );
-              // 表格的user渲染
-              return user ? <UserAvatar userName={`${user.display_name}(${user.username})`} /> : <>--</>;
-            }
-
-            // 处理空值情况
-            return <>--</>;
-          },
+          render: (_: unknown, record: any) => (
+            <>{renderUserDisplay(record[attrId], config.userList || [], 'table')}</>
+          ),
         };
       case 'pwd':
         return {
@@ -306,14 +337,19 @@ export const getAssetColumns = (config: {
       case 'enum':
         return {
           ...columnItem,
-          render: (_: unknown, record: any) => (
-            <>
-              {item.option?.find((item: EnumList) => item.id === record[attrId])
-                ?.name || '--'}
-            </>
-          ),
+          render: (_: unknown, record: any) => {
+            const enumOptions = Array.isArray(item.option) ? item.option : [];
+            return (
+              <>
+                {enumOptions.find((opt: EnumList) => opt.id === record[attrId])
+                  ?.name || '--'}
+              </>
+            );
+          },
         };
-      case 'time':
+      case 'time': {
+        const timeOption = item.option as TimeAttrOption | undefined;
+        const dateFormat = timeOption?.display_format === 'date' ? 'YYYY-MM-DD' : 'YYYY-MM-DD HH:mm:ss';
         return {
           ...columnItem,
           render: (_: unknown, record: any) => {
@@ -321,25 +357,45 @@ export const getAssetColumns = (config: {
             if (Array.isArray(val)) {
               return (
                 <>
-                  {dayjs(val[0]).format('YYYY-MM-DD HH:mm:ss')} -{' '}
-                  {dayjs(val[1]).format('YYYY-MM-DD HH:mm:ss')}
+                  {dayjs(val[0]).format(dateFormat)} -{' '}
+                  {dayjs(val[1]).format(dateFormat)}
                 </>
               );
             }
             return (
-              <> {val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : '--'} </>
+              <> {val ? dayjs(val).format(dateFormat) : '--'} </>
             );
           },
         };
+      }
       default:
         return {
           ...columnItem,
-          render: (_: unknown, record: any) => (
-            <EllipsisWithTooltip
-              className="whitespace-nowrap overflow-hidden text-ellipsis"
-              text={record[attrId] || '--'}
-            ></EllipsisWithTooltip>
-          ),
+          render: (_: unknown, record: any) => {
+            const cloudOptions = useAssetDataStore.getState().cloud_list;
+
+            const modelId = record.model_id;
+            if (attrId === 'cloud' && modelId === 'host') {
+              const cloudId = +record[attrId];
+              const cloudName = cloudOptions.find(
+                (option: any) => option.proxy_id === cloudId
+              );
+              const displayText = cloudName ? cloudName.proxy_name : (cloudName || '--');
+              return (
+                <EllipsisWithTooltip
+                  className="whitespace-nowrap overflow-hidden text-ellipsis"
+                  text={displayText as string}
+                ></EllipsisWithTooltip>
+              )
+            }
+
+            return (
+              <EllipsisWithTooltip
+                className="whitespace-nowrap overflow-hidden text-ellipsis"
+                text={record[attrId] || '--'}
+              ></EllipsisWithTooltip>
+            )
+          },
         };
     }
   });
@@ -351,7 +407,11 @@ export const getFieldItem = (config: {
   isEdit: boolean;
   value?: any;
   hideUserAvatar?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
+  flatGroups?: Array<{ id: string; name: string; parentId?: string }>;
 }) => {
+  const { disabled, placeholder } = config;
   if (config.isEdit) {
     switch (config.fieldItem.attr_type) {
       case 'user':
@@ -360,6 +420,8 @@ export const getFieldItem = (config: {
           <Select
             mode="multiple"
             showSearch
+            disabled={disabled}
+            placeholder={placeholder}
             filterOption={(input, opt: any) => {
               if (typeof opt?.children?.props?.text === 'string') {
                 return opt?.children?.props?.text
@@ -380,9 +442,12 @@ export const getFieldItem = (config: {
           </Select>
         );
       case 'enum':
+        const enumOpts = Array.isArray(config.fieldItem.option) ? config.fieldItem.option : [];
         return (
           <Select
             showSearch
+            disabled={disabled}
+            placeholder={placeholder}
             filterOption={(input, opt: any) => {
               if (typeof opt?.children === 'string') {
                 return opt?.children
@@ -392,7 +457,7 @@ export const getFieldItem = (config: {
               return true;
             }}
           >
-            {config.fieldItem.option?.map((opt) => (
+            {enumOpts.map((opt) => (
               <Select.Option key={opt.id} value={opt.id}>
                 {opt.name}
               </Select.Option>
@@ -401,7 +466,7 @@ export const getFieldItem = (config: {
         );
       case 'bool':
         return (
-          <Select>
+          <Select disabled={disabled} placeholder={placeholder}>
             {[
               { id: true, name: 'Yes' },
               { id: false, name: 'No' },
@@ -413,50 +478,47 @@ export const getFieldItem = (config: {
           </Select>
         );
       case 'organization':
-        return <GroupTreeSelector multiple={true} />;
+        return <GroupTreeSelector multiple={true} disabled={disabled} />;
       case 'time':
-        return <DatePicker showTime format="YYYY-MM-DD HH:mm:ss" />;
+        const timeOption = config.fieldItem.option as TimeAttrOption;
+        const displayFormat = timeOption?.display_format || 'datetime';
+        const showTime = displayFormat === 'datetime';
+        const format =
+          displayFormat === 'datetime' ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD';
+        return <DatePicker showTime={showTime} format={format} disabled={disabled} placeholder={placeholder} style={{ width: '100%' }} />;
+      case 'int':
+        const intOption = config.fieldItem.option as IntAttrOption;
+        return (
+          <InputNumber
+            style={{ width: '100%' }}
+            disabled={disabled}
+            placeholder={placeholder}
+            min={intOption?.min_value !== '' ? Number(intOption?.min_value) : undefined}
+            max={intOption?.max_value !== '' ? Number(intOption?.max_value) : undefined}
+          />
+        );
       default:
-        return <Input />;
+        if (config.fieldItem.attr_type === 'str') {
+          const strOption = config.fieldItem.option as StrAttrOption;
+          if (strOption?.widget_type === 'multi_line') {
+            return <Input.TextArea rows={3} disabled={disabled} placeholder={placeholder} />;
+          }
+        }
+        return <Input disabled={disabled} placeholder={placeholder} />;
     }
   }
   switch (config.fieldItem.attr_type) {
     case 'user':
-      // 实例详情页中的用户字段
-      if (Array.isArray(config.value)) {
-        if (config.value.length === 0) return '--';
-        const userIds = config.value.map((id: any) => String(id));
-        const users = (config.userList || []).filter((user) =>
-          userIds.includes(String(user.id))
-        );
-        if (users.length === 0) return '--';
-        const userNames = users
-          .map((user) => `${user.display_name}(${user.username})`)
-          .join('，');
-        return config.hideUserAvatar ? (
-          userNames
-        ) : (
-          <div className="flex items-center gap-2 flex-wrap">
-            {users.map((user) => (
-              <UserAvatar
-                key={user.id}
-                userName={`${user.display_name}(${user.username})`}
-              />
-            ))}
-          </div>
-        );
-      }
-      // 处理单选情况
-      const user = (config.userList || []).find(
-        (item) => String(item.id) === String(config.value)
-      );
-      if (!user) return '--';
-      return config.hideUserAvatar ? (
-        `${user.display_name}(${user.username})`
-      ) : (
-        <UserAvatar userName={`${user.display_name}(${user.username})`} />
+      return renderUserDisplay(
+        config.value,
+        config.userList || [],
+        'detail',
+        config.hideUserAvatar
       );
     case 'organization':
+      if (config.hideUserAvatar && config.flatGroups) {
+        return getOrganizationDisplayText(config.value, config.flatGroups);
+      }
       return (
         <OrganizationField
           value={config.value}
@@ -466,12 +528,12 @@ export const getFieldItem = (config: {
     case 'bool':
       return config.value ? 'Yes' : 'No';
     case 'enum':
-      // 处理多选情况（数组）
+      const enumOptions = Array.isArray(config.fieldItem.option) ? config.fieldItem.option : [];
       if (Array.isArray(config.value)) {
         if (config.value.length === 0) return '--';
         const enumNames = config.value
           .map((val: any) => {
-            return config.fieldItem.option?.find(
+            return enumOptions.find(
               (item: EnumList) => item.id === val
             )?.name;
           })
@@ -479,13 +541,19 @@ export const getFieldItem = (config: {
           .join('，');
         return enumNames || '--';
       }
-      // 处理单选情况
       return (
-        config.fieldItem.option?.find(
-          (item: EnumList) => item.id === config.value
+        enumOptions.find(
+          (item: EnumList) => item.id === config.value,
         )?.name || '--'
       );
     default:
+      if (config.fieldItem.attr_type === 'time' && config.value) {
+        const timeOpt = config.fieldItem.option as TimeAttrOption;
+        const displayFmt = timeOpt?.display_format || 'datetime';
+        const fmt =
+          displayFmt === 'datetime' ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD';
+        return dayjs(config.value).format(fmt);
+      }
       return config.value || '--';
   }
 };
@@ -553,4 +621,93 @@ export const filterNodesWithAllParents = (nodes: any, ids: any[]) => {
     }
   }
   return result;
+};
+
+export const VALIDATION_PATTERNS: Record<string, RegExp> = {
+  ipv4: /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/,
+  ipv6: /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){1,6}|:):((:[0-9a-fA-F]{1,4}){1,6}|:)|::([fF]{4}(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/,
+  email: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+  mobile_phone: /^1[3-9]\d{9}$/,
+  url: /^(https?|ftp):\/\/[^\s/$.?#].[^\s]*$/,
+  json: /^[\s]*(\{[\s\S]*\}|\[[\s\S]*\])[\s]*$/,
+};
+
+export const getStringValidationRule = (item: AttrLike, t: (key: string) => string) => {
+  const strOption = item.option as StrAttrOption;
+  if (!strOption?.validation_type || strOption.validation_type === 'unrestricted') {
+    return null;
+  }
+  if (strOption.validation_type === 'custom' && strOption.custom_regex) {
+    try {
+      return {
+        pattern: new RegExp(strOption.custom_regex),
+        message: t('Model.validationRuleMessage'),
+      };
+    } catch {
+      return null;
+    }
+  }
+  if (VALIDATION_PATTERNS[strOption.validation_type]) {
+    return {
+      pattern: VALIDATION_PATTERNS[strOption.validation_type],
+      message: t('Model.validationRuleMessage'),
+    };
+  }
+  return null;
+};
+
+export const getNumberRangeRule = (item: AttrLike, t: (key: string) => string) => {
+  const intOption = item.option as IntAttrOption;
+  const hasMin = intOption?.min_value !== undefined && intOption?.min_value !== '' && intOption?.min_value !== null;
+  const hasMax = intOption?.max_value !== undefined && intOption?.max_value !== '' && intOption?.max_value !== null;
+  if (!hasMin && !hasMax) return null;
+  return {
+    validator: (_: unknown, value: unknown) => {
+      if (value === undefined || value === null || value === '') {
+        return Promise.resolve();
+      }
+      const numValue = Number(value);
+      if (hasMin && numValue < Number(intOption.min_value)) {
+        return Promise.reject(new Error(t('Model.validationRuleMessage')));
+      }
+      if (hasMax && numValue > Number(intOption.max_value)) {
+        return Promise.reject(new Error(t('Model.validationRuleMessage')));
+      }
+      return Promise.resolve();
+    },
+  };
+};
+
+export const getValidationRules = (item: AttrLike, t: (key: string) => string) => {
+  const rules: any[] = [];
+  if (item.is_required) {
+    rules.push({ required: true, message: '' });
+  }
+  if (item.attr_type === 'str') {
+    const strRule = getStringValidationRule(item, t);
+    if (strRule) rules.push(strRule);
+  } else if (item.attr_type === 'int') {
+    const intRule = getNumberRangeRule(item, t);
+    if (intRule) rules.push(intRule);
+  }
+  return rules;
+};
+
+export const normalizeTimeValueForForm = (item: AttrLike, value: unknown) => {
+  if (item.attr_type === 'time' && value && typeof value === 'string') {
+    return dayjs(value, 'YYYY-MM-DD HH:mm:ss');
+  }
+  return value;
+};
+
+export const normalizeTimeValueForSubmit = (item: AttrLike, value: unknown) => {
+  if (item.attr_type === 'time' && dayjs.isDayjs(value)) {
+    const timeOption = item.option as TimeAttrOption;
+    // date 格式约定: YYYY-MM-DD 00:00:00 (时分秒固定为0)
+    if (timeOption?.display_format === 'date') {
+      return value.format('YYYY-MM-DD') + ' 00:00:00';
+    }
+    return value.format('YYYY-MM-DD HH:mm:ss');
+  }
+  return value;
 };

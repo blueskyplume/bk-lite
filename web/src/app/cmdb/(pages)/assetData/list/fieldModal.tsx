@@ -1,6 +1,6 @@
 'use client';
 
-import React, {
+import {
   useState,
   forwardRef,
   useImperativeHandle,
@@ -8,26 +8,24 @@ import React, {
 } from 'react';
 import {
   Input,
-  InputNumber,
   Button,
   Form,
   message,
   Select,
-  DatePicker,
   Col,
   Row,
   Checkbox,
+  Tooltip,
 } from 'antd';
+import { QuestionCircleOutlined } from '@ant-design/icons';
 import OperateModal from '@/components/operate-modal';
 import { useTranslation } from '@/utils/i18n';
-import GroupTreeSelector from '@/components/group-tree-select';
 import { useUserInfoContext } from '@/context/userInfo';
 import { AttrFieldType, UserItem, FullInfoGroupItem, FullInfoAttrItem, FieldConfig } from '@/app/cmdb/types/assetManage';
-import { deepClone } from '@/app/cmdb/utils/common';
+import { deepClone, getStringValidationRule, getNumberRangeRule, normalizeTimeValueForForm, normalizeTimeValueForSubmit, getFieldItem } from '@/app/cmdb/utils/common';
 import { useInstanceApi } from '@/app/cmdb/api';
-import dayjs from 'dayjs';
-import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
-import styles from './FilterBar.module.scss';
+import styles from './filterBar.module.scss';
+import useAssetDataStore from '@/app/cmdb/store/useAssetDataStore';
 
 interface FieldModalProps {
   onSuccess: (instId?: string) => void;
@@ -70,28 +68,21 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
 
     useEffect(() => {
       if (groupVisible && modelId === 'host') {
-        instanceApi
-          .getInstanceProxys()
-          .then((data: any[]) => {
-            setProxyOptions(data || []);
-          })
-          .catch(() => {
-            setProxyOptions([]);
-          });
+        setProxyOptions(useAssetDataStore.getState().cloud_list || []);
       }
     }, [groupVisible, modelId]);
 
-    // 监听 ip_addr 和 cloud，自动填充 inst_name
     const ipValue = Form.useWatch('ip_addr', form);
     const cloudValue = Form.useWatch('cloud', form);
     useEffect(() => {
       if (modelId === 'host') {
         const cloudName = proxyOptions.find(
-          (opt) => opt.proxy_id === cloudValue
+          (opt: any) => opt.proxy_id === +cloudValue,
         )?.proxy_name;
         if (ipValue && cloudName) {
           form.setFieldsValue({
             inst_name: `${ipValue || ''}[${cloudName || ''}]`,
+            cloud_id: Number(cloudValue),
           });
         }
       }
@@ -107,10 +98,6 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
         model_id,
         list,
       }) => {
-        // 打印属性标题列表+值
-        // console.log('test7.9', attrList);
-
-        // 开启弹窗的交互
         setGroupVisible(true);
         setSubTitle(subTitle);
         setType(type);
@@ -120,14 +107,14 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
         setSelectedRows(list);
         const forms = deepClone(formInfo);
 
-        // 提取所有属性并扁平化，用于在315行数据中查找
         const allAttrs = attrList.flatMap((group) => group.attrs || []);
 
-        // 转换日期和组织字段格式（复制和编辑都需要）
         for (const key in forms) {
-          const target = allAttrs.find((item: FullInfoAttrItem) => item.attr_id === key);
+          const target = allAttrs.find(
+            (item: FullInfoAttrItem) => item.attr_id === key,
+          );
           if (target?.attr_type === 'time' && forms[key]) {
-            forms[key] = dayjs(forms[key], 'YYYY-MM-DD HH:mm:ss');
+            forms[key] = normalizeTimeValueForForm(target, forms[key]);
           } else if (target?.attr_type === 'organization' && forms[key]) {
             forms[key] = forms[key]
               .map((item: any) => Number(item))
@@ -135,7 +122,6 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
           }
         }
 
-        // 复制操作时，覆盖组织字段为当前选中的分组
         if (type === 'add') {
           Object.assign(forms, {
             organization: selectedGroup?.id
@@ -159,7 +145,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
     };
 
     const renderFormLabel = (item: FullInfoAttrItem) => {
-      return (
+      const labelContent = (
         <div className="flex items-center">
           {type === 'batchEdit' && item.editable && !item.is_only ? (
             <Checkbox
@@ -176,8 +162,35 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
           {item.is_required && type !== 'batchEdit' && (
             <span className="text-[#ff4d4f] ml-1">*</span>
           )}
+          {item.user_prompt && (
+            <Tooltip title={item.user_prompt}>
+              <QuestionCircleOutlined className="ml-1 text-gray-400 cursor-help" />
+            </Tooltip>
+          )}
         </div>
       );
+      return labelContent;
+    };
+
+    const getFieldRules = (item: FullInfoAttrItem) => {
+      const rules: any[] = [
+        {
+          required: item.is_required && type !== 'batchEdit',
+          message: t('required'),
+        },
+      ];
+
+      if (item.attr_type === 'str') {
+        const stringRule = getStringValidationRule(item, t);
+        if (stringRule) rules.push(stringRule);
+      }
+
+      if (item.attr_type === 'int') {
+        const numberRule = getNumberRangeRule(item, t);
+        if (numberRule) rules.push(numberRule);
+      }
+
+      return rules;
     };
 
     const renderFormField = (item: FullInfoAttrItem) => {
@@ -188,134 +201,67 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
 
       const hostDisabled = modelId === 'host' && item.attr_id === 'inst_name';
 
-      const formField = (() => {
-        // 特殊处理-主机的云区域为下拉选项
-        if (item.attr_id === 'cloud') {
-          return (
-            <Select
-              disabled={fieldDisabled}
-              placeholder={t('common.selectTip')}
-            >
-              {proxyOptions.map((opt) => (
-                <Select.Option key={opt.proxy_id} value={opt.proxy_id}>
-                  {opt.proxy_name}
-                </Select.Option>
-              ))}
-            </Select>
-          );
-        }
-        // 新增+编辑弹窗中，用户字段为多选
-        switch (item.attr_type) {
-          case 'user':
-            return (
-              <Select
-                mode="multiple"
-                showSearch
-                disabled={fieldDisabled}
-                placeholder={t('common.selectTip')}
-                filterOption={(input, opt: any) => {
-                  if (typeof opt?.children?.props?.text === 'string') {
-                    return opt?.children?.props?.text
-                      ?.toLowerCase()
-                      .includes(input.toLowerCase());
-                  }
-                  return true;
-                }}
+      // 特殊处理-主机的云区域为下拉选项（弹窗中）
+      if (item.attr_id === 'cloud') {
+        return (
+          <Select
+            disabled={fieldDisabled}
+            placeholder={t('common.selectTip')}
+          >
+            {proxyOptions.map((opt) => (
+              <Select.Option
+                key={String(opt.proxy_id)}
+                value={String(opt.proxy_id)}
               >
-                {userList.map((opt: UserItem) => (
-                  <Select.Option key={opt.id} value={opt.id}>
-                    <EllipsisWithTooltip
-                      text={`${opt.display_name}(${opt.username})`}
-                      className="whitespace-nowrap overflow-hidden text-ellipsis break-all"
-                    />
-                  </Select.Option>
-                ))}
-              </Select>
-            );
-          case 'enum':
-            return (
-              <Select
-                showSearch
-                disabled={fieldDisabled}
-                placeholder={t('common.selectTip')}
-                filterOption={(input, opt: any) => {
-                  if (typeof opt?.children === 'string') {
-                    return opt?.children
-                      ?.toLowerCase()
-                      .includes(input.toLowerCase());
-                  }
-                  return true;
-                }}
-              >
-                {(Array.isArray(item.option) ? item.option : item.option ? JSON.parse(item.option) : []).map((opt: any) => (
-                  <Select.Option key={opt.id} value={opt.id}>
-                    {opt.name}
-                  </Select.Option>
-                ))}
-              </Select>
-            );
-          case 'bool':
-            return (
-              <Select
-                disabled={fieldDisabled}
-                placeholder={t('common.selectTip')}
-              >
-                {[
-                  { id: true, name: 'Yes' },
-                  { id: false, name: 'No' },
-                ].map((opt) => (
-                  <Select.Option key={opt.id.toString()} value={opt.id}>
-                    {opt.name}
-                  </Select.Option>
-                ))}
-              </Select>
-            );
-          case 'time':
-            return (
-              <DatePicker
-                placeholder={t('common.selectTip')}
-                showTime
-                disabled={fieldDisabled}
-                format="YYYY-MM-DD HH:mm:ss"
-                style={{ width: '100%' }}
-              />
-            );
-          case 'organization':
-            return (
-              <GroupTreeSelector multiple={true} disabled={fieldDisabled} />
-            );
-          case 'int':
-            return (
-              <InputNumber
-                disabled={fieldDisabled}
-                style={{ width: '100%' }}
-                placeholder={t('common.inputTip')}
-              />
-            );
-          default:
-            return (
-              <Input
-                placeholder={t('common.inputTip')}
-                disabled={fieldDisabled || hostDisabled}
-              />
-            );
-        }
-      })();
+                {opt.proxy_name}
+              </Select.Option>
+            ))}
+          </Select>
+        );
+      }
 
-      return formField;
+      // 特殊处理-主机的云区域ID显示,但是不允许修改（弹窗中）
+      if (item.attr_id === 'cloud_id' && modelId === 'host') {
+        return <Input disabled={true} placeholder={t('common.inputTip')} />;
+      }
+
+      // 特殊处理-主机的实例名称（inst_name）不允许修改
+      if (hostDisabled) {
+        return <Input disabled={true} placeholder={t('common.inputTip')} />;
+      }
+
+      const placeholder = ['user', 'enum', 'bool', 'time', 'organization'].includes(item.attr_type)
+        ? t('common.selectTip')
+        : t('common.inputTip');
+
+      return getFieldItem({
+        fieldItem: item,
+        userList,
+        isEdit: true,
+        disabled: fieldDisabled,
+        placeholder,
+      });
     };
 
     const handleSubmit = (confirmType?: string) => {
       form
         .validateFields()
         .then((values) => {
-          // 从分组中提取所有属性并扁平化，用于在315行数据中查找
           const allAttrs = formItems.flatMap((group) => group.attrs || []);
           for (const key in values) {
-            const target = allAttrs.find((item: FullInfoAttrItem) => item.attr_id === key);
-            if (target?.attr_type === 'time' && values[key]) {
-              values[key] = values[key].format('YYYY-MM-DD HH:mm:ss');
+            const target = allAttrs.find(
+              (item: FullInfoAttrItem) => item.attr_id === key,
+            );
+            if (target && values[key] !== undefined) {
+              values[key] = normalizeTimeValueForSubmit(target, values[key]);
             }
+          }
+
+          if (values.cloud) {
+            values.cloud = String(values.cloud);
+          }
+          if (values.cloud_id) {
+            values.cloud_id = +values.cloud_id;
           }
           operateAttr(values, confirmType);
         })
@@ -335,7 +281,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
         const isBatchEdit = type === 'batchEdit';
         if (isBatchEdit) {
           const hasEnabledFields = Object.values(enabledFields).some(
-            (enabled) => enabled
+            (enabled) => enabled,
           );
           if (!hasEnabledFields) {
             message.warning(t('common.inputTip'));
@@ -355,7 +301,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
           formData = params;
         }
         const msg: string = t(
-          type === 'add' ? 'successfullyAdded' : 'successfullyModified'
+          type === 'add' ? 'successfullyAdded' : 'successfullyModified',
         );
         let result: any;
         if (type === 'add') {
@@ -415,15 +361,14 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
             </div>
           }
         >
-          {/* 编辑弹窗的内容部分 */}
           <Form form={form} layout="vertical">
-            {/* 遍历所有提取 organization 字段 */}
             {(() => {
               const organizationAttrs = formItems.flatMap((group) =>
-                (group.attrs || []).filter((attr) => attr.attr_id === 'organization')
+                (group.attrs || []).filter(
+                  (attr) => attr.attr_id === 'organization',
+                ),
               );
 
-              // 返回 organization 字段的数据
               return (
                 <>
                   <div className={styles.groupOrganization}>
@@ -436,12 +381,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
                           className="mb-4"
                           name={item.attr_id}
                           label={renderFormLabel(item)}
-                          rules={[
-                            {
-                              required: item.is_required && type !== 'batchEdit',
-                              message: t('required'),
-                            },
-                          ]}
+                          rules={getFieldRules(item)}
                         >
                           {renderFormField(item)}
                         </Form.Item>
@@ -449,22 +389,18 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
                     ))}
                   </Row>
                 </>
-              )
+              );
             })()}
 
-            {/* 其他分组（不包含 organization 字段） */}
             {formItems.map((group) => {
               const otherAttrs = (group.attrs || []).filter(
-                (attr) => attr.attr_id !== 'organization'
+                (attr) => attr.attr_id !== 'organization',
               );
               if (otherAttrs.length === 0) return null;
 
-              // 返回其他分组的数据
               return (
                 <div key={group.id}>
-                  <div className={styles.groupOther}>
-                    {group.group_name}
-                  </div>
+                  <div className={styles.groupOther}>{group.group_name}</div>
                   <Row gutter={24}>
                     {otherAttrs.map((item) => (
                       <Col span={12} key={item.attr_id}>
@@ -472,12 +408,7 @@ const FieldMoadal = forwardRef<FieldModalRef, FieldModalProps>(
                           className="mb-4"
                           name={item.attr_id}
                           label={renderFormLabel(item)}
-                          rules={[
-                            {
-                              required: item.is_required && type !== 'batchEdit',
-                              message: t('required'),
-                            },
-                          ]}
+                          rules={getFieldRules(item)}
                         >
                           {renderFormField(item)}
                         </Form.Item>

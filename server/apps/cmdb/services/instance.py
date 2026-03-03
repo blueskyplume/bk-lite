@@ -34,6 +34,68 @@ from apps.core.logger import cmdb_logger as logger
 
 
 class InstanceManage(object):
+    @staticmethod
+    def _build_format_permission_dict(permission_map: dict, creator: str = "") -> dict:
+        format_permission_dict = {}
+        for organization_id, organization_permission_data in permission_map.items():
+            _query_list = []
+            inst_names = organization_permission_data["inst_names"]
+            if inst_names:
+                _query_list.append(
+                    {"field": "inst_name", "type": "str[]", "value": inst_names}
+                )
+                if creator:
+                    _query_list.append(
+                        {"field": "_creator", "type": "str=", "value": creator}
+                    )
+            format_permission_dict[organization_id] = _query_list
+        return format_permission_dict
+
+    @staticmethod
+    def _build_check_attr_map(attrs: list, for_update: bool = False) -> dict:
+        check_attr_map = {"is_only": {}, "is_required": {}}
+        if for_update:
+            check_attr_map["editable"] = {}
+
+        for attr in attrs:
+            attr_id = attr["attr_id"]
+            attr_name = attr["attr_name"]
+            if attr.get("is_only"):
+                check_attr_map["is_only"][attr_id] = attr_name
+            if attr.get("is_required"):
+                check_attr_map["is_required"][attr_id] = attr_name
+            if for_update and (attr.get("editable") or attr.get("is_display_field")):
+                check_attr_map["editable"][attr_id] = attr_name
+
+        return check_attr_map
+
+    @staticmethod
+    def _apply_display_fields_to_update(attrs: list, update_attr: dict) -> None:
+        from apps.cmdb.display_field import DisplayFieldConverter
+
+        for attr in attrs:
+            attr_id = attr.get("attr_id")
+            attr_type = attr.get("attr_type")
+
+            if attr_type not in DISPLAY_FIELD_TYPES or attr_id not in update_attr:
+                continue
+
+            display_field_id = f"{attr_id}{DISPLAY_SUFFIX}"
+            original_value = update_attr[attr_id]
+
+            if attr_type == FIELD_TYPE_ORGANIZATION:
+                display_value = DisplayFieldConverter.convert_organization(original_value)
+            elif attr_type == FIELD_TYPE_USER:
+                display_value = DisplayFieldConverter.convert_user(original_value)
+            elif attr_type == FIELD_TYPE_ENUM:
+                display_value = DisplayFieldConverter.convert_enum(
+                    original_value, attr.get("option", [])
+                )
+            else:
+                continue
+
+            update_attr[display_field_id] = display_value
+
     @classmethod
     def search_inst(cls, model_id: str, inst_name: str = None, _id: int = None):
         """查询实例"""
@@ -76,35 +138,20 @@ class InstanceManage(object):
 
     @staticmethod
     def instance_list(
-        model_id: str,
-        params: list,
-        page: int,
-        page_size: int,
-        order: str,
-        permission_map: dict,
-        creator: str = None,
-        case_sensitive: bool = True,
+            model_id: str,
+            params: list,
+            page: int,
+            page_size: int,
+            order: str,
+            permission_map: dict,
+            creator: str = None,
+            case_sensitive: bool = True,
     ):
         """实例列表"""
 
         params.append({"field": "model_id", "type": "str=", "value": model_id})
 
-        format_permission_dict = {}
-
-        for organization_id, organization_permission_data in permission_map.items():
-            _query_list = []
-            inst_names = organization_permission_data["inst_names"]
-            if inst_names:
-                _query_list.append(
-                    {"field": "inst_name", "type": "str[]", "value": inst_names}
-                )
-                if creator:
-                    # 只有创建人条件
-                    _query_list.append(
-                        {"field": "_creator", "type": "str=", "value": creator}
-                    )
-
-            format_permission_dict[organization_id] = _query_list
+        format_permission_dict = InstanceManage._build_format_permission_dict(permission_map, creator)
 
         _page = dict(skip=(page - 1) * page_size, limit=page_size)
         if order and order.startswith("-"):
@@ -127,12 +174,7 @@ class InstanceManage(object):
         """创建实例"""
         instance_info.update(model_id=model_id)
         attrs = ModelManage.search_model_attr(model_id)
-        check_attr_map = dict(is_only={}, is_required={})
-        for attr in attrs:
-            if attr["is_only"]:
-                check_attr_map["is_only"][attr["attr_id"]] = attr["attr_name"]
-            if attr["is_required"]:
-                check_attr_map["is_required"][attr["attr_id"]] = attr["attr_name"]
+        check_attr_map = InstanceManage._build_check_attr_map(attrs, for_update=False)
 
         # 为 organization/user/enum 字段生成 _display 冗余字段
         from apps.cmdb.display_field import DisplayFieldHandler
@@ -146,7 +188,7 @@ class InstanceManage(object):
                 INSTANCE, [{"field": "model_id", "type": "str=", "value": model_id}]
             )
             result = ag.create_entity(
-                INSTANCE, instance_info, check_attr_map, exist_items, operator
+                INSTANCE, instance_info, check_attr_map, exist_items, operator, attrs
             )
 
         create_change_record(
@@ -163,7 +205,7 @@ class InstanceManage(object):
 
     @staticmethod
     def instance_update(
-        user_groups: list, roles: list, inst_id: int, update_attr: dict, operator: str
+            user_groups: list, roles: list, inst_id: int, update_attr: dict, operator: str
     ):
         """修改实例属性"""
         inst_info = InstanceManage.query_entity_by_id(inst_id)
@@ -176,43 +218,9 @@ class InstanceManage(object):
         InstanceManage.check_instances_permission([inst_info], inst_info["model_id"])
 
         attrs = ModelManage.parse_attrs(model_info.get("attrs", "[]"))
-        check_attr_map = dict(is_only={}, is_required={}, editable={})
-        for attr in attrs:
-            if attr["is_only"]:
-                check_attr_map["is_only"][attr["attr_id"]] = attr["attr_name"]
-            if attr["is_required"]:
-                check_attr_map["is_required"][attr["attr_id"]] = attr["attr_name"]
-            if attr["editable"]:
-                check_attr_map["editable"][attr["attr_id"]] = attr["attr_name"]
+        check_attr_map = InstanceManage._build_check_attr_map(attrs, for_update=True)
 
-        # 只有当对应的原始字段更新时,才更新 _display 字段
-        from apps.cmdb.display_field import DisplayFieldHandler, DisplayFieldConverter
-
-        for attr in attrs:
-            attr_id = attr.get("attr_id")
-            attr_type = attr.get("attr_type")
-
-            # 检查是否更新了目标类型的字段
-            if attr_type in DISPLAY_FIELD_TYPES and attr_id in update_attr:
-                display_field_id = f"{attr_id}{DISPLAY_SUFFIX}"
-                original_value = update_attr[attr_id]
-
-                # 使用统一的转换器进行转换
-                if attr_type == FIELD_TYPE_ORGANIZATION:
-                    display_value = DisplayFieldConverter.convert_organization(
-                        original_value
-                    )
-                elif attr_type == FIELD_TYPE_USER:
-                    display_value = DisplayFieldConverter.convert_user(original_value)
-                elif attr_type == FIELD_TYPE_ENUM:
-                    display_value = DisplayFieldConverter.convert_enum(
-                        original_value, attr.get("option", [])
-                    )
-                else:
-                    continue
-
-                # 将生成的 _display 值添加到更新数据中
-                update_attr[display_field_id] = display_value
+        InstanceManage._apply_display_fields_to_update(attrs, update_attr)
 
         with GraphClient() as ag:
             exist_items, _ = ag.query_entity(
@@ -221,7 +229,7 @@ class InstanceManage(object):
             )
             exist_items = [i for i in exist_items if i["_id"] != inst_id]
             result = ag.set_entity_properties(
-                INSTANCE, [inst_id], update_attr, check_attr_map, exist_items
+                INSTANCE, [inst_id], update_attr, check_attr_map, exist_items, attrs=attrs
             )
 
         create_change_record(
@@ -252,43 +260,9 @@ class InstanceManage(object):
         InstanceManage.check_instances_permission(inst_list, model_info["model_id"])
 
         attrs = ModelManage.parse_attrs(model_info.get("attrs", "[]"))
-        check_attr_map = dict(is_only={}, is_required={}, editable={})
-        for attr in attrs:
-            if attr["is_only"]:
-                check_attr_map["is_only"][attr["attr_id"]] = attr["attr_name"]
-            if attr["is_required"]:
-                check_attr_map["is_required"][attr["attr_id"]] = attr["attr_name"]
-            if attr["editable"] or attr.get("is_display_field"):
-                check_attr_map["editable"][attr["attr_id"]] = attr["attr_name"]
+        check_attr_map = InstanceManage._build_check_attr_map(attrs, for_update=True)
 
-        # 只有当对应的原始字段更新时,才更新 _display 字段
-        from apps.cmdb.display_field import DisplayFieldHandler, DisplayFieldConverter
-
-        for attr in attrs:
-            attr_id = attr.get("attr_id")
-            attr_type = attr.get("attr_type")
-
-            # 检查是否更新了目标类型的字段
-            if attr_type in DISPLAY_FIELD_TYPES and attr_id in update_attr:
-                display_field_id = f"{attr_id}{DISPLAY_SUFFIX}"
-                original_value = update_attr[attr_id]
-
-                # 使用统一的转换器进行转换
-                if attr_type == FIELD_TYPE_ORGANIZATION:
-                    display_value = DisplayFieldConverter.convert_organization(
-                        original_value
-                    )
-                elif attr_type == FIELD_TYPE_USER:
-                    display_value = DisplayFieldConverter.convert_user(original_value)
-                elif attr_type == FIELD_TYPE_ENUM:
-                    display_value = DisplayFieldConverter.convert_enum(
-                        original_value, attr.get("option", [])
-                    )
-                else:
-                    continue
-
-                # 将生成的 _display 值添加到更新数据中
-                update_attr[display_field_id] = display_value
+        InstanceManage._apply_display_fields_to_update(attrs, update_attr)
 
         with GraphClient() as ag:
             exist_items, _ = ag.query_entity(
@@ -303,7 +277,7 @@ class InstanceManage(object):
             )
             exist_items = [i for i in exist_items if i["_id"] not in inst_ids]
             result = ag.set_entity_properties(
-                INSTANCE, inst_ids, update_attr, check_attr_map, exist_items
+                INSTANCE, inst_ids, update_attr, check_attr_map, exist_items, attrs=attrs
             )
 
         after_dict = {i["_id"]: i for i in result}
@@ -326,7 +300,7 @@ class InstanceManage(object):
 
     @staticmethod
     def instance_batch_delete(
-        user_groups: list, roles: list, inst_ids: list, operator: str
+            user_groups: list, roles: list, inst_ids: list, operator: str
     ):
         """批量删除实例"""
         inst_list = InstanceManage.query_entity_by_ids(inst_ids)
@@ -631,11 +605,11 @@ class InstanceManage(object):
         return results
 
     def inst_import_support_edit(
-        self,
-        model_id: str,
-        file_stream: bytes,
-        operator: str,
-        allowed_org_ids: list = None,
+            self,
+            model_id: str,
+            file_stream: bytes,
+            operator: str,
+            allowed_org_ids: list = None,
     ):
         """实例导入-支持编辑"""
         attrs = ModelManage.search_model_attr_v2(model_id)
@@ -662,7 +636,9 @@ class InstanceManage(object):
             logger.warning(
                 f"模型 {model_id} 数据导入验证失败，错误数量: {len(_import.validation_errors)}"
             )
-            return {"success": False, "message": error_summary + error_details}
+            success_count = len([i for i in add_results if i.get("success", False)])
+            error_summary += f"已成功导入 {success_count} 条数据，失败 {len(_import.inst_list) - success_count} 条数据。\n 错误信息: {error_summary + error_details}"
+            return {"success": False, "message": error_summary}
 
         add_changes = [
             dict(
@@ -733,33 +709,20 @@ class InstanceManage(object):
 
     @staticmethod
     def inst_export(
-        model_id: str,
-        ids: list,
-        permissions_map: dict = {},
-        created: str = "",
-        creator: str = "",
-        attr_list: list = [],
-        association_list: list = [],
+            model_id: str,
+            ids: list,
+            permissions_map: dict = {},
+            created: str = "",
+            creator: str = "",
+            attr_list: list = [],
+            association_list: list = [],
     ):
         """实例导出"""
         attrs = ModelManage.search_model_attr_v2(model_id)
         association = ModelManage.model_association_search(model_id)
-        format_permission_dict = {}
-
-        for organization_id, organization_permission_data in permissions_map.items():
-            _query_list = []
-            inst_names = organization_permission_data["inst_names"]
-            if inst_names:
-                _query_list.append(
-                    {"field": "inst_name", "type": "str[]", "value": inst_names}
-                )
-                if creator:
-                    # 只有创建人条件
-                    _query_list.append(
-                        {"field": "_creator", "type": "str=", "value": creator}
-                    )
-
-            format_permission_dict[organization_id] = _query_list
+        format_permission_dict = InstanceManage._build_format_permission_dict(
+            permissions_map, creator
+        )
         # 添加调试日志
         logger.info(
             f"导出参数 - model_id: {model_id}, ids: {ids}, association_list: {association_list}"
@@ -867,21 +830,7 @@ class InstanceManage(object):
 
     @classmethod
     def model_inst_count(cls, permissions_map: dict, creator: str = ""):
-        format_permission_dict = {}
-        for organization_id, organization_permission_data in permissions_map.items():
-            _query_list = []
-            inst_names = organization_permission_data["inst_names"]
-            if inst_names:
-                _query_list.append(
-                    {"field": "inst_name", "type": "str[]", "value": inst_names}
-                )
-                if creator:
-                    # 只有创建人条件
-                    _query_list.append(
-                        {"field": "_creator", "type": "str=", "value": creator}
-                    )
-
-            format_permission_dict[organization_id] = _query_list
+        format_permission_dict = cls._build_format_permission_dict(permissions_map, creator)
 
         with GraphClient() as ag:
             data = ag.entity_count(
@@ -959,11 +908,11 @@ class InstanceManage(object):
 
     @classmethod
     def fulltext_search(
-        cls,
-        search: str,
-        permission_map: dict,
-        creator: str = "",
-        case_sensitive: bool = False,
+            cls,
+            search: str,
+            permission_map: dict,
+            creator: str = "",
+            case_sensitive: bool = False,
     ):
         """
         全文检索（兼容旧接口）
@@ -999,11 +948,11 @@ class InstanceManage(object):
 
     @classmethod
     def fulltext_search_stats(
-        cls,
-        search: str,
-        permission_map: dict,
-        creator: str = "",
-        case_sensitive: bool = False,
+            cls,
+            search: str,
+            permission_map: dict,
+            creator: str = "",
+            case_sensitive: bool = False,
     ):
         """
         全文检索 - 模型统计接口
@@ -1049,14 +998,14 @@ class InstanceManage(object):
 
     @classmethod
     def fulltext_search_by_model(
-        cls,
-        search: str,
-        model_id: str,
-        permission_map: dict,
-        creator: str = "",
-        page: int = 1,
-        page_size: int = 10,
-        case_sensitive: bool = False,
+            cls,
+            search: str,
+            model_id: str,
+            permission_map: dict,
+            creator: str = "",
+            page: int = 1,
+            page_size: int = 10,
+            case_sensitive: bool = False,
     ):
         """
         全文检索 - 模型数据查询接口

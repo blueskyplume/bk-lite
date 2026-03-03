@@ -2,14 +2,23 @@
 # @File: urls.py
 # @Time: 2025/5/9 14:57
 # @Author: windyzhao
-from django.urls import path, include
+from django.urls import path
 from rest_framework import routers
 
-from apps.alerts.views.assignment_shield import AlertAssignmentModelViewSet, AlertShieldModelViewSet
-from apps.alerts.views.view import request_test, AlertSourceModelViewSet, AlterModelViewSet, EventModelViewSet, \
-    LevelModelViewSet, IncidentModelViewSet, SystemSettingModelViewSet, SystemLogModelViewSet
-from apps.alerts.views.source import receiver_data
-from apps.alerts.views.rule_views import AggregationRulesViewSet, CorrelationRulesViewSet
+from apps.alerts.views import (
+    AlertSourceModelViewSet,
+    AlterModelViewSet,
+    EventModelViewSet,
+    LevelModelViewSet,
+    IncidentModelViewSet,
+    SystemSettingModelViewSet,
+    SystemLogModelViewSet,
+    AlertAssignmentModelViewSet,
+    AlertShieldModelViewSet,
+    AlarmStrategyModelViewSet,
+    receiver_data,
+    request_test,
+)
 
 router = routers.DefaultRouter()
 router.register(r"api/alert_source", AlertSourceModelViewSet, basename="alert_source")
@@ -20,8 +29,7 @@ router.register(r"api/settings", SystemSettingModelViewSet, basename="settings")
 router.register(r"api/assignment", AlertAssignmentModelViewSet, basename="assignment")
 router.register(r"api/shield", AlertShieldModelViewSet, basename="shield")
 router.register(r"api/incident", IncidentModelViewSet, basename="incident")
-router.register(r'api/correlation_rule', CorrelationRulesViewSet, basename='correlation_rules')
-router.register(r'api/aggregation_rule', AggregationRulesViewSet, basename='aggregation_rules')
+router.register(r'api/alarm_strategy', AlarmStrategyModelViewSet, basename='alarm_strategy')
 router.register(r'api/log', SystemLogModelViewSet, basename='log')
 
 urlpatterns = [
@@ -30,3 +38,4 @@ urlpatterns = [
 ]
 
 urlpatterns += router.urls
+

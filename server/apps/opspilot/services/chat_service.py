@@ -77,6 +77,7 @@ class ChatService:
                 "total_tokens": response.total_tokens,
                 "prompt_tokens": response.prompt_tokens,
                 "completion_tokens": response.completion_tokens,
+                "browser_steps": response.browser_steps,
             }
 
             # 处理内容（可选隐藏思考过程）
@@ -136,6 +137,7 @@ class ChatService:
             "naive_rag_request": naive_rag_request,
             "enable_suggest": kwargs.get("enable_suggest", False),
             "enable_query_rewrite": kwargs.get("enable_query_rewrite", False),
+            "locale": kwargs.get("locale", "en"),  # 用户语言设置，用于 browser-use 输出国际化
         }
 
         if kwargs.get("thread_id"):

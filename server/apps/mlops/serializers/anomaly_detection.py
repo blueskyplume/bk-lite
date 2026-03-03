@@ -59,7 +59,7 @@ class AnomalyDetectionTrainDataSerializer(AuthSerializer):
             # 检查数据类型
             if df["value"].isnull().any():
                 raise serializers.ValidationError("'value'列包含空值")
-
+            
             if df["label"].isnull().any():
                 raise serializers.ValidationError("'label'列包含空值")
 

@@ -146,6 +146,7 @@ interface ModelTabs {
 interface FieldRef {
   showModal: (config: {
     type: string;
+    source?: 'create' | 'copy' | 'edit' | 'batchEdit';
     attrList: FullInfoGroupItem[];
     formInfo: any;
     subTitle: string;
@@ -641,7 +642,7 @@ const AssetDataContent = () => {
     if (id) showInstanceModal({ _id: id });
   };
 
-  const showAttrModal = (type: string, row = {}) => {
+  const showAttrModal = (type: 'add' | 'edit' | 'batchEdit', row = {}) => {
     const title = type === 'add' ? t('common.addNew') : t('common.edit');
     fieldRef.current?.showModal({
       title,

@@ -31,7 +31,7 @@ ansible_windows_tree = Tree(
     prefix="collections/ansible_collections/ansible/windows",
     excludes=["*.pyc", "__pycache__"],
 )
-ansible_windows_datas = [(src_name, dest_name) for dest_name, src_name, _ in ansible_windows_tree]
+ansible_windows_datas = BUILD_SUPPORT_MODULE.tree_toc_to_datas(ansible_windows_tree)
 
 a = Analysis(
     ["main.py"],

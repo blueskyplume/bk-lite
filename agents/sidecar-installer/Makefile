@@ -1,8 +1,8 @@
 .PHONY: all build icons worker linux-worker nsis clean check-deps
 
 WORKER = setup-worker.exe
-INSTALLER = collector-sidecar-installer.exe
-LINUX_INSTALLER = bklite-monitor-installer
+INSTALLER = bklite-controller-installer.exe
+LINUX_INSTALLER = bklite-controller-installer
 
 all: build
 

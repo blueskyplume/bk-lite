@@ -2,7 +2,7 @@ import os
 
 
 def _installer_filename(target_os: str) -> str:
-    return "bklite-monitor-installer.exe" if target_os == "windows" else "bklite-monitor-installer"
+    return "bklite-controller-installer.exe" if target_os == "windows" else "bklite-controller-installer"
 
 
 def _installer_alias_path(target_os: str) -> str:

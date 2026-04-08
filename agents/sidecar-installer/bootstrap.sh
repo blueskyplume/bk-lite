@@ -3,7 +3,7 @@ set -eu
 
 CONFIG_URL="${1:-}"
 INSTALL_DIR="${2:-/opt/fusion-collectors}"
-INSTALLER_NAME="${3:-bklite-monitor-installer}"
+INSTALLER_NAME="${3:-bklite-controller-installer}"
 
 if [ -z "$CONFIG_URL" ]; then
   echo "usage: $0 <config_url> [install_dir] [installer_name]" >&2

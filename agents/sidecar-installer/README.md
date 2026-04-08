@@ -2,8 +2,8 @@
 
 ## Artifacts
 
-- Windows installer filename: `bklite-monitor-installer.exe`
-- Linux installer filename: `bklite-monitor-installer`
+- Windows installer filename: `bklite-controller-installer.exe`
+- Linux installer filename: `bklite-controller-installer`
 
 Default object storage layout:
 
@@ -12,10 +12,10 @@ Default object storage layout:
 
 Examples:
 
-- `installer/windows/v1.2.3/bklite-monitor-installer.exe`
-- `installer/windows/bklite-monitor-installer.exe`
-- `installer/linux/v1.2.3/bklite-monitor-installer`
-- `installer/linux/bklite-monitor-installer`
+- `installer/windows/v1.2.3/bklite-controller-installer.exe`
+- `installer/windows/bklite-controller-installer.exe`
+- `installer/linux/v1.2.3/bklite-controller-installer`
+- `installer/linux/bklite-controller-installer`
 
 ## Build
 
@@ -27,16 +27,16 @@ make build
 
 Outputs:
 
-- Windows NSIS installer: `collector-sidecar-installer.exe`
-- Linux installer binary: `bklite-monitor-installer`
+- Windows NSIS installer: `bklite-controller-installer.exe`
+- Linux installer binary: `bklite-controller-installer`
 
 ## Upload
 
 From `server/`:
 
 ```bash
-python manage.py installer_init --os windows --file_path /path/to/collector-sidecar-installer.exe --version v1.2.3
-python manage.py installer_init --os linux --file_path /path/to/bklite-monitor-installer --version v1.2.3
+python manage.py installer_init --os windows --file_path /path/to/bklite-controller-installer.exe --version v1.2.3
+python manage.py installer_init --os linux --file_path /path/to/bklite-controller-installer --version v1.2.3
 ```
 
 Upload behavior:

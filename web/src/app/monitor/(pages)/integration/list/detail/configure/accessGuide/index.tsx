@@ -88,6 +88,18 @@ const buildRequestParamDocs = (doc: TemplateAccessGuideDoc | null) => [
     description: `插件模板 ID 标签，固定为当前模板 ID，例如 ${doc?.plugin_id || '--'}`
   },
   {
+    key: 'instance_identifier',
+    name: (doc?.instance_id_keys?.length || 0) > 1
+      ? doc?.instance_id_keys.map((item) => `${item}=<value>`).join(', ')
+      : `${doc?.instance_id_keys?.[0] || 'instance_id'}=<value>`,
+    type: 'tag(string)',
+    required: '是',
+    description:
+      (doc?.instance_id_keys?.length || 0) > 0
+        ? `监控对象唯一标识维度，必须传入：${(doc?.instance_id_keys || []).join('、')}。当监控对象未配置 instance_id_keys 时，默认必传 instance_id。`
+        : '监控对象唯一标识维度，默认必传 instance_id。'
+  },
+  {
     key: 'measurement',
     name: '<metric_name>',
     type: 'measurement',
@@ -113,7 +125,7 @@ const buildRequestParamDocs = (doc: TemplateAccessGuideDoc | null) => [
     name: '<extra_tag>=<value>',
     type: 'tag(optional)',
     required: '否',
-    description: '可选扩展标签，可按业务需要继续追加在 measurement 后面'
+    description: '可选扩展标签，可按业务需要继续追加在 measurement 后面，但不能替代监控对象唯一标识维度'
   }
 ];
 
@@ -214,8 +226,6 @@ const TemplateAccessGuide: React.FC = () => {
     }
     return buildCurlExample(endpoint, lineProtocolExample);
   }, [doc?.endpoint, lineProtocolExample, sampleFormat]);
-
-  console.log(sampleCode);
 
   const requestParamDocs = useMemo(() => buildRequestParamDocs(doc), [doc]);
 

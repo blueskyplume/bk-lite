@@ -25,3 +25,13 @@ def ensure_ansible_windows_collection(
         cwd=str(Path(cwd).resolve() if cwd else Path.cwd()),
     )
     return windows_root
+
+
+def tree_toc_to_datas(tree_entries) -> list[tuple[str, str]]:
+    datas: list[tuple[str, str]] = []
+    for dest_name, src_name, _ in tree_entries:
+        dest_dir = str(Path(dest_name).parent).replace("\\", "/")
+        if dest_dir == ".":
+            dest_dir = ""
+        datas.append((src_name, dest_dir))
+    return datas

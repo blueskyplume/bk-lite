@@ -950,7 +950,7 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
           </div>
           <DataSourceParamsConfig
             selectedDataSource={selectedDataSource}
-            includeFilterTypes={['params', 'fixed', 'filter']}
+            includeFilterTypes={['params', 'fixed']}
           />
         </div>
 

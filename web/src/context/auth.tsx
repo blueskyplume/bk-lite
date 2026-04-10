@@ -378,11 +378,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           <div
             className="relative w-full overflow-hidden rounded-[28px] border backdrop-blur-xl"
             style={{
+              maxWidth: 460,
               borderColor: themeName === 'dark' ? 'var(--color-border-1)' : 'rgba(255,255,255,0.6)',
               background: themeName === 'dark' ? 'rgba(12,37,54,0.94)' : 'rgba(255,255,255,0.96)',
               boxShadow: themeName === 'dark' ? '0 30px 90px rgba(0,0,0,0.42)' : '0 30px 90px rgba(15,23,42,0.28)',
             }}
-            style={{ maxWidth: 460 }}
           >
             <div
               className="pointer-events-none absolute inset-x-0 top-0 h-24"

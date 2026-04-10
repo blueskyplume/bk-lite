@@ -219,6 +219,39 @@ def validate_auto_relation_rule_payload(
     )
 
 
+def validate_auto_relation_rule_set_payload(
+    model_association: dict[str, Any],
+    src_attrs: list[dict[str, Any]],
+    dst_attrs: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> AutoRelationRuleSet:
+    if not isinstance(payload, dict):
+        raise BaseAppException("自动关联规则配置不合法")
+
+    raw_rules = payload.get("rules") or []
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise BaseAppException("rules 不能为空")
+
+    rules: list[AutoRelationRule] = []
+    seen_rule_ids: set[str] = set()
+    for item in raw_rules:
+        validated_rule = validate_auto_relation_rule_payload(
+            model_association,
+            src_attrs,
+            dst_attrs,
+            item,
+        )
+        if validated_rule.rule_id in seen_rule_ids:
+            raise BaseAppException("rules 中存在重复 rule_id")
+        seen_rule_ids.add(validated_rule.rule_id)
+        rules.append(validated_rule)
+
+    return AutoRelationRuleSet(
+        version=int(payload.get("version") or 2),
+        rules=rules,
+    )
+
+
 def build_auto_relation_rule_response(
     association: dict[str, Any],
     rule: AutoRelationRule | None,

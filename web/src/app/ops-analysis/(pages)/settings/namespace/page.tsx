@@ -306,7 +306,6 @@ const Namespace: React.FC = () => {
           onCancel={() => setImportModalVisible(false)}
           targetDirectoryId={null}
           onSuccess={() => {
-            void refreshNamespaces();
             fetchNamespaces();
           }}
         />

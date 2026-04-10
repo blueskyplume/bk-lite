@@ -117,21 +117,7 @@ const WidgetWrapper: React.FC<WidgetWrapperProps> = ({
 
   // 提取数据校验逻辑
   const validateChartData = (data: unknown, type?: string) => {
-    const isDataEmpty = () => {
-      if (!data) return true;
-      if (Array.isArray(data) && data.length === 0) return true;
-
-      if (Array.isArray(data) && data.length > 0) {
-        const hasValidData = data.some((item) => {
-          if (!item || !item.data) return false;
-          const innerData = Array.isArray(item.data) ? item.data : [];
-          return innerData.length > 0;
-        });
-        if (!hasValidData) return true;
-      }
-
-      return false;
-    };
+    const isDataEmpty = () => !data || (Array.isArray(data) && data.length === 0);
 
     if (isDataEmpty()) {
       return { isValid: true };

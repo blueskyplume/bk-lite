@@ -10,7 +10,7 @@
     "event_window": 1,
     "random_state": 42,
     "max_evals": 20,
-    "metric": "f1",
+    "metric": "changepoint_f1",
     "search_space": {
       "pen": [10, 20, 30],
       "min_size": [3, 5, 10],

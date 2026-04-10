@@ -11,6 +11,7 @@ from .schema import (
     SUPPORTED_METRICS,
     SUPPORTED_MISSING_HANDLERS,
     SUPPORTED_PELT_COST_MODELS,
+    SUPPORTED_PELT_METRICS,
 )
 
 
@@ -120,9 +121,12 @@ def validate_required_fields(config: Dict[str, Any]) -> None:
     if hp["max_evals"] < 1:
         raise ConfigError(f"hyperparams.max_evals 必须 >= 1，当前值: {hp['max_evals']}")
 
-    if hp["metric"] not in SUPPORTED_METRICS:
+    valid_metrics = (
+        SUPPORTED_PELT_METRICS if model_type == "PELT" else SUPPORTED_METRICS
+    )
+    if hp["metric"] not in valid_metrics:
         raise ConfigError(
-            f"hyperparams.metric 必须是以下之一: {SUPPORTED_METRICS}，"
+            f"hyperparams.metric 必须是以下之一: {valid_metrics}，"
             f"当前值: {hp['metric']}"
         )
 

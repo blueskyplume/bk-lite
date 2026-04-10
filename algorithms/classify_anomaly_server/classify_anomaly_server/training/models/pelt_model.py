@@ -132,13 +132,26 @@ class PELTModel(BaseAnomalyModel):
         else:
             changepoint_recall = 0.0
 
+        changepoint_precision = (
+            matched_changepoints / len(changepoints) if changepoints else 0.0
+        )
+        changepoint_f1 = (
+            float(
+                2
+                * changepoint_precision
+                * changepoint_recall
+                / (changepoint_precision + changepoint_recall)
+            )
+            if (changepoint_precision + changepoint_recall) > 0
+            else 0.0
+        )
+
         metrics = {
             "num_changepoints": float(len(changepoints)),
             "num_labeled_points": float(labeled_points),
-            "changepoint_precision": (
-                matched_changepoints / len(changepoints) if changepoints else 0.0
-            ),
+            "changepoint_precision": float(changepoint_precision),
             "changepoint_recall": float(changepoint_recall),
+            "changepoint_f1": changepoint_f1,
         }
 
         if prefix:
@@ -201,8 +214,20 @@ class PELTModel(BaseAnomalyModel):
                         labels_array: NDArray[np.int_] = val_labels.to_numpy(dtype=int)
                     else:
                         labels_array = val_labels.astype(int, copy=False)
-                    metrics = candidate.evaluate(val_data, labels_array)
-                    score = float(metrics.get(metric, metrics["f1"]))
+                    changepoint_metrics = {
+                        "changepoint_precision",
+                        "changepoint_recall",
+                        "changepoint_f1",
+                    }
+                    if metric in changepoint_metrics:
+                        metrics = candidate.evaluate_changepoints(
+                            val_data, labels_array
+                        )
+                        fallback_metric = "changepoint_f1"
+                    else:
+                        metrics = candidate.evaluate(val_data, labels_array)
+                        fallback_metric = "f1"
+                    score = float(metrics.get(metric, metrics[fallback_metric]))
 
                     logger.debug(
                         f"PELT trial [{eval_count}/{total_evals}] "
@@ -215,21 +240,38 @@ class PELTModel(BaseAnomalyModel):
                         mlflow.log_metric(
                             f"hyperopt/val_{metric}", score, step=eval_count
                         )
-                        mlflow.log_metric(
-                            "hyperopt/val_f1",
-                            float(metrics.get("f1", score)),
-                            step=eval_count,
-                        )
-                        mlflow.log_metric(
-                            "hyperopt/val_precision",
-                            float(metrics.get("precision", 0.0)),
-                            step=eval_count,
-                        )
-                        mlflow.log_metric(
-                            "hyperopt/val_recall",
-                            float(metrics.get("recall", 0.0)),
-                            step=eval_count,
-                        )
+                        if metric in changepoint_metrics:
+                            mlflow.log_metric(
+                                "hyperopt/val_changepoint_precision",
+                                float(metrics.get("changepoint_precision", 0.0)),
+                                step=eval_count,
+                            )
+                            mlflow.log_metric(
+                                "hyperopt/val_changepoint_recall",
+                                float(metrics.get("changepoint_recall", 0.0)),
+                                step=eval_count,
+                            )
+                            mlflow.log_metric(
+                                "hyperopt/val_changepoint_f1",
+                                float(metrics.get("changepoint_f1", score)),
+                                step=eval_count,
+                            )
+                        else:
+                            mlflow.log_metric(
+                                "hyperopt/val_f1",
+                                float(metrics.get("f1", score)),
+                                step=eval_count,
+                            )
+                            mlflow.log_metric(
+                                "hyperopt/val_precision",
+                                float(metrics.get("precision", 0.0)),
+                                step=eval_count,
+                            )
+                            mlflow.log_metric(
+                                "hyperopt/val_recall",
+                                float(metrics.get("recall", 0.0)),
+                                step=eval_count,
+                            )
 
                     if score > best_score:
                         best_score = score

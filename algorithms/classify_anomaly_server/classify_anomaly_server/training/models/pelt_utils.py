@@ -55,3 +55,30 @@ def event_window_scores(
         scores[start : end + 1] = np.maximum(scores[start : end + 1], score)
 
     return scores
+
+
+def project_changepoints_to_point_scores(
+    length: int,
+    changepoints: Iterable[int],
+    event_window: int,
+) -> NDArray[np.float64]:
+    """将 changepoint 映射为点级二值窗口分数。"""
+    return event_window_scores(
+        length=length,
+        changepoints=changepoints,
+        event_window=event_window,
+    )
+
+
+def project_changepoints_to_point_labels(
+    length: int,
+    changepoints: Iterable[int],
+    event_window: int,
+) -> NDArray[np.int_]:
+    """将 changepoint 映射为点级二值标签。"""
+    scores = project_changepoints_to_point_scores(
+        length=length,
+        changepoints=changepoints,
+        event_window=event_window,
+    )
+    return (scores > 0).astype(int)

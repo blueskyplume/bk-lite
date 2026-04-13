@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from importlib import import_module
 from typing import Any, Optional
 
@@ -12,7 +13,11 @@ from numpy.typing import NDArray
 from loguru import logger
 
 from .base import BaseAnomalyModel, ModelRegistry
-from .pelt_utils import detect_changepoints, event_window_scores
+from .pelt_utils import (
+    detect_changepoints,
+    project_changepoints_to_point_labels,
+    project_changepoints_to_point_scores,
+)
 
 
 @ModelRegistry.register("PELT")
@@ -26,7 +31,6 @@ class PELTModel(BaseAnomalyModel):
         min_size: int = 3,
         jump: int = 1,
         event_window: int = 1,
-        threshold: float = 0.5,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -35,7 +39,6 @@ class PELTModel(BaseAnomalyModel):
             min_size=min_size,
             jump=jump,
             event_window=event_window,
-            threshold=threshold,
             **kwargs,
         )
         self.cost_model = str(cost_model)
@@ -43,10 +46,11 @@ class PELTModel(BaseAnomalyModel):
         self.min_size = int(min_size)
         self.jump = int(jump)
         self.event_window = int(event_window)
-        self.threshold = float(threshold)
         self.feature_names_: list[str] | None = None
         self.n_samples_train_: int | None = None
         self.hyperopt_history_: list[dict[str, float | int | str]] = []
+        self._changepoint_cache_key: str | None = None
+        self._changepoint_cache: list[int] | None = None
 
     def fit(
         self,
@@ -61,24 +65,37 @@ class PELTModel(BaseAnomalyModel):
 
         self.feature_names_ = train_data.columns.tolist()
         self.n_samples_train_ = len(train_data)
-        self.threshold_ = self.threshold
+        self.threshold_ = None
+        self._changepoint_cache_key = None
+        self._changepoint_cache = None
         self.is_fitted = True
 
         logger.info(
-            f"PELT 模型训练完成: samples={self.n_samples_train_}, threshold={self.threshold_}"
+            f"PELT 模型训练完成: samples={self.n_samples_train_}"
         )
         return self
 
     def predict(self, X: pd.DataFrame) -> NDArray[np.int_]:
-        scores = self.predict_proba(X)
-        return (scores > self.threshold_).astype(int)
+        self._check_fitted()
+        self._validate_features(X)
+
+        changepoints = self.get_changepoints(X)
+        return project_changepoints_to_point_labels(
+            length=len(X),
+            changepoints=changepoints,
+            event_window=self.event_window,
+        )
 
     def predict_proba(self, X: pd.DataFrame) -> NDArray[np.float64]:
         self._check_fitted()
         self._validate_features(X)
 
         changepoints = self.get_changepoints(X)
-        return event_window_scores(len(X), changepoints, self.event_window)
+        return project_changepoints_to_point_scores(
+            length=len(X),
+            changepoints=changepoints,
+            event_window=self.event_window,
+        )
 
     def get_changepoints(self, X: pd.DataFrame) -> list[int]:
         """返回输入序列对应的 changepoint 索引。"""
@@ -86,13 +103,20 @@ class PELTModel(BaseAnomalyModel):
         self._validate_features(X)
 
         signal = X["value"].to_numpy(dtype=float)
-        return detect_changepoints(
+        cache_key = self._build_changepoint_cache_key(signal)
+        if self._changepoint_cache_key == cache_key and self._changepoint_cache is not None:
+            return list(self._changepoint_cache)
+
+        changepoints = detect_changepoints(
             signal,
             cost_model=self.cost_model,
             min_size=self.min_size,
             jump=self.jump,
             pen=self.pen,
         )
+        self._changepoint_cache_key = cache_key
+        self._changepoint_cache = list(changepoints)
+        return list(changepoints)
 
     def evaluate_changepoints(
         self,
@@ -223,7 +247,6 @@ class PELTModel(BaseAnomalyModel):
                         jump=jump,
                         cost_model=resolved_cost_model,
                         event_window=resolved_event_window,
-                        threshold=self.threshold,
                     )
                     candidate.fit(train_data)
                     if metric in changepoint_metrics:
@@ -381,7 +404,9 @@ class PELTModel(BaseAnomalyModel):
                     "min_size": self.min_size,
                     "jump": self.jump,
                     "event_window": self.event_window,
-                    "threshold": float(self.threshold_),
+                    "score_semantics": "binary_window",
+                    "supports_runtime_threshold": False,
+                    "threshold_semantics": "legacy_compatibility_only",
                     "feature_names": self.feature_names_,
                     "n_samples_train": self.n_samples_train_,
                 },
@@ -399,7 +424,6 @@ class PELTModel(BaseAnomalyModel):
             min_size=self.min_size,
             jump=self.jump,
             event_window=self.event_window,
-            threshold=float(self.threshold_),
         )
 
         import cloudpickle
@@ -409,6 +433,16 @@ class PELTModel(BaseAnomalyModel):
             artifact_path=artifact_path,
             python_model=wrapped_model,
         )
+
+    def _build_changepoint_cache_key(self, signal: NDArray[np.float64]) -> str:
+        hasher = hashlib.blake2b(digest_size=16)
+        hasher.update(signal.tobytes())
+        hasher.update(str(self.cost_model).encode())
+        hasher.update(str(self.pen).encode())
+        hasher.update(str(self.min_size).encode())
+        hasher.update(str(self.jump).encode())
+        hasher.update(str(self.event_window).encode())
+        return hasher.hexdigest()
 
     def _validate_features(self, X: pd.DataFrame) -> None:
         if not isinstance(X, pd.DataFrame):

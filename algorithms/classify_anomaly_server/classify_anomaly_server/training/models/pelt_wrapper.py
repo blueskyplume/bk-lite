@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import mlflow
-import numpy as np
 import pandas as pd
+from loguru import logger
 from mlflow.pyfunc.model import PythonModel
-from .pelt_utils import detect_changepoints, event_window_scores
+
+from .pelt_utils import (
+    detect_changepoints,
+    project_changepoints_to_point_labels,
+    project_changepoints_to_point_scores,
+)
 
 
 class PELTWrapper(PythonModel):
-    """将 PELT changepoint 结果映射为点级输出。"""
+    """将 PELT changepoint 结果映射为统一 serving 输出。"""
 
     def __init__(
         self,
@@ -21,19 +25,22 @@ class PELTWrapper(PythonModel):
         min_size: int,
         jump: int,
         event_window: int,
-        threshold: float,
     ) -> None:
         self.cost_model = cost_model
         self.pen = pen
         self.min_size = min_size
         self.jump = jump
         self.event_window = event_window
-        self.threshold = threshold
 
     def predict(self, context, model_input, params=None):
         data, threshold = self._parse_input(model_input)
         series = self._to_series(data)
         signal = series.to_numpy(dtype=float)
+
+        if threshold is not None:
+            logger.debug(
+                "PELTWrapper 忽略 runtime threshold，固定使用 changepoint 窗口投影输出"
+            )
 
         changepoints = detect_changepoints(
             signal,
@@ -42,14 +49,17 @@ class PELTWrapper(PythonModel):
             jump=self.jump,
             pen=self.pen,
         )
-        scores = event_window_scores(
+        scores = project_changepoints_to_point_scores(
             length=len(signal),
             changepoints=changepoints,
             event_window=self.event_window,
         )
-
-        anomaly_severity = np.minimum(scores / (threshold * 2), 1.0)
-        labels = (scores > threshold).astype(int)
+        labels = project_changepoints_to_point_labels(
+            length=len(signal),
+            changepoints=changepoints,
+            event_window=self.event_window,
+        )
+        anomaly_severity = scores.copy()
 
         result: Any = {
             "labels": labels.tolist(),
@@ -57,12 +67,16 @@ class PELTWrapper(PythonModel):
             "anomaly_severity": anomaly_severity.tolist(),
             "_changepoints": changepoints,
             "_event_window": self.event_window,
+            "_score_semantics": "binary_window",
+            "_severity_semantics": "display_only_binary",
+            "_supports_runtime_threshold": False,
+            "_threshold_semantics": "legacy_compatibility_only",
         }
         return result
 
     def _parse_input(
         self, model_input: dict[str, Any]
-    ) -> tuple[pd.Series | pd.DataFrame, float]:
+    ) -> tuple[pd.Series | pd.DataFrame, float | None]:
         if not isinstance(model_input, dict):
             raise ValueError("输入格式错误，需要 dict 类型")
 
@@ -70,9 +84,11 @@ class PELTWrapper(PythonModel):
         if data is None:
             raise ValueError("输入必须包含 'data' 字段")
 
-        threshold = float(model_input.get("threshold", self.threshold))
-        if threshold <= 0:
-            raise ValueError("threshold 必须 > 0")
+        threshold = model_input.get("threshold")
+        if threshold is not None:
+            threshold = float(threshold)
+            if threshold <= 0:
+                raise ValueError("threshold 必须 > 0")
 
         return data, threshold
 

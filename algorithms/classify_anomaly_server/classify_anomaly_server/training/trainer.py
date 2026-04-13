@@ -656,9 +656,24 @@ class UniversalTrainer:
 
         # 绘制可视化图表
         if mlflow.active_run():
-            y_pred = model.predict(X_test)
-            y_scores = model.predict_proba(X_test)
-            y_true: NDArray[np.int_] = y_test.to_numpy(dtype=int)
+            raw_predictions = metrics.get("_predictions")
+            raw_scores = metrics.get("_scores")
+            raw_true_labels = metrics.get("_true_labels")
+
+            if raw_predictions is not None:
+                y_pred = np.asarray(raw_predictions, dtype=int)
+            else:
+                y_pred = np.asarray(model.predict(X_test), dtype=int)
+
+            if raw_scores is not None:
+                y_scores = np.asarray(raw_scores, dtype=float)
+            else:
+                y_scores = np.asarray(model.predict_proba(X_test), dtype=float)
+
+            if raw_true_labels is not None:
+                y_true = np.asarray(raw_true_labels, dtype=int)
+            else:
+                y_true = y_test.to_numpy(dtype=int)
             timestamps = self._normalize_timestamps(X_test.index)
 
             # 1. 异常检测结果图（时序可视化）
@@ -726,7 +741,7 @@ class UniversalTrainer:
                 )
 
             # 3. 异常分数分布（分离正常和异常样本）
-            # PELT 的 predict_proba 返回窗口化 0/1 分数，分布图信息量低，跳过
+            # PELT 的 predict_proba 返回 binary window projection 分数，分布图信息量低，跳过
             normal_mask = y_true == 0
             anomaly_mask = y_true == 1
             if (
@@ -743,7 +758,7 @@ class UniversalTrainer:
                     artifact_name=f"{self.config.model_type}_score_distribution",
                 )
 
-            # 4. ROC / PR 曲线（PELT 的窗口化 0/1 分数不适合默认绘制）
+            # 4. ROC / PR 曲线（PELT 的 binary window projection 分数不适合默认绘制）
             if self.config.model_type.upper() != "PELT":
                 try:
                     _ = MLFlowUtils.plot_roc_curve(

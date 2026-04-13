@@ -17,7 +17,7 @@ class DetectionConfig(BaseModel):
 
     threshold: Optional[float] = Field(
         None,
-        description="异常阈值（原始异常分数阈值，可选，不提供则使用模型默认阈值）",
+        description="模型相关阈值（可选，不提供则使用模型默认行为）",
         gt=0.0,
     )
 

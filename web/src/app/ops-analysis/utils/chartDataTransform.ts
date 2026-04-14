@@ -23,6 +23,24 @@ export type PieChartData = ChartDataItem[];
  * 支持多种数据格式转换为图表数据
  */
 export class ChartDataTransformer {
+  /**
+   * 将归一化后的 nsData 数组转换为 { [category]: value } 映射
+   * 支持 [{name, value}] 和 [[key, value]] 两种格式
+   */
+  private static nsDataToMap(nsData: any[]): { [key: string]: number } {
+    const map: { [key: string]: number } = {};
+    if (nsData.length === 0) return map;
+    if (typeof nsData[0] === 'object' && !Array.isArray(nsData[0]) && 'name' in nsData[0] && 'value' in nsData[0]) {
+      nsData.forEach((item: any) => {
+        map[this.formatTimeValue(item.name)] = parseFloat(item.value) || 0;
+      });
+    } else {
+      nsData.forEach((item: any[]) => {
+        map[item[0]] = item[1];
+      });
+    }
+    return map;
+  }
 
   /**
    * 格式化时间显示
@@ -76,47 +94,18 @@ export class ChartDataTransformer {
       ) {
         const allCategoriesSet = new Set<string>();
         rawData.forEach((namespace: any) => {
-          if (namespace.data && Array.isArray(namespace.data)) {
-            // 支持新的数据格式 [{name: number, value: string}, ...]
-            if (namespace.data.length > 0 && typeof namespace.data[0] === 'object' && 'name' in namespace.data[0] && 'value' in namespace.data[0]) {
-              namespace.data.forEach((item: any) => {
-                // 格式化时间显示
-                const category = this.formatTimeValue(item.name);
-                allCategoriesSet.add(category);
-              });
-            } else {
-              // 原有格式 [[key, value], ...]
-              namespace.data.forEach((item: any[]) => {
-                allCategoriesSet.add(item[0]);
-              });
-            }
-          }
+          const nsData = Array.isArray(namespace.data) ? namespace.data : [];
+          Object.keys(this.nsDataToMap(nsData)).forEach((k) => allCategoriesSet.add(k));
         });
         const categories = Array.from(allCategoriesSet).sort();
 
         const series = rawData.map((namespace: any) => {
-          const dataMap: { [key: string]: number } = {};
-          if (namespace.data && Array.isArray(namespace.data)) {
-            // 支持新的数据格式 [{name: number, value: string}, ...]
-            if (namespace.data.length > 0 && typeof namespace.data[0] === 'object' && 'name' in namespace.data[0] && 'value' in namespace.data[0]) {
-              namespace.data.forEach((item: any) => {
-                // 格式化时间显示
-                const category = this.formatTimeValue(item.name);
-                dataMap[category] = parseFloat(item.value) || 0;
-              });
-            } else {
-              // 原有格式 [[key, value], ...]
-              namespace.data.forEach((item: any[]) => {
-                dataMap[item[0]] = item[1];
-              });
-            }
-          }
-
-          const values = categories.map((category) => dataMap[category] || 0);
-
+          const dataMap = this.nsDataToMap(
+            Array.isArray(namespace.data) ? namespace.data : [],
+          );
           return {
             name: namespace.namespace_id,
-            data: values,
+            data: categories.map((category) => dataMap[category] || 0),
           };
         });
 
@@ -130,27 +119,12 @@ export class ChartDataTransformer {
     }
 
     // 处理单个namespace的情况
-    if (rawData && rawData.namespace_id && rawData.data && Array.isArray(rawData.data)) {
-      const categories: string[] = [];
-      const values: number[] = [];
-
-      // 支持新的数据格式 [{name: number, value: string}, ...]
-      if (rawData.data.length > 0 && typeof rawData.data[0] === 'object' && 'name' in rawData.data[0] && 'value' in rawData.data[0]) {
-        rawData.data.forEach((item: any) => {
-          // 格式化时间显示
-          const category = this.formatTimeValue(item.name);
-          categories.push(category);
-          values.push(parseFloat(item.value) || 0);
-        });
-      } else {
-        // 原有格式 [[key, value], ...]
-        rawData.data.forEach((item: any[]) => {
-          categories.push(item[0]);
-          values.push(item[1]);
-        });
-      }
-
-      return { categories, values };
+    if (rawData && rawData.namespace_id && rawData.data) {
+      const dataMap = this.nsDataToMap(
+        Array.isArray(rawData.data) ? rawData.data : [],
+      );
+      const categories = Object.keys(dataMap).sort();
+      return { categories, values: categories.map((k) => dataMap[k]) };
     }
 
     return { categories: [], values: [] };
@@ -164,44 +138,36 @@ export class ChartDataTransformer {
       return [];
     }
 
-    // 如果是数组且第一个元素有namespace_id，取第一个namespace的数据
-    if (Array.isArray(rawData) && rawData.length > 0 && rawData[0] && rawData[0].namespace_id && rawData[0].data) {
-      return this.transformToPieData(rawData[0].data);
+    // namespace 数组格式：取第一个 namespace 的数据
+    if (Array.isArray(rawData) && rawData.length > 0 && rawData[0]?.namespace_id) {
+      const namespaceData = Array.isArray(rawData[0].data) ? rawData[0].data : [];
+      return this.transformToPieData(namespaceData.slice(0, 10));
     }
 
-    // 如果数据有data属性且是数组
-    if (rawData && rawData.data && Array.isArray(rawData.data)) {
-      return this.transformToPieData(rawData.data);
+    // 单 namespace 对象格式
+    if (!Array.isArray(rawData) && rawData.namespace_id) {
+      const namespaceData = Array.isArray(rawData.data) ? rawData.data : [];
+      return this.transformToPieData(namespaceData.slice(0, 10));
     }
 
-    // 如果直接是数组
+    // 直接是数组
     if (Array.isArray(rawData)) {
-      // 检查是否是对象数组格式 [{name: 'xxx', value: 'xxx'}]
-      if (rawData.length > 0 && typeof rawData[0] === 'object' && 'name' in rawData[0] && 'value' in rawData[0]) {
+      if (rawData.length === 0) return [];
+
+      // 对象格式 [{name, value}]
+      if (typeof rawData[0] === 'object' && !Array.isArray(rawData[0]) && 'name' in rawData[0] && 'value' in rawData[0]) {
         return rawData.map((item: any) => ({
           name: this.formatTimeValue(item.name),
           value: parseFloat(item.value) || 0,
         }));
       }
-      // 检查是否是二维数组格式 [[timestamp, value], ...]
-      else if (rawData.length > 0 && Array.isArray(rawData[0]) && rawData[0].length >= 2) {
-        return rawData.map((item: any[]) => {
-          const name = this.formatTimeValue(item[0]);
-          return {
-            name: name,
-            value: parseFloat(item[1]) || 0,
-          };
-        });
+      // 二维数组格式 [[timestamp, value], ...]
+      if (Array.isArray(rawData[0]) && rawData[0].length >= 2) {
+        return rawData.map((item: any[]) => ({
+          name: this.formatTimeValue(item[0]),
+          value: parseFloat(item[1]) || 0,
+        }));
       }
-      // 如果已经是正确的格式
-      else if (rawData.length > 0 && typeof rawData[0] === 'object' && 'name' in rawData[0] && 'value' in rawData[0]) {
-        return rawData;
-      }
-    }
-
-    // 处理单个namespace的情况，取前几个数据作为饼图
-    if (rawData && rawData.namespace_id && rawData.data && Array.isArray(rawData.data)) {
-      return this.transformToPieData(rawData.data.slice(0, 10)); // 饼图只取前10个数据
     }
 
     return [];
@@ -269,7 +235,7 @@ export class ChartDataTransformer {
    */
   static validatePieData(rawData: any, errorMessage?: string): { isValid: boolean; message?: string } {
     // 数据为空时图表组件会显示 Empty 状态，不需要校验
-    if (!rawData) {
+    if (!rawData || (Array.isArray(rawData) && rawData.length === 0)) {
       return { isValid: true };
     }
 
@@ -277,7 +243,7 @@ export class ChartDataTransformer {
       const transformedData = this.transformToPieData(rawData);
 
       if (!transformedData || transformedData.length === 0) {
-        return { isValid: true }; // 空数据让图表组件自行处理
+        return { isValid: false, message: errorMessage || '数据格式不匹配' };
       }
 
       const hasValidValues = transformedData.some(item =>

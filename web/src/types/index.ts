@@ -53,6 +53,7 @@ export interface UserInfoContextType {
   isSuperUser: boolean;
   isFirstLogin: boolean;
   userId: string;
+  username: string;
   displayName: string;
   setSelectedGroup: (group: Group) => void;
   refreshUserInfo: () => Promise<void>;
@@ -114,6 +115,7 @@ export interface EntityListProps<T> {
   operateSection?: React.ReactNode;
   infoText?: string;
   nameField?: string;
+  iconRender?: (icon: string) => React.ReactNode;
   descSlot?: (item: T) => React.ReactNode;
   menuActions?: (item: T) => React.ReactNode;
   singleAction?: (item: T) => { text: string; onClick: (item: T) => void };
@@ -124,7 +126,7 @@ export interface EntityListProps<T> {
 }
 
 export interface TimeSelectorRef {
-  getValue: () => void;
+  getValue: () => number[] | null;
 }
 
 export interface HeatMapDataItem {

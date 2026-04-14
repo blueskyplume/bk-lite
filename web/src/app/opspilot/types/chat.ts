@@ -8,7 +8,15 @@ export type BrowserStepProgressValue = BrowserStepProgressData;
 export type BrowserTaskReceivedValue = BrowserTaskReceivedData;
 
 export interface CustomChatSSEProps {
-  handleSendMessage?: (message: string, currentMessages?: any[]) => Promise<{ url: string; payload: any } | null>;
+  handleSendMessage?: (message: string, currentMessages?: any[]) => Promise<{
+    url: string;
+    payload: any;
+    interruptRequest?: {
+      enabled: boolean;
+      url: string;
+      reason?: string;
+    };
+  } | null>;
   showMarkOnly?: boolean;
   initialMessages?: CustomChatMessage[];
   mode?: 'chat' | 'display';
@@ -16,6 +24,7 @@ export interface CustomChatSSEProps {
   useAGUIProtocol?: boolean;
   showHeader?: boolean;
   requirePermission?: boolean;
+  removePendingBotMessageOnCancel?: boolean;
 }
 
 export type ActionRender = (
@@ -42,7 +51,7 @@ export interface SSEChunk {
 }
 
 export interface AGUIMessage {
-  type: 'RUN_STARTED' | 'TEXT_MESSAGE_START' | 'TEXT_MESSAGE_CONTENT' | 'TEXT_MESSAGE_END' | 'RUN_FINISHED' | 'TOOL_CALL_START' | 'TOOL_CALL_ARGS' | 'TOOL_CALL_END' | 'TOOL_CALL_RESULT' | 'ERROR' | 'RUN_ERROR' | 'CUSTOM';
+  type: 'RUN_STARTED' | 'THINKING' | 'TEXT_MESSAGE_START' | 'TEXT_MESSAGE_CONTENT' | 'TEXT_MESSAGE_END' | 'RUN_FINISHED' | 'TOOL_CALL_START' | 'TOOL_CALL_ARGS' | 'TOOL_CALL_END' | 'TOOL_CALL_RESULT' | 'ERROR' | 'RUN_ERROR' | 'CUSTOM';
   timestamp: number;
   threadId?: string;
   runId?: string;

@@ -10,22 +10,54 @@ import {
   Button,
   Divider,
   message,
-  Alert,
+  Tooltip,
   Modal,
 } from 'antd';
-import { PlusOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { ExclamationCircleOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTranslation } from '@/utils/i18n';
 import useApiClient from '@/utils/request';
 import useJobApi from '@/app/job/api';
 import { Script, Playbook, ScriptParam } from '@/app/job/types';
 import HostSelectionModal, { HostItem, TargetSourceType } from '@/app/job/components/host-selection-modal';
+import { AddTargetHostButton, TargetSourceSelector } from '@/app/job/components/target-selection-controls';
 import ScriptEditor from '@/app/job/components/script-editor';
 import Password from '@/components/password';
 
 type ContentSource = 'template' | 'manual';
 type TemplateType = 'scriptLibrary' | 'playbook';
 type ScriptLang = 'shell' | 'bat' | 'python' | 'powershell';
+const QUICK_EXEC_REPLAY_STORAGE_KEY = 'job.quick-exec.replay';
+
+const extractExecutionId = (response: any): number | undefined => {
+  const candidates = [
+    response?.id,
+    response?.execution_id,
+    response?.job_id,
+    response?.data?.id,
+    response?.data?.execution_id,
+    response?.data?.job_id,
+  ];
+
+  const matched = candidates.find((value) => typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''));
+  if (matched === undefined) return undefined;
+
+  const numericId = Number(matched);
+  return Number.isFinite(numericId) ? numericId : undefined;
+};
+
+interface QuickExecReplayDraft {
+  jobName?: string;
+  timeout?: string;
+  targetSource?: TargetSourceType;
+  selectedHosts?: HostItem[];
+  templateType?: TemplateType;
+  scriptId?: number;
+  playbookId?: number;
+  params?: Record<string, unknown> | Array<{ name?: string; value?: unknown }>;
+  scriptType?: ScriptLang;
+  scriptContent?: string;
+}
 
 const DEFAULT_SCRIPT_CONTENT: Record<ScriptLang, string> = {
   shell: `#!/bin/bash
@@ -120,6 +152,73 @@ const QuickExecPage = () => {
     }
   }, [templateType]);
 
+  const applyReplayDraft = useCallback(async (draft: QuickExecReplayDraft, scripts: Script[], playbooks: Playbook[]) => {
+    const hosts = draft.selectedHosts || [];
+    setTargetSource(draft.targetSource || 'target_manager');
+    setSelectedHostKeys(hosts.map((host) => host.key));
+    setSelectedHosts(hosts);
+
+    if (draft.scriptContent) {
+      const draftScriptType = draft.scriptType || 'shell';
+      setContentSource('manual');
+      setScriptLang(draftScriptType);
+      form.setFieldsValue({
+        jobName: draft.jobName,
+        timeout: draft.timeout || '600',
+        execParams: Array.isArray(draft.params) ? String(draft.params[0]?.value || '') : '',
+        scriptContent: {
+          ...DEFAULT_SCRIPT_CONTENT,
+          [draftScriptType]: draft.scriptContent,
+        },
+      });
+      return;
+    }
+
+    const resolvedTemplateType = draft.templateType || (draft.playbookId ? 'playbook' : 'scriptLibrary');
+    setContentSource('template');
+    setTemplateType(resolvedTemplateType);
+
+    if (resolvedTemplateType === 'playbook' && draft.playbookId) {
+      const playbookId = draft.playbookId;
+      const playbook = playbooks.find((item) => item.id === playbookId) || (await getPlaybookDetail(playbookId).catch(() => null));
+      if (playbook) {
+        setSelectedTemplate(playbookId);
+        setTemplateParams(playbook.params || []);
+        form.setFieldsValue({
+          jobName: draft.jobName || playbook.name,
+          timeout: draft.timeout || '600',
+        });
+      }
+    } else if (draft.scriptId) {
+      const scriptId = draft.scriptId;
+      const script = scripts.find((item) => item.id === scriptId) || (await getScriptDetail(scriptId).catch(() => null));
+      if (script) {
+        setSelectedTemplate(scriptId);
+        setTemplateParams(script.params || []);
+        form.setFieldsValue({
+          jobName: draft.jobName || script.name,
+          timeout: draft.timeout || '600',
+        });
+      }
+    }
+
+    if (draft.params) {
+      const paramValues = Array.isArray(draft.params)
+        ? draft.params.reduce<Record<string, unknown>>((acc, item) => {
+          if (item.name) {
+            acc[`param_${item.name}`] = item.value;
+          }
+          return acc;
+        }, {})
+        : Object.entries(draft.params).reduce<Record<string, unknown>>((acc, [key, value]) => {
+          acc[`param_${key}`] = value;
+          return acc;
+        }, {});
+
+      form.setFieldsValue(paramValues);
+    }
+  }, [form, getPlaybookDetail, getScriptDetail]);
+
   // Initialize: fetch lists and handle script_id from URL
   useEffect(() => {
     if (isApiReady || initialized) return;
@@ -127,6 +226,18 @@ const QuickExecPage = () => {
 
     const init = async () => {
       const [scripts, playbooks] = await Promise.all([fetchScriptList(), fetchPlaybookList()]);
+      const replayDraftRaw = typeof window !== 'undefined' ? window.sessionStorage.getItem(QUICK_EXEC_REPLAY_STORAGE_KEY) : null;
+      if (replayDraftRaw) {
+        window.sessionStorage.removeItem(QUICK_EXEC_REPLAY_STORAGE_KEY);
+        try {
+          const replayDraft = JSON.parse(replayDraftRaw) as QuickExecReplayDraft;
+          await applyReplayDraft(replayDraft, scripts, playbooks);
+          return;
+        } catch {
+          // ignore broken draft payload
+        }
+      }
+
       const scriptIdParam = searchParams.get('script_id');
       const playbookIdParam = searchParams.get('playbook_id');
       if (scriptIdParam) {
@@ -157,7 +268,7 @@ const QuickExecPage = () => {
       }
     };
     init();
-  }, [isApiReady]);
+  }, [applyReplayDraft, isApiReady]);
 
   const currentTemplateOptions =
     templateType === 'scriptLibrary'
@@ -264,6 +375,7 @@ const QuickExecPage = () => {
         is_modified: currentValue !== defaultValue || !!editedTemplateParams[param.name],
       };
     });
+    let executionResult: any;
 
     const timeout = values.timeout ? Number(values.timeout) : 600;
 
@@ -280,7 +392,7 @@ const QuickExecPage = () => {
 
     if (contentSource === 'template') {
       if (templateType === 'scriptLibrary') {
-        await quickExecute({
+        executionResult = await quickExecute({
           name: values.jobName,
           script_id: selectedTemplate,
           target_source,
@@ -289,7 +401,7 @@ const QuickExecPage = () => {
           timeout,
         });
       } else {
-        await playbookExecute({
+        executionResult = await playbookExecute({
           name: values.jobName,
           playbook_id: selectedTemplate!,
           target_source,
@@ -300,7 +412,7 @@ const QuickExecPage = () => {
       }
     } else {
       const execParamsText = String(values.execParams || '').trim();
-      await quickExecute({
+      executionResult = await quickExecute({
         name: values.jobName,
         script_type: scriptLang,
         script_content: scriptContent!,
@@ -312,7 +424,8 @@ const QuickExecPage = () => {
     }
 
     message.success(t('job.executeSuccess'));
-    router.push('/job/execution/job-record');
+    const executionId = extractExecutionId(executionResult);
+    router.replace(executionId ? `/job/execution/job-record?id=${executionId}` : '/job/execution/job-record');
   };
 
   const handleExecute = async () => {
@@ -452,7 +565,7 @@ const QuickExecPage = () => {
         <Form
           form={form}
           layout="vertical"
-          className="max-w-180"
+          className="w-full"
           initialValues={{ timeout: '600', scriptContent: DEFAULT_SCRIPT_CONTENT }}
         >
 
@@ -466,13 +579,10 @@ const QuickExecPage = () => {
 
 
           <Form.Item label={t('job.targetSource')} required>
-            <Radio.Group
+            <TargetSourceSelector
               value={targetSource}
-              onChange={(e) => handleTargetSourceChange(e.target.value)}
-            >
-              <Radio value="node_manager">{t('job.nodeManager')}</Radio>
-              <Radio value="target_manager">{t('job.targetManager')}</Radio>
-            </Radio.Group>
+              onChange={handleTargetSourceChange}
+            />
           </Form.Item>
 
 
@@ -480,18 +590,10 @@ const QuickExecPage = () => {
             label={t('job.targetHost')}
             required
           >
-            <div className="flex items-center gap-3">
-              <Button
-                type="dashed"
-                icon={<PlusOutlined />}
-                onClick={() => setHostModalOpen(true)}
-              >
-                {t('job.addTargetHost')}
-              </Button>
-              <span className="text-sm" style={{ color: 'var(--color-text-3)' }}>
-                {t('job.selectedHosts').replace('{count}', String(selectedHosts.length))}
-              </span>
-            </div>
+            <AddTargetHostButton
+              count={selectedHosts.length}
+              onClick={() => setHostModalOpen(true)}
+            />
           </Form.Item>
 
 
@@ -508,14 +610,6 @@ const QuickExecPage = () => {
 
           {contentSource === 'template' && (
             <>
-              {targetSource === 'node_manager' && (
-                <Alert
-                  className="mb-4"
-                  message={t('job.nodeManagerPlaybookNotSupported')}
-                  type="warning"
-                  showIcon
-                />
-              )}
               <Form.Item label={t('job.selectTemplate')} required>
                 <div className="flex flex-col gap-3">
                   <Segmented
@@ -524,7 +618,29 @@ const QuickExecPage = () => {
                     onChange={handleTemplateTypeChange}
                     options={[
                       { label: t('job.scriptLibrary'), value: 'scriptLibrary' },
-                      { label: 'Playbook', value: 'playbook', disabled: targetSource === 'node_manager' },
+                      {
+                        label: (
+                          <span
+                            className="flex items-center gap-1.5"
+                            style={{
+                              color: targetSource === 'node_manager' ? 'var(--color-text-4)' : undefined,
+                            }}
+                          >
+                            <span>Playbook</span>
+                            {targetSource === 'node_manager' && (
+                              <Tooltip title={t('job.nodeManagerPlaybookNotSupported')}>
+                                <span
+                                  className="inline-flex items-center text-[12px] text-[#faad14]"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <InfoCircleOutlined />
+                                </span>
+                              </Tooltip>
+                            )}
+                          </span>
+                        ),
+                        value: 'playbook',
+                      },
                     ]}
                   />
                   <Select
@@ -609,7 +725,7 @@ const QuickExecPage = () => {
 
 
           <Form.Item label={t('job.timeout')} name="timeout">
-            <Input className="w-50" />
+            <Input className="w-full" />
           </Form.Item>
           <p className="text-xs -mt-4 mb-6" style={{ color: 'var(--color-text-3)' }}>
             {t('job.timeoutHint')}

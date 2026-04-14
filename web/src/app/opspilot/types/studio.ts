@@ -56,6 +56,7 @@ export interface WorkflowTaskResult {
   execute_type: string;
   bot_work_flow: number;
   execution_duration?: number;
+  duration_ms?: number;
   error_log?: string;
   execution_id?: string;
 }
@@ -73,6 +74,26 @@ export interface ExecutionOutputData {
     input_data: unknown;
     output: unknown;
   };
+}
+
+export interface WorkflowExecutionDetailItem {
+  node_id: string;
+  node_name: string;
+  node_type: string;
+  node_index: number | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | string;
+  error_message: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  duration_ms: number | null;
+  input_data?: unknown;
+  output_data?: unknown;
+  output?: unknown;
+  last_output?: unknown;
+  metadata?: Record<string, unknown> | null;
+  error_type?: string | null;
+  request_id?: string | null;
+  error_stack?: string | null;
 }
 
 export interface Channel {
@@ -98,6 +119,7 @@ export interface LogSearchResponse {
 
 export interface WorkflowTaskParams {
   bot_id: string | number;
+  execution_id?: string;
   start_time?: string;
   end_time?: string;
   page?: number;
@@ -114,6 +136,7 @@ export interface BotDetail extends Studio {
   rasa_model?: number;
   skill_ids?: number[];
   llm_skills?: number[];
+  execution_id?: string | null;
   channels?: ChannelProps[];
   replica_count?: number;
   enable_bot_domain?: boolean;
@@ -265,6 +288,7 @@ export interface WorkflowLogDetail {
   output_data: unknown;
   status: string;
   execution_duration?: number;
+  duration_ms?: number;
 }
 
 export interface WorkflowLogDetailResponse {

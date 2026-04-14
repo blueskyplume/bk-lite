@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils.timezone import now
 
-from apps.cmdb.constants.constants import CollectRunStatusType, OPERATOR_COLLECT_TASK
+from apps.cmdb.constants.constants import CollectRunStatusType, OPERATOR_COLLECT_TASK, DataCleanupStrategy
 from apps.cmdb.models import CREATE_INST, UPDATE_INST, DELETE_INST, EXECUTE
 from apps.cmdb.node_configs.config_factory import NodeParamsFactory
 from apps.cmdb.collection.collect_tasks.protocol_collect import ProtocolCollect
@@ -68,7 +68,9 @@ class CollectModelService(object):
             "is_interval": is_interval,
             "cycle_value": data["scan_cycle"]["value"],
             "cycle_value_type": data["scan_cycle"]["value_type"],
-            "team": data["team"]  # 把组织单独抽出来，方便权限控制
+            "team": data["team"],  # 把组织单独抽出来，方便权限控制
+            "expire_days":data.get("expire_days", 0),
+            "data_cleanup_strategy": data.get("data_cleanup_strategy", DataCleanupStrategy.NO_CLEANUP),
         }
 
         for key in not_required:
@@ -154,7 +156,6 @@ class CollectModelService(object):
             str(old_instance.cycle_value or "") != str(new_instance.cycle_value or ""),
             str(old_instance.scan_cycle or "") != str(new_instance.scan_cycle or ""),
         ])
-
 
     @staticmethod
     def push_butch_node_params(instance):
@@ -306,37 +307,6 @@ class CollectModelService(object):
         cls.delete_team(instance_copy.id, instance_copy.team, [], view_self)
 
         return instance_id
-
-    @classmethod
-    def collect_controller(cls, instance, data) -> dict:
-        """
-        任务审批，和数据纳管的逻辑保持一致即可
-        """
-
-        try:
-            result, format_data = ProtocolCollect(instance, data)
-            instance.exec_status = CollectRunStatusType.SUCCESS
-        except Exception as err:
-            import traceback
-            logger.error("==任务审批采集失败== task_id={}, error={}".format(
-                instance.id, traceback.format_exc()))
-            result = {}
-            format_data = {}
-            instance.exec_status = CollectRunStatusType.ERROR
-
-        instance.examine = True
-        instance.collect_data = result
-        instance.format_data = format_data
-
-        instance.collect_digest = {
-            "add": len(format_data.get("add", [])),
-            "update": len(format_data.get("update", [])),
-            "delete": len(format_data.get("delete", [])),
-            "association": len(format_data.get("association", [])),
-        }
-        instance.save()
-
-        return result
 
     @classmethod
     def list_regions(cls, credential, cloud_name):

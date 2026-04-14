@@ -9,12 +9,16 @@ type ExecuteRequest struct {
 	Password       string `json:"password"`    // 密码认证（可选）
 	PrivateKey     string `json:"private_key"` // PEM 格式私钥内容（可选）
 	Passphrase     string `json:"passphrase"`  // 私钥密码短语（可选）
+	ExecutionID    string `json:"execution_id,omitempty"`
+	StreamLogs     bool   `json:"stream_logs,omitempty"`
+	StreamLogTopic string `json:"stream_log_topic,omitempty"`
 }
 
 type ExecuteResponse struct {
 	Output     string `json:"result"`
 	InstanceId string `json:"instance_id"`
 	Success    bool   `json:"success"`
+	Code       string `json:"code,omitempty"`
 	Error      string `json:"error,omitempty"` // 添加错误字段
 }
 

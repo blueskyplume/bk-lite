@@ -1,5 +1,6 @@
 import asyncio
 import re
+import uuid
 from typing import Any, Dict, Tuple
 
 from apps.core.logger import opspilot_logger as logger
@@ -10,6 +11,16 @@ from apps.opspilot.models import LLMModel, SkillTools
 from apps.opspilot.services.history_service import history_service
 from apps.opspilot.services.rag_service import rag_service
 from apps.opspilot.utils.agent_factory import create_agent_instance
+
+
+def _is_eventlet_environment() -> bool:
+    """检测当前进程是否运行在 eventlet monkey patch 环境中。"""
+    try:
+        import eventlet.patcher
+
+        return bool(eventlet.patcher.is_monkey_patched("socket"))
+    except Exception:
+        return False
 
 
 class ChatService:
@@ -68,6 +79,9 @@ class ChatService:
         graph, request = create_agent_instance(skill_type, chat_kwargs)
 
         try:
+            if _is_eventlet_environment():
+                raise RuntimeError("当前 Celery worker 使用 eventlet 池，不支持在任务中执行 asyncio.run(graph.execute(...))，请改用 --pool threads 或 solo")
+
             # 调用 agent 的 execute 方法（非流式同步执行）
             response = asyncio.run(graph.execute(request))
 
@@ -107,9 +121,10 @@ class ChatService:
         Returns:
             chat_kwargs字典、doc_map字典、title_map字典
         """
+        show_think = kwargs.get("show_think", True)
         title_map = doc_map = {}
         naive_rag_request = []
-        extra_config = {}
+        extra_config = {"show_think": show_think}
 
         # 如果启用RAG，搜索文档
         if kwargs["enable_rag"]:
@@ -123,9 +138,9 @@ class ChatService:
 
         # 构建聊天参数
         chat_kwargs = {
-            "openai_api_base": llm_model.decrypted_llm_config["openai_base_url"],
-            "openai_api_key": llm_model.decrypted_llm_config["openai_api_key"],
-            "model": llm_model.decrypted_llm_config["model"],
+            "openai_api_base": llm_model.openai_api_base,
+            "openai_api_key": llm_model.openai_api_key,
+            "model": llm_model.model_name,
             "system_message_prompt": kwargs["skill_prompt"],
             "temperature": kwargs["temperature"],
             "user_message": user_message,
@@ -142,6 +157,12 @@ class ChatService:
 
         if kwargs.get("thread_id"):
             chat_kwargs["thread_id"] = str(kwargs["thread_id"])
+        elif kwargs.get("execution_id"):
+            chat_kwargs["thread_id"] = str(kwargs["execution_id"])
+        else:
+            chat_kwargs["thread_id"] = str(uuid.uuid4())
+
+        chat_kwargs["execution_id"] = kwargs.get("execution_id") or chat_kwargs.get("thread_id")
         if kwargs["enable_rag_knowledge_source"]:
             extra_config.update({"enable_rag_source": True})
         if kwargs.get("enable_rag_strict_mode"):
@@ -179,9 +200,11 @@ class ChatService:
 
             for i in tool_map.values():
                 extra_config.update(i)
+            extra_config.update({"execution_id": chat_kwargs["execution_id"]})
             chat_kwargs.update({"tools_servers": tools})
             chat_kwargs.update({"extra_config": extra_config})
         elif extra_config:
+            extra_config.update({"execution_id": chat_kwargs["execution_id"]})
             chat_kwargs.update({"extra_config": extra_config})
         return chat_kwargs, doc_map, title_map
 

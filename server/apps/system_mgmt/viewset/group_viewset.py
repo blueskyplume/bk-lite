@@ -1,8 +1,9 @@
+from django.core.cache import cache
 from django.http import JsonResponse
 from rest_framework.decorators import action
 
-from apps.core.backends import cache
 from apps.core.decorators.api_permission import HasPermission
+from apps.core.logger import system_mgmt_logger as logger
 from apps.core.utils.permission_cache import clear_users_permission_cache
 from apps.core.utils.viewset_utils import LanguageViewSet
 from apps.rpc.cmdb import CMDB
@@ -33,15 +34,7 @@ class GroupViewSet(LanguageViewSet, ViewSetUtils):
     def get_detail(self, request):
         group = Group.objects.get(id=request.GET["group_id"])
         return JsonResponse(
-            {
-                "result": True,
-                "data": {
-                    "name": group.name,
-                    "id": group.id,
-                    "parent_id": group.parent_id,
-                    "is_virtual": group.is_virtual,
-                },
-            }
+            {"result": True, "data": {"name": group.name, "id": group.id, "parent_id": group.parent_id, "is_virtual": group.is_virtual}}
         )
 
     @action(detail=False, methods=["POST"])
@@ -162,6 +155,10 @@ class GroupViewSet(LanguageViewSet, ViewSetUtils):
         if "is_virtual" in request.data:
             update_fields["is_virtual"] = request.data.get("is_virtual", False)
 
+        # 如果请求中包含 allow_inherit_roles 字段，则更新
+        if "allow_inherit_roles" in request.data:
+            update_fields["allow_inherit_roles"] = request.data.get("allow_inherit_roles", False)
+
         Group.objects.filter(id=request.data.get("group_id")).update(**update_fields)
 
         # 更新组的角色
@@ -179,14 +176,10 @@ class GroupViewSet(LanguageViewSet, ViewSetUtils):
                 cache.delete_many(menu_cache_keys)
 
         # 同步组织数据到CMDB
-        CMDB().sync_display_fields(
-            organizations=[
-                {
-                    "id": request.data.get("group_id"),
-                    "name": request.data.get("group_name"),
-                }
-            ]
-        )
+        try:
+            CMDB().sync_display_fields(organizations=[{"id": request.data.get("group_id"), "name": request.data.get("group_name")}])
+        except Exception as e:
+            logger.exception(e)
 
         # 记录操作日志
         log_operation(request, "update", "group", f"编辑组织: {request.data.get('group_name')}")
@@ -244,10 +237,48 @@ class GroupViewSet(LanguageViewSet, ViewSetUtils):
         Group.objects.filter(id__in=groups_to_delete).delete()
 
         # 记录操作日志
-        log_operation(
-            request,
-            "delete",
-            "group",
-            f"删除组织: {obj.name} (包含{len(groups_to_delete)}个子组)",
-        )
+        log_operation(request, "delete", "group", f"删除组织: {obj.name} (包含{len(groups_to_delete)}个子组)")
         return JsonResponse({"result": True})
+
+    @action(detail=False, methods=["POST"])
+    @HasPermission("user_group-View")
+    def get_group_detail_with_roles(self, request):
+        group_id = request.data.get("group_id")
+        try:
+            group = Group.objects.prefetch_related("roles").get(id=group_id)
+        except Group.DoesNotExist:
+            return JsonResponse({"result": False, "message": "组织不存在"})
+
+        own_role_ids = list(group.roles.values_list("id", flat=True))
+
+        inherited_role_ids = []
+        inherited_role_source_map = {}
+        if group.parent_id:
+            all_groups = {g.id: g for g in Group.objects.prefetch_related("roles").all()}
+            visited = set()
+            current_parent_id = group.parent_id
+            while current_parent_id and current_parent_id not in visited:
+                visited.add(current_parent_id)
+                parent = all_groups.get(current_parent_id)
+                if not parent or not parent.allow_inherit_roles:
+                    break
+                for role in parent.roles.all():
+                    if role.id not in inherited_role_ids:
+                        inherited_role_ids.append(role.id)
+                        inherited_role_source_map[str(role.id)] = parent.name
+                current_parent_id = parent.parent_id or 0
+
+        return JsonResponse(
+            {
+                "result": True,
+                "data": {
+                    "group_id": group.id,
+                    "group_name": group.name,
+                    "allow_inherit_roles": group.allow_inherit_roles,
+                    "own_role_ids": own_role_ids,
+                    "inherited_role_ids": inherited_role_ids,
+                    "inherited_role_source": ", ".join(dict.fromkeys(inherited_role_source_map.values())),
+                    "inherited_role_source_map": inherited_role_source_map,
+                },
+            }
+        )

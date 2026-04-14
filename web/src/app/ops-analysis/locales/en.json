@@ -1,4 +1,8 @@
 {
+  "common": {
+    "total": "Total",
+    "items": "items"
+  },
   "topology": {
     "nodeConfig": {
       "width": "Width",
@@ -200,7 +204,22 @@
     "updateDataSourceSuccess": "Data source updated successfully",
     "required": "Required",
     "singleValue": "Single Value",
-    "operationFailed": "Operation failed"
+    "operationFailed": "Operation failed",
+    "table": "Table",
+    "responseFieldSchemaConfig": "API Field Definition",
+    "schemaOptionalAutoGenTip": "This setting is optional. If not configured, default columns are auto-generated from returned fields on first use.",
+    "addField": "Add Field",
+    "fieldKey": "Field Name",
+    "fieldTitle": "Display Name",
+    "fieldValueType": "Data Type",
+    "fieldDescription": "Description",
+    "duplicateFieldKeys": "Duplicate field names: ",
+    "valueTypes": {
+      "string": "String",
+      "number": "Number",
+      "boolean": "Boolean",
+      "datetime": "Datetime"
+    }
   },
   "dashboard": {
     "endTime": "End Time",
@@ -214,6 +233,7 @@
     "dataFetchFailed": "Data fetch failed",
     "inputName": "Please enter widget name",
     "paramSettings": "Parameter Settings",
+    "noParamSettings": "No configurable parameters",
     "barColor": "Bar Color",
     "selectInstance": "Please select instance",
     "dataFormatMismatch": "Data format mismatch",
@@ -233,7 +253,29 @@
     "title": "Select Component",
     "basicSettings": "Basic Settings",
     "showHeader": "Show Header",
-    "fixed": "Fixed"
+    "fixed": "Fixed",
+    "keyword": "Keyword",
+    "searchPlaceholder": "Enter keyword to search",
+    "namespaceFilter": "Namespace Filter",
+    "allNamespaces": "Select namespace",
+    "columnSettings": "Column Settings",
+    "noPermission": "No Permission",
+    "tableSettings": "Table Settings",
+    "filterFields": "Search Fields",
+    "filterFieldKey": "Field",
+    "filterFieldLabel": "Display Name",
+    "filterInputType": "Input Type",
+    "displayColumns": "Display Columns",
+    "noDisplayColumns": "No display columns configured",
+    "reProbeColumns": "Refresh Default Columns",
+    "reProbeColumnsTip": "Re-detect and restore default columns based on the current data source and parameters, while keeping existing custom columns",
+    "reProbeSuccess": "Default columns refreshed successfully",
+    "reProbeNoFields": "No available fields detected",
+    "atLeastOneVisibleColumn": "Please keep at least one visible column",
+    "invalidConfiguredFieldsTip": "Some configured fields are not in the current available field set and may be unavailable: {{fields}}",
+    "columnVisible": "Visible",
+    "noSchemaFields": "No available fields. Please configure table fields in the data source first",
+    "noFilterFields": "No search fields configured"
   },
   "opsAnalysisSidebar": {
     "addArch": "Add Architecture",
@@ -254,6 +296,59 @@
     "inputPlaceholder": "Please enter name",
     "selectItem": "Please select a dashboard or topology",
     "addDash": "Add Dashboard",
-    "addGroup": "Add Group"
+    "addGroup": "Add Group",
+    "exportYaml": "Export YAML",
+    "importYaml": "Import YAML",
+    "exportSuccess": "Export success",
+    "exportFailed": "Export failed",
+    "exportConfirmMsg": "Are you sure you want to export",
+    "includeDependencies": "Dependencies will be included automatically (such as data sources and namespaces)",
+    "importInvalidFileType": "Please upload a YAML file",
+    "importFileTooLarge": "File size cannot exceed 2MB",
+    "importPrecheckFailed": "Precheck failed, contains formatting errors",
+    "importPrecheckError": "Error parsing file",
+    "importSubmitFailed": "Submit import failed",
+    "importSubmitError": "Error occurred during import",
+    "importUploadText": "Click or drag file to this area",
+    "importUploadHint": "Support for a single or bulk upload. Strictly prohibit from uploading company data or other band files",
+    "objectName": "Object ID",
+    "objectType": "Type",
+    "conflictReason": "Conflict Reason",
+    "objectTypeLabel": {
+      "dashboard": "Dashboard",
+      "topology": "Topology",
+      "architecture": "Architecture",
+      "datasource": "Data Source",
+      "namespace": "Namespace"
+    },
+    "conflictReasonLabel": {
+      "name_conflict": "Name conflict",
+      "no_permission_conflict": "Cross-org conflict"
+    },
+    "conflictAction": "Action",
+    "actionSkip": "Skip",
+    "actionOverwrite": "Overwrite",
+    "actionRename": "Rename",
+    "importWarnings": "Warnings, please modify the YAML and re-upload",
+    "totalObjects": "Total objects: ",
+    "resolveConflicts": "Please resolve the following conflicts:",
+    "precheckPass": "Precheck passed, no conflicts found. Ready to import.",
+    "reupload": "Re-upload",
+    "startImport": "Start Import",
+    "status": "Status",
+    "statusSuccess": "Success",
+    "statusFailed": "Failed",
+    "statusSkipped": "Skipped",
+    "statusOverwritten": "Overwritten",
+    "message": "Message",
+    "importResultSummary": "Import complete",
+    "totalCount": "Total:",
+    "successCount": "Success:",
+    "overwrittenCount": "Overwritten:",
+    "skippedCount": "Skipped:",
+    "failedCount": "Failed:",
+    "stepUpload": "Upload File",
+    "stepPrecheck": "Precheck",
+    "stepResult": "Result"
   }
 }

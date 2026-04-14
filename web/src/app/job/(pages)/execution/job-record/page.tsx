@@ -9,6 +9,7 @@ import {
   message,
   Input,
   Drawer,
+  DatePicker,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -31,7 +32,11 @@ import { ColumnItem } from '@/types';
 import SearchCombination from '@/components/search-combination';
 import { SearchFilters, FieldConfig } from '@/components/search-combination/types';
 import { useRouter, useSearchParams } from 'next/navigation';
-import dayjs from 'dayjs';
+import dayjs, { Dayjs } from 'dayjs';
+
+const { RangePicker } = DatePicker;
+const QUICK_EXEC_REPLAY_STORAGE_KEY = 'job.quick-exec.replay';
+const FILE_DIST_REPLAY_STORAGE_KEY = 'job.file-dist.replay';
 
 const JobRecordPage = () => {
   const { t } = useTranslation();
@@ -39,13 +44,14 @@ const JobRecordPage = () => {
   const searchParams = useSearchParams();
   const recordId = searchParams.get('id');
   const { isLoading: isApiReady } = useApiClient();
-  const { getJobRecordList, getJobRecordDetail, reExecuteJob } = useJobApi();
+  const { getJobRecordList, getJobRecordDetail } = useJobApi();
 
   // List state
   const [data, setData] = useState<JobRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({});
-  const [timeRange, setTimeRange] = useState<'today' | '7days' | '30days'>('today');
+  const [timeRange, setTimeRange] = useState<'today' | '7days' | '30days' | 'custom'>('today');
+  const [customRange, setCustomRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [pagination, setPagination] = useState({
     current: 1,
     total: 0,
@@ -55,35 +61,44 @@ const JobRecordPage = () => {
   // Detail state
   const [detail, setDetail] = useState<JobRecordDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [reExecuteLoading, setReExecuteLoading] = useState(false);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [logSearch, setLogSearch] = useState('');
   const [autoScroll, setAutoScroll] = useState(false);
   const [scriptDrawerOpen, setScriptDrawerOpen] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
+  const formatFilterTime = useCallback((value: Dayjs) => value.format('YYYY-MM-DD HH:mm:ss'), []);
+
   const getTimeFilter = useCallback(() => {
     const now = dayjs();
     switch (timeRange) {
       case 'today':
         return {
-          created_at_after: now.startOf('day').toISOString(),
-          created_at_before: now.endOf('day').toISOString(),
+          created_at_after: formatFilterTime(now.startOf('day')),
+          created_at_before: formatFilterTime(now.endOf('day')),
         };
       case '7days':
         return {
-          created_at_after: now.subtract(7, 'day').startOf('day').toISOString(),
-          created_at_before: now.endOf('day').toISOString(),
+          created_at_after: formatFilterTime(now.subtract(7, 'day')),
+          created_at_before: formatFilterTime(now),
         };
       case '30days':
         return {
-          created_at_after: now.subtract(30, 'day').startOf('day').toISOString(),
-          created_at_before: now.endOf('day').toISOString(),
+          created_at_after: formatFilterTime(now.subtract(30, 'day')),
+          created_at_before: formatFilterTime(now),
+        };
+      case 'custom':
+        if (!customRange) {
+          return {};
+        }
+        return {
+          created_at_after: formatFilterTime(customRange[0].startOf('day')),
+          created_at_before: formatFilterTime(customRange[1].endOf('day')),
         };
       default:
         return {};
     }
-  }, [timeRange]);
+  }, [customRange, formatFilterTime, timeRange]);
 
   const fetchData = useCallback(
     async (params: { filters?: SearchFilters; current?: number; pageSize?: number } = {}) => {
@@ -124,9 +139,9 @@ const JobRecordPage = () => {
     setDetailLoading(true);
     try {
       const res = await getJobRecordDetail(id);
-      
+
       // 兼容 API 返回的 execution_results 字段，映射为 execution_targets
-      if (!res.execution_targets && res.execution_results) {
+      if ((!res.execution_targets || res.execution_targets.length === 0) && res.execution_results?.length) {
         res.execution_targets = res.execution_results.map((result: any, index: number) => ({
           id: index,
           target: index,
@@ -142,7 +157,25 @@ const JobRecordPage = () => {
           error_message: result.error_message || '',
         }));
       }
-      
+
+      // 任务刚创建时可能还没有 execution_results，但 target_list 已经存在
+      if ((!res.execution_targets || res.execution_targets.length === 0) && res.target_list?.length) {
+        res.execution_targets = res.target_list.map((target: any, index: number) => ({
+          id: Number(target.target_id || target.node_id || index),
+          target: Number(target.target_id || target.node_id || index),
+          target_name: target.name || target.ip || `Target ${index + 1}`,
+          target_ip: target.ip || '-',
+          status: res.status,
+          status_display: res.status_display || res.status,
+          stdout: '',
+          stderr: '',
+          exit_code: 0,
+          started_at: res.started_at || null,
+          finished_at: res.finished_at || null,
+          error_message: '',
+        }));
+      }
+
       setDetail(res);
     } finally {
       setDetailLoading(false);
@@ -152,24 +185,68 @@ const JobRecordPage = () => {
   const handleReExecute = useCallback(async () => {
     if (!detail) return;
 
-    // 文件分发类型不支持重新执行
-    if (detail.job_type === 'file') {
-      message.error(t('job.fileDistributionNotSupported'));
+    const isFileDistributionJob =
+      detail.job_type === 'file' ||
+      !!detail.target_path ||
+      !!detail.files?.length;
+
+    const mappedHosts = ((detail.target_list as Array<{ target_id?: number; node_id?: string; name?: string; ip?: string; os?: string }> | undefined) || []).map((target) => ({
+      key: String(target.target_id || target.node_id || ''),
+      hostName: target.name || '',
+      ipAddress: target.ip || '',
+      cloudRegion: '-',
+      osType: target.os || '-',
+      currentDriver: '-',
+    }));
+
+    if (isFileDistributionJob) {
+      const fileReplayPayload = {
+        jobName: detail.name,
+        timeout: String(detail.timeout || 600),
+        targetSource: (detail as any).target_source === 'node_mgmt' ? 'node_manager' : 'target_manager',
+        selectedHosts: mappedHosts,
+        targetPath: detail.target_path || '',
+        overwriteStrategy: (detail as any).overwrite_strategy || 'overwrite',
+        files: detail.files || [],
+      };
+
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(FILE_DIST_REPLAY_STORAGE_KEY, JSON.stringify(fileReplayPayload));
+      }
+
+      router.push('/job/execution/file-dist?mode=reexecute');
       return;
     }
 
-    setReExecuteLoading(true);
-    try {
-      const res = await reExecuteJob(detail.id);
-      message.success(t('job.reExecuteSuccess'));
-      // 跳转到新的执行记录详情
-      router.push(`/job/execution/job-record?id=${res.id}`);
-    } catch (error: any) {
-      message.error(error?.message || t('job.reExecuteFailed'));
-    } finally {
-      setReExecuteLoading(false);
+    const replayPayload = {
+      jobName: detail.name,
+      timeout: String(detail.timeout || 600),
+      targetSource: (detail as any).target_source === 'node_mgmt' ? 'node_manager' : 'target_manager',
+      selectedHosts: mappedHosts,
+      templateType: detail.playbook ? 'playbook' : 'scriptLibrary',
+      scriptId: detail.script,
+      playbookId: detail.playbook,
+      params: detail.params || {},
+      scriptType: detail.script_type,
+      scriptContent: detail.script_content,
+    };
+
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(QUICK_EXEC_REPLAY_STORAGE_KEY, JSON.stringify(replayPayload));
     }
-  }, [detail, reExecuteJob, router, t]);
+
+    if (detail.playbook) {
+      router.push(`/job/execution/quick-exec?playbook_id=${detail.playbook}&mode=reexecute`);
+      return;
+    }
+
+    if (detail.script) {
+      router.push(`/job/execution/quick-exec?script_id=${detail.script}&mode=reexecute`);
+      return;
+    }
+
+    router.push('/job/execution/quick-exec?mode=reexecute');
+  }, [detail, router]);
 
   useEffect(() => {
     if (!isApiReady) {
@@ -179,7 +256,7 @@ const JobRecordPage = () => {
         fetchData();
       }
     }
-  }, [isApiReady, timeRange, recordId]);
+  }, [isApiReady, timeRange, customRange, recordId]);
 
   useEffect(() => {
     if (!isApiReady && !recordId) {
@@ -360,7 +437,7 @@ const JobRecordPage = () => {
       width: 120,
       render: (_: unknown, record: JobRecord) => (
         <a
-          className="text-[var(--color-primary)] cursor-pointer"
+          className="text-(--color-primary) cursor-pointer"
           onClick={() => handleViewDetail(record)}
         >
           {t('job.viewDetail')}
@@ -518,7 +595,7 @@ const JobRecordPage = () => {
       <div className="w-full h-full flex flex-col overflow-hidden">
         {/* Header Card */}
         <div
-          className="rounded-lg px-6 py-4 mb-4 flex-shrink-0"
+          className="mb-4 rounded-lg px-6 py-4 shrink-0"
           style={{
             background: 'var(--color-bg-1)',
             border: '1px solid var(--color-border-1)',
@@ -531,7 +608,7 @@ const JobRecordPage = () => {
                 type="text"
                 icon={<ArrowLeftOutlined />}
                 onClick={handleBack}
-                className="!p-1"
+                className="p-1!"
               />
               <h2
                 className="text-lg font-medium m-0"
@@ -548,9 +625,7 @@ const JobRecordPage = () => {
             </div>
             <Button
               icon={<ReloadOutlined />}
-              loading={reExecuteLoading}
               onClick={handleReExecute}
-              disabled={detail.job_type === 'file'}
             >
               {t('job.reExecute')}
             </Button>
@@ -625,7 +700,7 @@ const JobRecordPage = () => {
         <div className="flex gap-4 flex-1 min-h-0">
           {/* Left: Target Host List */}
           <div
-            className="w-80 flex-shrink-0 rounded-lg flex flex-col"
+            className="flex w-80 shrink-0 flex-col rounded-lg"
             style={{
               background: 'var(--color-bg-1)',
               border: '1px solid var(--color-border-1)',
@@ -658,8 +733,8 @@ const JobRecordPage = () => {
                 return (
                   <div
                     key={target.id}
-                    className={`px-4 py-3 cursor-pointer border-b transition-colors ${
-                      isSelected ? 'bg-[var(--color-primary-bg)]' : 'hover:bg-[var(--color-fill-2)]'
+                    className={`cursor-pointer border-b px-4 py-3 transition-colors ${
+                      isSelected ? 'bg-(--color-primary-bg)' : 'hover:bg-(--color-fill-2)'
                     }`}
                     style={{ borderColor: 'var(--color-border-1)' }}
                     onClick={() => setSelectedTargetId(target.id)}
@@ -869,7 +944,7 @@ const JobRecordPage = () => {
               {detail.script_content?.split('\n').map((line, index) => (
                 <div key={index} className="flex px-4 py-0.5 leading-6">
                   <span
-                    className="w-8 text-right mr-4 select-none flex-shrink-0"
+                    className="mr-4 w-8 shrink-0 select-none text-right"
                     style={{ color: '#6e7681' }}
                   >
                     {index + 1}
@@ -894,7 +969,7 @@ const JobRecordPage = () => {
     <div className="w-full h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div
-        className="rounded-lg px-6 py-4 mb-4 flex-shrink-0"
+        className="mb-4 rounded-lg px-6 py-4 shrink-0"
         style={{
           background: 'var(--color-bg-1)',
           border: '1px solid var(--color-border-1)',
@@ -920,23 +995,35 @@ const JobRecordPage = () => {
         }}
       >
         {/* Toolbar */}
-        <div className="flex justify-between items-center mb-4 flex-shrink-0">
+        <div className="mb-4 flex items-center justify-between shrink-0">
           <SearchCombination
             fieldConfigs={fieldConfigs}
             onChange={handleSearchChange}
             fieldWidth={120}
             selectWidth={300}
           />
-          <Segmented
-            className="w-fit"
-            options={[
-              { label: t('job.today'), value: 'today' },
-              { label: t('job.last7Days'), value: '7days' },
-              { label: t('job.last30Days'), value: '30days' },
-            ]}
-            value={timeRange}
-            onChange={(value) => setTimeRange(value as 'today' | '7days' | '30days')}
-          />
+          <div className="flex items-center gap-3">
+            {timeRange === 'custom' && (
+              <RangePicker
+                value={customRange}
+                onChange={(value) => {
+                  setCustomRange(value ? [value[0] as Dayjs, value[1] as Dayjs] : null);
+                }}
+                allowClear
+              />
+            )}
+            <Segmented
+              className="w-fit"
+              options={[
+                { label: t('job.today'), value: 'today' },
+                { label: t('job.last7Days'), value: '7days' },
+                { label: t('job.last30Days'), value: '30days' },
+                { label: t('common.timeSelector.custom'), value: 'custom' },
+              ]}
+              value={timeRange}
+              onChange={(value) => setTimeRange(value as 'today' | '7days' | '30days' | 'custom')}
+            />
+          </div>
         </div>
 
         {/* Table */}

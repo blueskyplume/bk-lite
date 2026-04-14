@@ -1,4 +1,5 @@
 from django.core.cache import cache
+from typing import Any, cast
 from rest_framework import mixins
 from rest_framework.decorators import action
 from rest_framework.viewsets import GenericViewSet
@@ -18,9 +19,12 @@ from apps.node_mgmt.serializers.node import (
     NodeSerializer,
     BatchBindingNodeConfigurationSerializer,
     BatchOperateNodeCollectorSerializer,
+    TaskNodesQuerySerializer,
 )
 from apps.node_mgmt.services.node import NodeService
 from apps.node_mgmt.tasks.sidecar_config import sync_node_properties_to_sidecar
+from apps.node_mgmt.models.action import CollectorActionTaskNode, CollectorActionTask
+from apps.node_mgmt.utils.task_result_schema import normalize_task_result_for_read
 
 
 class NodeFilterHandler:
@@ -175,19 +179,13 @@ class NodeFilterHandler:
 
 
 class NodeViewSet(mixins.DestroyModelMixin, GenericViewSet):
-    queryset = (
-        Node.objects.all()
-        .prefetch_related("nodeorganization_set")
-        .order_by("-created_at")
-    )
+    queryset = Node.objects.all().prefetch_related("nodeorganization_set").order_by("-created_at")
     pagination_class = CustomPageNumberPagination
     serializer_class = NodeSerializer
     search_fields = ["id", "name", "ip", "cloud_region_id", "install_method"]
 
     def add_permission(self, permission, items):
-        node_permission_map = {
-            i["id"]: i["permission"] for i in permission.get("instance", [])
-        }
+        node_permission_map = {i["id"]: i["permission"] for i in permission.get("instance", [])}
         for node_info in items:
             if node_info["id"] in node_permission_map:
                 node_info["permission"] = node_permission_map[node_info["id"]]
@@ -220,19 +218,13 @@ class NodeViewSet(mixins.DestroyModelMixin, GenericViewSet):
             queryset = NodeFilterHandler.apply_filters(queryset, custom_filters)
 
         # 根据组织筛选
-        organization_ids = request.query_params.get(
-            "organization_ids"
-        ) or request.data.get("organization_ids")
+        organization_ids = request.query_params.get("organization_ids") or request.data.get("organization_ids")
         if organization_ids:
             organization_ids = organization_ids.split(",")
-            queryset = queryset.filter(
-                nodeorganization__organization__in=organization_ids
-            ).distinct()
+            queryset = queryset.filter(nodeorganization__organization__in=organization_ids).distinct()
 
         # 根据云区域筛选
-        cloud_region_id = request.query_params.get(
-            "cloud_region_id"
-        ) or request.data.get("cloud_region_id")
+        cloud_region_id = request.query_params.get("cloud_region_id") or request.data.get("cloud_region_id")
         if cloud_region_id:
             queryset = queryset.filter(cloud_region_id=cloud_region_id)
 
@@ -280,24 +272,17 @@ class NodeViewSet(mixins.DestroyModelMixin, GenericViewSet):
 
         if organizations is not None:
             NodeOrganization.objects.filter(node=node).delete()
-            new_relations = [
-                NodeOrganization(node=node, organization=org_id)
-                for org_id in organizations
-            ]
+            new_relations = [NodeOrganization(node=node, organization=org_id) for org_id in organizations]
             NodeOrganization.objects.bulk_create(new_relations)
 
         if name is not None or organizations is not None:
-            sync_node_properties_to_sidecar.delay(
-                node_id=node.id, name=name, organizations=organizations
-            )
+            sync_node_properties_to_sidecar.delay(node_id=node.id, name=name, organizations=organizations)
 
         return WebUtils.response_success()
 
     @action(methods=["get"], detail=False, url_path=r"enum", filter_backends=[])
     def enum(self, request, *args, **kwargs):
-        lan = LanguageLoader(
-            app=LanguageConstants.APP, default_lang=request.user.locale
-        )
+        lan = LanguageLoader(app=LanguageConstants.APP, default_lang=request.user.locale)
 
         # 翻译标签枚举
         translated_tags = {}
@@ -312,30 +297,18 @@ class NodeViewSet(mixins.DestroyModelMixin, GenericViewSet):
         translated_sidecar_status = {}
         for status_key, status_value in ControllerConstants.SIDECAR_STATUS_ENUM.items():
             status_name_key = f"{LanguageConstants.CONTROLLER_STATUS}.{status_key}"
-            translated_sidecar_status[status_key] = (
-                lan.get(status_name_key) or status_value
-            )
+            translated_sidecar_status[status_key] = lan.get(status_name_key) or status_value
 
         # 翻译控制器安装方式枚举
         translated_install_method = {}
         for method_key, method_value in ControllerConstants.INSTALL_METHOD_ENUM.items():
-            method_name_key = (
-                f"{LanguageConstants.CONTROLLER_INSTALL_METHOD}.{method_key}"
-            )
-            translated_install_method[method_key] = (
-                lan.get(method_name_key) or method_value
-            )
+            method_name_key = f"{LanguageConstants.CONTROLLER_INSTALL_METHOD}.{method_key}"
+            translated_install_method[method_key] = lan.get(method_name_key) or method_value
 
         # 翻译操作系统枚举
         translated_os = {
-            NodeConstants.LINUX_OS: lan.get(
-                f"{LanguageConstants.OS}.{NodeConstants.LINUX_OS}"
-            )
-            or NodeConstants.LINUX_OS_DISPLAY,
-            NodeConstants.WINDOWS_OS: lan.get(
-                f"{LanguageConstants.OS}.{NodeConstants.WINDOWS_OS}"
-            )
-            or NodeConstants.WINDOWS_OS_DISPLAY,
+            NodeConstants.LINUX_OS: lan.get(f"{LanguageConstants.OS}.{NodeConstants.LINUX_OS}") or NodeConstants.LINUX_OS_DISPLAY,
+            NodeConstants.WINDOWS_OS: lan.get(f"{LanguageConstants.OS}.{NodeConstants.WINDOWS_OS}") or NodeConstants.WINDOWS_OS_DISPLAY,
         }
 
         enum_data = dict(
@@ -354,12 +327,8 @@ class NodeViewSet(mixins.DestroyModelMixin, GenericViewSet):
         serializer = BatchBindingNodeConfigurationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         node_ids = serializer.validated_data["node_ids"]
-        collector_configuration_id = serializer.validated_data[
-            "collector_configuration_id"
-        ]
-        result, message = NodeService.batch_binding_node_configuration(
-            node_ids, collector_configuration_id
-        )
+        collector_configuration_id = serializer.validated_data["collector_configuration_id"]
+        result, message = NodeService.batch_binding_node_configuration(node_ids, collector_configuration_id)
 
         # 清除cache中的etag
         for node_id in node_ids:
@@ -377,19 +346,86 @@ class NodeViewSet(mixins.DestroyModelMixin, GenericViewSet):
         node_ids = serializer.validated_data["node_ids"]
         collector_id = serializer.validated_data["collector_id"]
         operation = serializer.validated_data["operation"]
-        NodeService.batch_operate_node_collector(node_ids, collector_id, operation)
+        task_id = NodeService.batch_operate_node_collector(
+            node_ids,
+            collector_id,
+            operation,
+            created_by=request.user.username,
+            domain=getattr(request.user, "domain", "domain.com"),
+            updated_by_domain=getattr(request.user, "domain", "domain.com"),
+        )
 
         # 清除cache中的etag
         for node_id in node_ids:
             cache.delete(f"node_etag_{node_id}")
 
-        return WebUtils.response_success()
+        return WebUtils.response_success(dict(task_id=task_id))
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path=r"collector/action/(?P<task_id>[^/.]+)/nodes",
+    )
+    def collector_action_nodes(self, request, task_id):
+        serializer = TaskNodesQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = cast(dict[str, Any], serializer.validated_data)
+
+        queryset = CollectorActionTaskNode.objects.filter(task_id=task_id).select_related("node").prefetch_related("node__nodeorganization_set")
+        status_list = validated_data.get("status")
+        if status_list:
+            queryset = queryset.filter(status__in=status_list)
+
+        page = validated_data.get("page", 1)
+        page_size = validated_data.get("page_size", 20)
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        total = queryset.count()
+        items = queryset.order_by("id")[start:end]
+        data = [
+            {
+                "node_id": obj.node_id,
+                "status": obj.status,
+                "result": normalize_task_result_for_read(obj.result),
+                "ip": obj.node.ip,
+                "os": obj.node.operating_system,
+                "node_name": obj.node.name,
+                "organizations": [rel.organization for rel in obj.node.nodeorganization_set.all()],
+                "install_method": obj.node.install_method,
+            }
+            for obj in items
+        ]
+
+        summary_queryset = CollectorActionTaskNode.objects.filter(task_id=task_id)
+        summary = {
+            "total": summary_queryset.count(),
+            "waiting": summary_queryset.filter(status="waiting").count(),
+            "running": summary_queryset.filter(status="running").count(),
+            "success": summary_queryset.filter(status="success").count(),
+            "error": summary_queryset.filter(status="error").count(),
+            "timeout": summary_queryset.filter(result__overall_status="timeout").count(),
+            "cancelled": summary_queryset.filter(result__overall_status="cancelled").count(),
+        }
+
+        task_obj = CollectorActionTask.objects.filter(id=task_id).first()
+        task_status = task_obj.status if task_obj else "waiting"
+
+        return WebUtils.response_success(
+            {
+                "task_id": task_id,
+                "status": task_status,
+                "summary": summary,
+                "items": data,
+                "count": total,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
 
     @action(detail=False, methods=["post"], url_path="node_config_asso")
     def get_node_config_asso(self, request):
-        nodes = Node.objects.prefetch_related("collectorconfiguration_set").filter(
-            cloud_region_id=request.data["cloud_region_id"]
-        )
+        nodes = Node.objects.prefetch_related("collectorconfiguration_set").filter(cloud_region_id=request.data["cloud_region_id"])
         if request.data.get("ids"):
             nodes = nodes.filter(id__in=request.data["ids"])
 

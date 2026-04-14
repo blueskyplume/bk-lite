@@ -19,6 +19,8 @@ from langchain_core.tools import tool
 from loguru import logger
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
+from apps.opspilot.utils.execution_interrupt import is_interrupt_requested
+
 # 安全配置
 MAX_RETRIES = 2
 MAX_LOGIN_FAILURES = 2  # 登录失败最大重试次数
@@ -60,6 +62,10 @@ class LoginFailureError(Exception):
         self.message = message
         self.failure_count = failure_count
         super().__init__(message)
+
+
+class BrowserExecutionInterruptedError(Exception):
+    """浏览器执行被中断异常"""
 
 
 class BrowserStepInfo(TypedDict):
@@ -945,6 +951,7 @@ def _create_login_failure_hook(
 def _create_step_callback_adapter(
     step_callback: Optional[StepCallbackType],
     max_steps: int,
+    execution_id: str = "",
 ) -> Optional[Callable[[BrowserStateSummary, AgentOutput, int], Awaitable[None]]]:
     """
     创建一个适配器，将用户回调转换为 browser-use 需要的回调格式
@@ -962,6 +969,9 @@ def _create_step_callback_adapter(
     async def adapter(browser_state: BrowserStateSummary, model_output: AgentOutput, step_number: int) -> None:
         """适配器：将 browser-use 的回调参数转换为 BrowserStepInfo"""
         import inspect
+
+        if execution_id and is_interrupt_requested(execution_id):
+            raise BrowserExecutionInterruptedError("浏览器执行已中断")
 
         # 提取动作信息
         actions = []
@@ -1015,6 +1025,7 @@ async def _browse_website_async(
     user_data_dir: Optional[str] = None,
     locale: str = "en",
     tool_name: str = "browse_website",
+    execution_id: str = "",
 ) -> Dict[str, Any]:
     """
     异步浏览网站并执行任务
@@ -1087,7 +1098,7 @@ async def _browse_website_async(
             final_task = f"首先，导航到 {url} \n 然后，{task}" if task else f"导航到 {url}"
 
         # 创建步骤回调适配器
-        register_callback = _create_step_callback_adapter(step_callback, max_steps)
+        register_callback = _create_step_callback_adapter(step_callback, max_steps, execution_id=execution_id)
 
         # 回传 browser_use 实际接收任务（final_task），用于前端展示
         if custom_event_callback is not None:
@@ -1386,6 +1397,19 @@ CORE RULES (MUST FOLLOW):
             "login_failure_count": e.failure_count,
         }
 
+    except BrowserExecutionInterruptedError as e:
+        logger.info(f"浏览器执行被中断: {e}")
+        return {
+            "success": False,
+            "content": None,
+            "url": url,
+            "task": task,
+            "has_errors": True,
+            "errors": [str(e)],
+            "steps_taken": 0,
+            "interrupted": True,
+        }
+
     except Exception as e:
         error_msg = f"浏览器操作失败: {str(e)}"
         logger.exception(error_msg)
@@ -1437,12 +1461,12 @@ def browse_website(
     """
     使用AI驱动的浏览器打开网站并执行操作
 
-    **⚠️ 重要：一次调用完成所有任务 ⚠️**
+    **[警告] 重要：一次调用完成所有任务 [警告]**
     此工具内置完整的AI Agent，能够自动执行多步骤的复杂任务序列。
     请在一次调用中描述完整的任务流程，不要拆分成多次调用！
     每次调用结束后浏览器会关闭，多次调用会导致登录状态丢失。
 
-    **🔐 凭据传递方式（必须使用 username/password 参数）：**
+    **[凭据] 凭据传递方式（必须使用 username/password 参数）：**
     当任务需要登录时，必须将用户名密码放在独立参数中，不要写在 task 里：
 
     ```python
@@ -1460,8 +1484,8 @@ def browse_website(
     3. 浏览器会在需要时自动填入正确的用户名和密码
 
     **错误用法（不要这样做）：**
-    - ❌ task="输入用户名admin和密码123456登录" （凭据不要写在task里！）
-    - ❌ 拆分成多次调用（会丢失登录状态）
+    - [X] task="输入用户名admin和密码123456登录" （凭据不要写在task里！）
+    - [X] 拆分成多次调用（会丢失登录状态）
 
     **何时使用此工具：**
     - 需要与网页进行交互（点击、填表等）
@@ -1514,13 +1538,14 @@ def browse_website(
     - 需要稳定的网络连接
     - 某些网站可能有反爬虫机制
     - 确保任务描述清晰具体，包含完整流程
-    - ⚠️ 不要将连续任务拆分成多次调用，这会导致登录状态丢失
-    - 🔐 凭据必须通过 username/password 参数传递，不要写在 task 中
+    - [警告] 不要将连续任务拆分成多次调用，这会导致登录状态丢失
+    - [凭据] 凭据必须通过 username/password 参数传递，不要写在 task 中
     """
     configurable = config.get("configurable", {}) if config else {}
     llm_config = configurable.get("graph_request")
     step_callback: Optional[StepCallbackType] = configurable.get("browser_step_callback")
     custom_event_callback: Optional[CustomEventCallbackType] = configurable.get("browser_custom_event_callback")
+    execution_id = configurable.get("execution_id") or getattr(llm_config, "thread_id", "")
     forced_base_task = configurable.get("browser_use_base_task")
     forced_user_message = configurable.get("browser_use_user_message")
     force_browser_task = configurable.get("browser_use_force_task", False)
@@ -1574,6 +1599,7 @@ def browse_website(
                 user_data_dir=user_data_dir,
                 locale=locale,
                 tool_name="browse_website",
+                execution_id=execution_id,
             )
         )
         if force_browser_task and isinstance(result, dict):
@@ -1657,6 +1683,7 @@ def extract_webpage_info(
         llm_config = configurable.get("graph_request")
         step_callback: Optional[StepCallbackType] = configurable.get("browser_step_callback")
         custom_event_callback: Optional[CustomEventCallbackType] = configurable.get("browser_custom_event_callback")
+        execution_id = configurable.get("execution_id") or getattr(llm_config, "thread_id", "")
 
         llm = ChatOpenAI(
             model=llm_config.model,
@@ -1703,6 +1730,7 @@ def extract_webpage_info(
                 user_data_dir=user_data_dir,
                 locale=locale,
                 tool_name="extract_webpage_info",
+                execution_id=execution_id,
             )
         )
 

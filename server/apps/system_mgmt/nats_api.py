@@ -9,14 +9,15 @@ import jwt
 import pyotp
 import qrcode
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
 
 import nats_client
-from apps.core.backends import cache
+from apps.core.constants import VERIFY_TOKEN_USER_NOT_FOUND_CODE, VERIFY_TOKEN_USER_NOT_FOUND_MESSAGE
 from apps.core.logger import system_mgmt_logger as logger
 from apps.core.utils.loader import LanguageLoader
-from apps.core.utils.permission_cache import clear_users_permission_cache
+from apps.core.utils.permission_cache import clear_users_permission_cache, get_cached_token_info, set_cached_token_info
 from apps.system_mgmt.guest_menus import CMDB_MENUS, MONITOR_MENUS, OPSPILOT_GUEST_MENUS
 from apps.system_mgmt.models import (
     App,
@@ -50,24 +51,50 @@ from apps.system_mgmt.utils.password_validator import PasswordValidator
 
 def get_user_all_roles(user):
     """
-    获取用户的所有角色（个人角色 + 组角色）
+    获取用户的所有角色（个人角色 + 组角色，含完整继承链）
+
+    继承规则：沿 parent_id 链向上追溯，只要父级 allow_inherit_roles=True，
+    就收集该父级的角色并继续向上，直到某层 allow_inherit_roles=False 或到达根节点为止。
+
     :param user: User实例
     :return: 包含所有角色ID的列表
     """
     # 用户直接授权的角色
     personal_role_ids = set(user.role_list)
 
-    # 用户所属组织的角色（只包含直接所属组织，不递归子组）
     group_role_ids = set()
     if user.group_list:
-        # 使用prefetch_related避免N+1查询
-        groups = Group.objects.filter(id__in=user.group_list).prefetch_related("roles")
-        for group in groups:
-            group_role_ids.update(role.id for role in group.roles.all())
+        # 单次查询所有组织，内存中完成递归，避免 N+1
+        all_groups = {g.id: g for g in Group.objects.prefetch_related("roles").all()}
+
+        visited = set()
+
+        def collect_roles(group_id):
+            """收集 group_id 自身角色，并沿 parent_id 链递归收集继承角色"""
+            if group_id in visited:
+                return
+            visited.add(group_id)
+
+            group = all_groups.get(group_id)
+            if not group:
+                return
+
+            # 收集自身角色
+            for role in group.roles.all():
+                group_role_ids.add(role.id)
+
+            # 向上追溯：父级 allow_inherit_roles=True 才继续继承
+            parent_id = group.parent_id
+            if parent_id:
+                parent = all_groups.get(parent_id)
+                if parent and parent.allow_inherit_roles:
+                    collect_roles(parent_id)
+
+        for gid in user.group_list:
+            collect_roles(gid)
 
     # 合并去重
-    all_role_ids = list(personal_role_ids | group_role_ids)
-    return all_role_ids
+    return list(personal_role_ids | group_role_ids)
 
 
 def _verify_token(token):
@@ -79,13 +106,13 @@ def _verify_token(token):
     login_expired_time_set = SystemSettings.objects.filter(key="login_expired_time").first()
     login_expired_time = 3600 * 24
     if login_expired_time_set:
-        login_expired_time = int(login_expired_time_set.value) * 3600
+        login_expired_time = float(login_expired_time_set.value) * 3600
 
     if time_now - login_expired_time > user_info["login_time"]:
         raise Exception("Token is invalid")
     user = User.objects.filter(id=user_info["user_id"]).first()
     if not user:
-        raise Exception("User not found")
+        raise Exception(VERIFY_TOKEN_USER_NOT_FOUND_MESSAGE)
     return user
 
 
@@ -127,26 +154,40 @@ def get_pilot_permission_by_token(token, bot_id, group_list):
 def verify_token(token):
     if not token:
         return {"result": False, "message": "Token is missing"}
+
     try:
         user = _verify_token(token)
     except Exception as e:
-        return {"result": False, "message": str(e)}
+        error_message = str(e)
+        return_data = {"result": False, "message": error_message}
+        if error_message == VERIFY_TOKEN_USER_NOT_FOUND_MESSAGE:
+            return_data["error_code"] = VERIFY_TOKEN_USER_NOT_FOUND_CODE
+        return return_data
+
+    # 命中缓存直接返回，跳过全量数据库查询
+    cached = get_cached_token_info(user.username, user.domain)
+    if cached is not None:
+        return cached
 
     # 获取用户所有角色（个人角色 + 组角色）
     all_role_ids = get_user_all_roles(user)
+
     role_list = Role.objects.filter(id__in=all_role_ids)
     role_names = [f"{role.app}--{role.name}" if role.app else role.name for role in role_list]
+
     is_superuser = "admin" in role_names or "system-manager--admin" in role_names
     group_list = Group.objects.all().order_by("id")
     if not is_superuser:
         group_list = group_list.filter(id__in=user.group_list)
-    # groups = GroupUtils.build_group_tree(group_list)
     groups = list(group_list.values("id", "name", "parent_id"))
+
     queryset = Group.objects.prefetch_related("roles").all()
 
     # 构建嵌套组结构
     groups_data = GroupUtils.build_group_tree(queryset, is_superuser, [i["id"] for i in groups])
+
     menus = cache.get(f"menus-user:{user.id}")
+
     if not menus:
         menus = {}
         if not is_superuser:
@@ -157,8 +198,10 @@ def verify_token(token):
             menu_data = Menu.objects.filter(id__in=list(set(menu_ids))).values_list("app", "name")
             for app, name in menu_data:
                 menus.setdefault(app, []).append(name)
+
         cache.set(f"menus-user:{user.id}", menus, 60)
-    return {
+
+    result = {
         "result": True,
         "data": {
             "username": user.username,
@@ -169,12 +212,14 @@ def verify_token(token):
             "group_list": groups,
             "group_tree": groups_data,
             "roles": role_names,
-            "role_ids": all_role_ids,  # 返回所有角色ID（个人+组）
+            "role_ids": all_role_ids,
             "locale": user.locale,
             "permission": menus,
             "timezone": user.timezone,
         },
     }
+    set_cached_token_info(user.username, user.domain, result)
+    return result
 
 
 @nats_client.register
@@ -195,8 +240,10 @@ def get_user_menus(client_id, roles, username, is_superuser):
 @nats_client.register
 def get_client(client_id="", username="", domain="domain.com"):
     app_list = App.objects.all()
+
     if client_id:
         app_list = app_list.filter(name__in=client_id.split(";"))
+
     if username:
         user = User.objects.filter(username=username, domain=domain).first()
         if not user:
@@ -278,7 +325,11 @@ def search_users(query_params):
 @nats_client.register
 def init_user_default_attributes(user_id, group_name, default_group_id):
     try:
-        role_ids = list(Role.objects.filter(name="guest", app__in=["opspilot", "cmdb", "monitor", "alarm", "node"]).values_list("id", flat=True))
+        role_ids = list(
+            Role.objects.filter(name="guest", app__in=["opspilot", "cmdb", "monitor", "alarm", "log", "node", "mlops", "job"]).values_list(
+                "id", flat=True
+            )
+        )
         normal_role = Role.objects.get(name="normal", app="opspilot")
         user = User.objects.get(id=user_id)
         top_group, _ = Group.objects.get_or_create(
@@ -367,6 +418,21 @@ def create_default_rule(llm_model, ocr_model, embed_model, rerank_model):
 def get_all_groups():
     groups = Group.objects.prefetch_related("roles").all()
     return_data = GroupUtils.build_group_tree(groups, True)
+    return {"result": True, "data": return_data}
+
+
+@nats_client.register
+def get_channel_detail(channel_id):
+    channel_obj = Channel.objects.filter(id=channel_id).first()
+    if not channel_obj:
+        return {"result": False, "message": "传入的channel_id无法匹配到channel"}
+    return_data = {
+        "name": channel_obj.name,
+        "description": channel_obj.description,
+        "config": channel_obj.config,
+        "team": channel_obj.team,
+        "channel_type": channel_obj.channel_type,
+    }
     return {"result": True, "data": return_data}
 
 
@@ -843,7 +909,7 @@ def wechat_user_register(user_id, nick_name):
             Q(name="normal", app__in=["opspilot", "ops-console"])
             | Q(
                 name="guest",
-                app__in=["opspilot", "cmdb", "monitor", "log", "alarm", "node"],
+                app__in=["opspilot", "cmdb", "monitor", "log", "alarm", "node", "mlops", "job"],
             )
         ).values_list("id", flat=True)
     )

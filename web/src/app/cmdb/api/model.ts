@@ -35,6 +35,41 @@ export const useModelApi = () => {
   const deleteModelAttr = (modelId: string, attrId: string) =>
     del(`/cmdb/api/model/${modelId}/attr/${attrId}/`);
 
+  const getModelUniqueRules = (modelId: string, editingRuleId?: string) =>
+    get(`/cmdb/api/model/${modelId}/unique_rules/${editingRuleId ? `?editing_rule_id=${editingRuleId}` : ''}`.replace('/?', '?'));
+
+  const createModelUniqueRule = (modelId: string, params: { field_ids: string[] }) =>
+    post(`/cmdb/api/model/${modelId}/unique_rules/`, params);
+
+  const updateModelUniqueRule = (modelId: string, ruleId: string, params: { field_ids: string[] }) =>
+    put(`/cmdb/api/model/${modelId}/unique_rules/${ruleId}/`, params);
+
+  const deleteModelUniqueRule = (modelId: string, ruleId: string) =>
+    del(`/cmdb/api/model/${modelId}/unique_rules/${ruleId}/`);
+
+  const getModelAutoAssociationRules = (modelId: string) =>
+    get(`/cmdb/api/model/${modelId}/auto_association_rules/`);
+
+  const createModelAutoAssociationRule = (modelId: string, params: {
+    model_asst_id: string;
+    enabled: boolean;
+    match_pairs: Array<{
+      src_field_id: string;
+      dst_field_id: string;
+    }>;
+  }) => post(`/cmdb/api/model/${modelId}/auto_association_rules/`, params);
+
+  const updateModelAutoAssociationRule = (modelId: string, modelAsstId: string, ruleId: string, params: {
+    enabled: boolean;
+    match_pairs: Array<{
+      src_field_id: string;
+      dst_field_id: string;
+    }>;
+  }) => put(`/cmdb/api/model/${modelId}/auto_association_rules/${modelAsstId}/${ruleId}/`, params);
+
+  const deleteModelAutoAssociationRule = (modelId: string, modelAsstId: string, ruleId: string) =>
+    del(`/cmdb/api/model/${modelId}/auto_association_rules/${modelAsstId}/${ruleId}/`);
+
   // 获取模型关联列表
   const getModelAssociations = (modelId: string) =>
     get(`/cmdb/api/model/${modelId}/association/`);
@@ -46,6 +81,11 @@ export const useModelApi = () => {
   // 删除模型关联
   const deleteModelAssociation = (associationId: string) =>
     del(`/cmdb/api/model/association/${associationId}/`);
+
+  const batchDeleteModelAssociations = (associationIds: string[]) =>
+    post('/cmdb/api/model/association/batch_delete/', {
+      model_asst_ids: associationIds,
+    });
 
   // 获取模型关联类型列表
   const getModelAssociationTypes = () =>
@@ -178,9 +218,18 @@ export const useModelApi = () => {
     createModelAttr,
     updateModelAttr,
     deleteModelAttr,
+    getModelUniqueRules,
+    createModelUniqueRule,
+    updateModelUniqueRule,
+    deleteModelUniqueRule,
+    getModelAutoAssociationRules,
+    createModelAutoAssociationRule,
+    updateModelAutoAssociationRule,
+    deleteModelAutoAssociationRule,
     getModelAssociations,
     createModelAssociation,
     deleteModelAssociation,
+    batchDeleteModelAssociations,
     getModelAssociationTypes,
     getModelDetail,
     getModelAttrGroups,

@@ -1,7 +1,10 @@
 import useApiClient from '@/utils/request';
 import {
+  ControllerManualInstallStatusItem,
+  InstallerManifest,
+  InstallerArtifactMetadata,
   ManualInstallController,
-  RetryInstallParams,
+  RetryInstallParams
 } from '../types/controller';
 
 /**
@@ -17,7 +20,7 @@ const useControllerApi = () => {
     search,
     os,
     page,
-    page_size,
+    page_size
   }: {
     name?: string;
     search?: string;
@@ -26,7 +29,7 @@ const useControllerApi = () => {
     page_size?: number;
   }) => {
     return await get('/node_mgmt/api/controller/', {
-      params: { search, os, name, page, page_size },
+      params: { search, os, name, page, page_size }
     });
   };
 
@@ -45,7 +48,9 @@ const useControllerApi = () => {
 
   // 控制器手动安装的节点状态查询
 
-  const getManualInstallStatus = async (params: { node_ids: React.Key[] }) => {
+  const getManualInstallStatus = async (params: {
+    node_ids: React.Key[] | string;
+  }): Promise<ControllerManualInstallStatusItem[]> => {
     return await post(
       '/node_mgmt/api/installer/controller/manual_install_status/',
       params
@@ -57,8 +62,18 @@ const useControllerApi = () => {
     package_id?: string;
     cloud_region_id?: number;
     os?: string;
-  }) => {
+  }): Promise<string> => {
     return await post('/node_mgmt/api/installer/get_install_command/', params);
+  };
+
+  const getInstallerManifest = async (): Promise<InstallerManifest> => {
+    return await get('/node_mgmt/api/installer/manifest/');
+  };
+
+  const getInstallerMetadata = async (
+    os: string
+  ): Promise<InstallerArtifactMetadata> => {
+    return await get(`/node_mgmt/api/installer/metadata/${os}/`);
   };
 
   return {
@@ -67,6 +82,8 @@ const useControllerApi = () => {
     manualInstallController,
     getManualInstallStatus,
     getInstallCommand,
+    getInstallerManifest,
+    getInstallerMetadata
   };
 };
 

@@ -13,8 +13,9 @@ import {
   Segmented,
   message,
   Spin,
-  Alert,
+  Tooltip,
 } from 'antd';
+import { InfoCircleOutlined } from '@ant-design/icons';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/utils/i18n';
 import useApiClient from '@/utils/request';
@@ -23,6 +24,7 @@ import { JobType, ScheduleType, ScheduledTaskFormData, Script, Playbook } from '
 import { useRouter, useSearchParams } from 'next/navigation';
 import dayjs from 'dayjs';
 import HostSelectionModal, { HostItem, TargetSourceType } from '@/app/job/components/host-selection-modal';
+import { AddTargetHostButton, TargetSourceSelector } from '@/app/job/components/target-selection-controls';
 import { useUserInfoContext } from '@/context/userInfo';
 
 const EditCronTaskContent = () => {
@@ -400,14 +402,14 @@ const EditCronTaskContent = () => {
             type="text"
             icon={<ArrowLeftOutlined />}
             onClick={() => router.back()}
-            className="!p-1"
+            className="p-1!"
           />
           <h2 className="text-base font-medium m-0" style={{ color: 'var(--color-text-1)' }}>
             {t('job.editTask')}
           </h2>
         </div>
         <div className="flex items-start gap-2">
-          <div className="!p-1 invisible">
+          <div className="p-1! invisible">
             <ArrowLeftOutlined />
           </div>
           <p className="text-sm m-0" style={{ color: 'var(--color-text-3)' }}>
@@ -426,7 +428,7 @@ const EditCronTaskContent = () => {
         <Form
           form={form}
           layout="vertical"
-          className="max-w-[720px]"
+          className="w-full"
           initialValues={{
             timeout: 300,
             dailyTime: dayjs().hour(2).minute(0),
@@ -450,24 +452,17 @@ const EditCronTaskContent = () => {
           </Form.Item>
 
           <Form.Item label={t('job.targetSource')} required>
-            <Radio.Group
+            <TargetSourceSelector
               value={targetSource}
-              onChange={(e) => handleTargetSourceChange(e.target.value)}
-            >
-              <Radio value="node_manager">{t('job.nodeManager')}</Radio>
-              <Radio value="target_manager">{t('job.targetManager')}</Radio>
-            </Radio.Group>
+              onChange={handleTargetSourceChange}
+            />
           </Form.Item>
 
           <Form.Item label={t('job.targetHost')} required>
-            <div className="flex items-center gap-3">
-              <Button type="dashed" onClick={() => setHostModalOpen(true)}>
-                + {t('job.addTargetHost')}
-              </Button>
-              <span className="text-sm" style={{ color: 'var(--color-text-3)' }}>
-                {t('job.selectedHosts').replace('{count}', String(selectedHosts.length || selectedHostKeys.length))}
-              </span>
-            </div>
+            <AddTargetHostButton
+              count={selectedHosts.length || selectedHostKeys.length}
+              onClick={() => setHostModalOpen(true)}
+            />
           </Form.Item>
 
           <Form.Item label={t('job.jobType')} required>
@@ -482,19 +477,33 @@ const EditCronTaskContent = () => {
 
           {jobType === 'script' && (
             <Form.Item label={t('job.selectTemplate')} required>
-              {targetSource === 'node_manager' && (
-                <Alert
-                  className="mb-2"
-                  message={t('job.nodeManagerPlaybookNotSupported')}
-                  type="warning"
-                  showIcon
-                />
-              )}
               <Segmented
                 className="w-fit mb-2"
                 options={[
                   { label: t('job.scriptLibrary'), value: 'script' },
-                  { label: 'Playbook', value: 'playbook', disabled: targetSource === 'node_manager' },
+                  {
+                    label: (
+                      <span
+                        className="flex items-center gap-1.5"
+                        style={{
+                          color: targetSource === 'node_manager' ? 'var(--color-text-4)' : undefined,
+                        }}
+                      >
+                        <span>Playbook</span>
+                        {targetSource === 'node_manager' && (
+                          <Tooltip title={t('job.nodeManagerPlaybookNotSupported')}>
+                            <span
+                              className="inline-flex items-center text-[12px] text-[#faad14]"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <InfoCircleOutlined />
+                            </span>
+                          </Tooltip>
+                        )}
+                      </span>
+                    ),
+                    value: 'playbook',
+                  },
                 ]}
                 value={templateType}
                 onChange={handleTemplateTypeChange}
@@ -600,7 +609,7 @@ const EditCronTaskContent = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="flex gap-2 text-xs text-[var(--color-text-3)] pl-1">
+                <div className="text-(--color-text-3) flex gap-2 pl-1 text-xs">
                   <span className="w-12 text-center">{t('job.cronMinute')}</span>
                   <span className="w-12 text-center">{t('job.cronHour')}</span>
                   <span className="w-12 text-center">{t('job.cronDay')}</span>
@@ -625,27 +634,27 @@ const EditCronTaskContent = () => {
                     />
                   ))}
                 </div>
-                <div className="text-sm text-[var(--color-text-2)] text-center" style={{ width: '296px' }}>
+                <div className="text-(--color-text-2) text-center text-sm" style={{ width: '296px' }}>
                   {describeCron()}
                 </div>
                 <div className="text-sm text-center" style={{ width: '296px' }}>
                   {previewLoading ? (
                     <>
-                      <span className="text-[var(--color-text-3)] text-xs">{t('job.cronNextRun')}</span>
+                      <span className="text-(--color-text-3) text-xs">{t('job.cronNextRun')}</span>
                       <Spin size="small" className="ml-2" />
                     </>
                   ) : nextRuns.length > 0 ? (
                     <>
-                      <span className="text-[var(--color-text-3)] text-xs">{t('job.cronNextRun')}</span>
-                      <div className="mt-1 max-h-[54px] overflow-y-auto space-y-0.5">
+                      <span className="text-(--color-text-3) text-xs">{t('job.cronNextRun')}</span>
+                      <div className="mt-1 max-h-13.5 overflow-y-auto space-y-0.5">
                         {nextRuns.map((time, idx) => (
-                          <div key={idx} className="text-[var(--color-text-3)] font-mono text-xs">
+                          <div key={idx} className="text-(--color-text-3) font-mono text-xs">
                             {time}
                           </div>
                         ))}
                       </div>
                       {nextRuns.length > 3 && (
-                        <div className="text-[var(--color-text-4)] text-xs mt-0.5">···</div>
+                        <div className="text-(--color-text-4) mt-0.5 text-xs">···</div>
                       )}
                     </>
                   ) : null}
@@ -667,7 +676,7 @@ const EditCronTaskContent = () => {
           </Form.Item>
 
           <Form.Item className="mb-0">
-            <div className="flex gap-3 pt-4 border-t border-[var(--color-border)]">
+            <div className="border-(--color-border) flex gap-3 border-t pt-4">
               <Button type="primary" loading={submitting} onClick={() => handleSubmit(true)}>
                 {t('job.saveAndEnable')}
               </Button>

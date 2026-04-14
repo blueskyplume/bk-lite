@@ -14,6 +14,7 @@ import { getIconUrl } from '@/app/cmdb/utils/common';
 import { EditTwoTone, DeleteTwoTone, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'next/navigation';
 import { ClassificationItem } from '@/app/cmdb/types/assetManage';
+import type { MenuItem } from '@/types';
 import { useTranslation } from '@/utils/i18n';
 import { useClassificationApi, useModelApi } from '@/app/cmdb/api';
 import { ModelDetailContext } from './context';
@@ -28,7 +29,7 @@ const AboutLayout = ({ children }: { children: React.ReactNode }) => {
   const commonContext = useCommon();
 
   const { getClassificationList } = useClassificationApi();
-  const { deleteModel, getModelDetail } = useModelApi();
+  const { deleteModel, getModelDetail, getModelAssociations } = useModelApi();
 
   const searchParams = useSearchParams();
   const modelId: string = searchParams.get('model_id') || '';
@@ -94,6 +95,27 @@ const AboutLayout = ({ children }: { children: React.ReactNode }) => {
       onOk() {
         return new Promise(async (resolve) => {
           try {
+            const associations = await getModelAssociations(row.model_id);
+            if (associations.length > 0) {
+              Modal.confirm({
+                title: t('common.prompt'),
+                content: t('Model.deleteBlockedByAssociationsTip'),
+                okText: t('Model.goToRelationshipsCleanup'),
+                cancelText: t('common.cancel'),
+                centered: true,
+                onOk: () => {
+                  const params = new URLSearchParams({
+                    model_id: modelId,
+                    model_name: modelDetail.model_name || '',
+                    icn: modelDetail.icn || '',
+                    classification_id: modelDetail.classification_id || '',
+                    is_pre: searchParams.get('is_pre') || 'false',
+                  }).toString();
+                  router.push(`/cmdb/assetManage/management/detail/associations?${params}`);
+                },
+              });
+              return;
+            }
             await deleteModel(row.model_id);
             message.success(t('successfullyDeleted'));
             if (commonContext?.refreshModelList) {
@@ -127,6 +149,37 @@ const AboutLayout = ({ children }: { children: React.ReactNode }) => {
       group: modelDetail.group,
     });
   };
+
+  const detailMenuItems: MenuItem[] = [
+    {
+      name: 'attributes',
+      title: t('Model.attributes'),
+      url: '/cmdb/assetManage/management/detail/attributes',
+      icon: '',
+      operation: [],
+    },
+    {
+      name: 'associations',
+      title: t('Model.relationships'),
+      url: '/cmdb/assetManage/management/detail/associations',
+      icon: '',
+      operation: [],
+    },
+    {
+      name: 'uniqueRules',
+      title: t('Model.uniqueRules'),
+      url: '/cmdb/assetManage/management/detail/uniqueRules',
+      icon: '',
+      operation: [],
+    },
+    {
+      name: 'autoAssociationRules',
+      title: t('Model.autoAssociationRules'),
+      url: '/cmdb/assetManage/management/detail/autoAssociationRules',
+      icon: '',
+      operation: [],
+    },
+  ];
 
   return (
     <ModelDetailContext.Provider value={modelDetail}>
@@ -220,6 +273,7 @@ const AboutLayout = ({ children }: { children: React.ReactNode }) => {
           <WithSideMenuLayout
             showBackButton={true}
             onBackButtonClick={handleBackButtonClick}
+            customMenuItems={detailMenuItems}
           >
             {children}
           </WithSideMenuLayout>

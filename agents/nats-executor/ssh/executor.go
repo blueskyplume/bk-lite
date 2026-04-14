@@ -5,17 +5,318 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"nats-executor/local"
 	"nats-executor/logger"
 	"nats-executor/utils"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"golang.org/x/crypto/ssh"
 )
+
+var sshpassPasswordPattern = regexp.MustCompile(`sshpass -p '(?:[^']|'"'"')*'`)
+
+type sshConn interface{}
+type responseMsg interface {
+	Respond([]byte) error
+}
+
+type streamEvent struct {
+	ExecutionID string `json:"execution_id"`
+	Stream      string `json:"stream"`
+	Line        string `json:"line"`
+	Timestamp   string `json:"timestamp"`
+}
+
+type streamLogWriter struct {
+	nc          *nats.Conn
+	topic       string
+	executionID string
+	stream      string
+	buffer      bytes.Buffer
+}
+
+type sshClient interface {
+	NewSession() (sshSession, error)
+	Close() error
+}
+
+type sshSession interface {
+	Run(cmd string) error
+	Signal(sig ssh.Signal) error
+	Close() error
+	SetStdout(w io.Writer)
+	SetStderr(w io.Writer)
+}
+
+type realSSHClient struct{ client *ssh.Client }
+type realSSHSession struct{ session *ssh.Session }
+
+var (
+	executeSSHCommand       = Execute
+	downloadFromObjectStore = func(req utils.DownloadFileRequest, nc sshConn) error {
+		natsConn, _ := nc.(*nats.Conn)
+		return utils.DownloadFile(req, natsConn)
+	}
+	buildSCPCommandFn               = buildSCPCommand
+	executeSCPCommand               = executeSCPWithFallback
+	executeLocalSCPCommand          = local.Execute
+	parsePrivateKeyFn               = ssh.ParsePrivateKey
+	parsePrivateKeyWithPassphraseFn = ssh.ParsePrivateKeyWithPassphrase
+	sshDialFn                       = func(network, addr string, config *ssh.ClientConfig) (sshClient, error) {
+		client, err := ssh.Dial(network, addr, config)
+		if err != nil {
+			return nil, err
+		}
+		return realSSHClient{client: client}, nil
+	}
+)
+
+func (c realSSHClient) NewSession() (sshSession, error) {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	return realSSHSession{session: session}, nil
+}
+
+func (c realSSHClient) Close() error { return c.client.Close() }
+
+func (s realSSHSession) Run(cmd string) error        { return s.session.Run(cmd) }
+func (s realSSHSession) Signal(sig ssh.Signal) error { return s.session.Signal(sig) }
+func (s realSSHSession) Close() error                { return s.session.Close() }
+func (s realSSHSession) SetStdout(w io.Writer)       { s.session.Stdout = w }
+func (s realSSHSession) SetStderr(w io.Writer)       { s.session.Stderr = w }
+
+func newStreamLogWriter(nc *nats.Conn, topic, executionID, stream string) *streamLogWriter {
+	return &streamLogWriter{nc: nc, topic: topic, executionID: executionID, stream: stream}
+}
+
+func (w *streamLogWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	_, _ = w.buffer.Write(p)
+	for {
+		line, err := w.buffer.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return len(p), err
+		}
+		w.publish(strings.TrimRight(line, "\r\n"))
+	}
+	return len(p), nil
+}
+
+func (w *streamLogWriter) Flush() {
+	if w.buffer.Len() == 0 {
+		return
+	}
+	w.publish(strings.TrimRight(w.buffer.String(), "\r\n"))
+	w.buffer.Reset()
+}
+
+func (w *streamLogWriter) publish(line string) {
+	if w.nc == nil || w.topic == "" || line == "" {
+		return
+	}
+	payload, err := json.Marshal(streamEvent{
+		ExecutionID: w.executionID,
+		Stream:      w.stream,
+		Line:        line,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		logger.Warnf("[SSH Execute] stream marshal failed: %v", err)
+		return
+	}
+	if err := w.nc.Publish(w.topic, payload); err != nil {
+		logger.Warnf("[SSH Execute] stream publish failed: %v", err)
+	}
+}
+
+type incomingMessage struct {
+	Args   []json.RawMessage `json:"args"`
+	Kwargs map[string]any    `json:"kwargs"`
+}
+
+func decodeIncomingMessage(data []byte) (*incomingMessage, bool) {
+	var incoming incomingMessage
+	if err := json.Unmarshal(data, &incoming); err != nil {
+		return nil, false
+	}
+	if len(incoming.Args) == 0 {
+		return nil, false
+	}
+	return &incoming, true
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func shellQuoteRemoteTarget(user, host, targetPath string) string {
+	return shellQuote(fmt.Sprintf("%s@%s:%s", user, host, targetPath))
+}
+
+func redactSensitiveCommand(command string) string {
+	return sshpassPasswordPattern.ReplaceAllString(command, "sshpass -p '***'")
+}
+
+func handleSSHExecuteMessage(data []byte, instanceId string, natsConn *nats.Conn) ([]byte, bool) {
+	incoming, ok := decodeIncomingMessage(data)
+	if !ok {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeInvalidRequest, "invalid request payload"), true
+	}
+
+	var sshExecuteRequest ExecuteRequest
+	if err := json.Unmarshal(incoming.Args[0], &sshExecuteRequest); err != nil {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeInvalidRequest, "invalid request payload"), true
+	}
+
+	responseData := executeWithConn(sshExecuteRequest, instanceId, natsConn)
+	responseContent, _ := json.Marshal(responseData)
+	return responseContent, true
+}
+
+func handleDownloadToRemoteMessage(data []byte, instanceId string, nc sshConn) ([]byte, bool) {
+	incoming, ok := decodeIncomingMessage(data)
+	if !ok {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeInvalidRequest, "invalid request payload"), true
+	}
+
+	var downloadRequest DownloadFileRequest
+	if err := json.Unmarshal(incoming.Args[0], &downloadRequest); err != nil {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeInvalidRequest, "invalid request payload"), true
+	}
+
+	localTargetPath := downloadRequest.LocalPath
+	if localTargetPath == "" {
+		localTargetPath = "/tmp"
+	}
+
+	localdownloadRequest := utils.DownloadFileRequest{
+		BucketName:     downloadRequest.BucketName,
+		FileKey:        downloadRequest.FileKey,
+		FileName:       downloadRequest.FileName,
+		TargetPath:     localTargetPath,
+		ExecuteTimeout: downloadRequest.ExecuteTimeout,
+	}
+
+	if err := downloadFromObjectStore(localdownloadRequest, nc); err != nil {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeDependencyFailure, fmt.Sprintf("Failed to download file: %v", err)), true
+	}
+
+	sourcePath := fmt.Sprintf("%s/%s", localdownloadRequest.TargetPath, localdownloadRequest.FileName)
+	scpCommand, cleanup, err := buildSCPCommandFn(
+		downloadRequest.User,
+		downloadRequest.Host,
+		downloadRequest.Password,
+		downloadRequest.PrivateKey,
+		downloadRequest.Port,
+		sourcePath,
+		downloadRequest.TargetPath,
+		true,
+		profileModern,
+	)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		logger.Errorf("[SCP Transfer] Instance: %s, build_failed | download %s@%s:%d %s -> %s | error=%v", instanceId, downloadRequest.User, downloadRequest.Host, downloadRequest.Port, sourcePath, downloadRequest.TargetPath, err)
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeExecutionFailure, fmt.Sprintf("Failed to build SCP command: %v", err)), true
+	}
+
+	sourceMeta := describeTransferSource(sourcePath)
+	logContext := buildTransferLogContext("download", downloadRequest.Host, downloadRequest.Port, downloadRequest.User, sourcePath, downloadRequest.TargetPath, transferAuthMethod(downloadRequest.Password, downloadRequest.PrivateKey), sourceMeta)
+	logger.Debugf("[SCP] Instance: %s, prepared | %s | timeout=%ds | command=%s", instanceId, logContext, downloadRequest.ExecuteTimeout, redactSensitiveCommand(scpCommand))
+
+	localExecuteRequest := local.ExecuteRequest{
+		Command:        scpCommand,
+		LogCommand:     redactSensitiveCommand(scpCommand),
+		LogContext:     logContext,
+		ExecuteTimeout: downloadRequest.ExecuteTimeout,
+	}
+
+	responseData := executeSCPCommand(instanceId, localExecuteRequest)
+	responseContent, err := json.Marshal(responseData)
+	if err != nil {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeExecutionFailure, fmt.Sprintf("Failed to marshal response: %v", err)), true
+	}
+
+	return responseContent, true
+}
+
+func handleUploadToRemoteMessage(data []byte, instanceId string) ([]byte, bool) {
+	incoming, ok := decodeIncomingMessage(data)
+	if !ok {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeInvalidRequest, "invalid request payload"), true
+	}
+
+	var uploadRequest UploadFileRequest
+	if err := json.Unmarshal(incoming.Args[0], &uploadRequest); err != nil {
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeInvalidRequest, "invalid request payload"), true
+	}
+
+	scpCommand, cleanup, err := buildSCPCommandFn(
+		uploadRequest.User,
+		uploadRequest.Host,
+		uploadRequest.Password,
+		uploadRequest.PrivateKey,
+		uploadRequest.Port,
+		uploadRequest.SourcePath,
+		uploadRequest.TargetPath,
+		true,
+		profileModern,
+	)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		logger.Errorf("[SCP Transfer] Instance: %s, build_failed | upload %s@%s:%d %s -> %s | error=%v", instanceId, uploadRequest.User, uploadRequest.Host, uploadRequest.Port, uploadRequest.SourcePath, uploadRequest.TargetPath, err)
+		return utils.NewErrorExecuteResponse(instanceId, utils.ErrorCodeExecutionFailure, fmt.Sprintf("Failed to build SCP command: %v", err)), true
+	}
+
+	sourceMeta := describeTransferSource(uploadRequest.SourcePath)
+	logContext := buildTransferLogContext("upload", uploadRequest.Host, uploadRequest.Port, uploadRequest.User, uploadRequest.SourcePath, uploadRequest.TargetPath, transferAuthMethod(uploadRequest.Password, uploadRequest.PrivateKey), sourceMeta)
+	logger.Debugf("[SCP] Instance: %s, prepared | %s | timeout=%ds | command=%s", instanceId, logContext, uploadRequest.ExecuteTimeout, redactSensitiveCommand(scpCommand))
+
+	localExecuteRequest := local.ExecuteRequest{
+		Command:        scpCommand,
+		LogCommand:     redactSensitiveCommand(scpCommand),
+		LogContext:     logContext,
+		ExecuteTimeout: uploadRequest.ExecuteTimeout,
+	}
+
+	responseData := executeSCPCommand(instanceId, localExecuteRequest)
+	responseContent, _ := json.Marshal(responseData)
+	return responseContent, true
+}
+
+func respondSSHExecuteMessage(msg responseMsg, data []byte, instanceId string, nc *nats.Conn) bool {
+	responseContent, ok := handleSSHExecuteMessage(data, instanceId, nc)
+	if !ok {
+		logger.Errorf("[SSH Subscribe] Instance: %s, Error unmarshalling incoming message", instanceId)
+		return false
+	}
+	if err := msg.Respond(responseContent); err != nil {
+		logger.Errorf("[SSH Subscribe] Instance: %s, Error responding to SSH request: %v", instanceId, err)
+		return false
+	}
+	logger.Debugf("[SSH Subscribe] Instance: %s, Response sent successfully, size: %d bytes", instanceId, len(responseContent))
+	return true
+}
 
 func buildSCPCommand(user, host, password, privateKey string, port uint, sourcePath, targetPath string, isUpload bool, profile sshCompatibilityProfile) (string, func(), error) {
 	var cleanup func()
@@ -24,10 +325,24 @@ func buildSCPCommand(user, host, password, privateKey string, port uint, sourceP
 
 	if privateKey != "" {
 		tmpDir := os.TempDir()
-		keyFile := filepath.Join(tmpDir, fmt.Sprintf("ssh_key_%d", time.Now().UnixNano()))
+		tempFile, err := os.CreateTemp(tmpDir, "ssh_key_*")
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to create temporary key file: %v", err)
+		}
+		keyFile := tempFile.Name()
 
-		if err := os.WriteFile(keyFile, []byte(privateKey), 0600); err != nil {
+		if _, err := tempFile.Write([]byte(privateKey)); err != nil {
+			tempFile.Close()
+			os.Remove(keyFile)
 			return "", nil, fmt.Errorf("failed to write private key to temp file: %v", err)
+		}
+		if err := tempFile.Close(); err != nil {
+			os.Remove(keyFile)
+			return "", nil, fmt.Errorf("failed to close temporary key file: %v", err)
+		}
+		if err := os.Chmod(keyFile, 0600); err != nil {
+			os.Remove(keyFile)
+			return "", nil, fmt.Errorf("failed to set private key permissions: %v", err)
 		}
 
 		cleanup = func() {
@@ -36,11 +351,11 @@ func buildSCPCommand(user, host, password, privateKey string, port uint, sourceP
 		}
 
 		if isUpload {
-			scpCommand = fmt.Sprintf("scp -i %s %s -P %d -r %s %s@%s:%s",
-				keyFile, sshOptions, port, sourcePath, user, host, targetPath)
+			scpCommand = fmt.Sprintf("scp -i %s %s -P %d -r %s %s",
+				shellQuote(keyFile), sshOptions, port, shellQuote(sourcePath), shellQuoteRemoteTarget(user, host, targetPath))
 		} else {
-			scpCommand = fmt.Sprintf("scp -i %s %s -P %d -r %s %s@%s:%s",
-				keyFile, sshOptions, port, sourcePath, user, host, targetPath)
+			scpCommand = fmt.Sprintf("scp -i %s %s -P %d -r %s %s",
+				shellQuote(keyFile), sshOptions, port, shellQuoteRemoteTarget(user, host, targetPath), shellQuote(sourcePath))
 		}
 
 		logger.Debugf("[SCP] Using private key authentication with profile=%s", profile)
@@ -48,11 +363,11 @@ func buildSCPCommand(user, host, password, privateKey string, port uint, sourceP
 		cleanup = func() {}
 
 		if isUpload {
-			scpCommand = fmt.Sprintf("sshpass -p '%s' scp %s -P %d -r %s %s@%s:%s",
-				password, sshOptions, port, sourcePath, user, host, targetPath)
+			scpCommand = fmt.Sprintf("sshpass -p %s scp %s -P %d -r %s %s",
+				shellQuote(password), sshOptions, port, shellQuote(sourcePath), shellQuoteRemoteTarget(user, host, targetPath))
 		} else {
-			scpCommand = fmt.Sprintf("sshpass -p '%s' scp %s -P %d -r %s %s@%s:%s",
-				password, sshOptions, port, sourcePath, user, host, targetPath)
+			scpCommand = fmt.Sprintf("sshpass -p %s scp %s -P %d -r %s %s",
+				shellQuote(password), sshOptions, port, shellQuoteRemoteTarget(user, host, targetPath), shellQuote(sourcePath))
 		}
 
 		logger.Debugf("[SCP] Using password authentication with profile=%s", profile)
@@ -64,7 +379,8 @@ func buildSCPCommand(user, host, password, privateKey string, port uint, sourceP
 }
 
 func executeSCPWithFallback(instanceId string, request local.ExecuteRequest) local.ExecuteResponse {
-	response := local.Execute(request, instanceId)
+	logger.Debugf("[SCP] Instance: %s, attempt | profile=modern | %s", instanceId, request.LogContext)
+	response := executeLocalSCPCommand(request, instanceId)
 	if response.Success {
 		return response
 	}
@@ -78,16 +394,104 @@ func executeSCPWithFallback(instanceId string, request local.ExecuteRequest) loc
 		return response
 	}
 
-	logger.Warnf("[SCP Execute] Instance: %s, SCP failed with modern profile, retrying with legacy profile", instanceId)
+	logger.Warnf("[SCP] Instance: %s, retry | profile=modern -> legacy | %s | reason=%s", instanceId, request.LogContext, response.Error)
 	legacyRequest := request
 	legacyRequest.Command = legacyCommand
+	legacyRequest.LogCommand = redactSensitiveCommand(legacyCommand)
 
-	legacyResponse := local.Execute(legacyRequest, instanceId)
+	legacyResponse := executeLocalSCPCommand(legacyRequest, instanceId)
 	if legacyResponse.Success {
-		logger.Warnf("[SCP Execute] Instance: %s, SCP succeeded with legacy fallback profile", instanceId)
+		logger.Infof("[SCP] Instance: %s, success | profile=legacy | %s", instanceId, request.LogContext)
+	} else {
+		logger.Warnf("[SCP] Instance: %s, failure | profile=legacy | %s | error=%s | last=%q", instanceId, request.LogContext, legacyResponse.Error, truncateTransferOutput(legacyResponse.Output))
 	}
 
 	return legacyResponse
+}
+
+func buildTransferLogContext(direction, host string, port uint, user, sourcePath, targetPath, authMethod string, sourceMeta transferSourceMeta) string {
+	return fmt.Sprintf(
+		"%s %s@%s:%d %s -> %s [auth=%s kind=%s size=%s name=%s]",
+		direction,
+		user,
+		host,
+		port,
+		sourcePath,
+		targetPath,
+		authMethod,
+		sourceMeta.Kind,
+		humanReadableSize(sourceMeta.SizeBytes),
+		sourceMeta.BaseName,
+	)
+}
+
+type transferSourceMeta struct {
+	Kind      string
+	SizeBytes int64
+	BaseName  string
+}
+
+func describeTransferSource(sourcePath string) transferSourceMeta {
+	meta := transferSourceMeta{
+		Kind:      "unknown",
+		SizeBytes: -1,
+		BaseName:  filepath.Base(sourcePath),
+	}
+
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		meta.Kind = "missing_or_inaccessible"
+		return meta
+	}
+
+	if info.IsDir() {
+		meta.Kind = "dir"
+		return meta
+	}
+
+	meta.Kind = "file"
+	meta.SizeBytes = info.Size()
+	return meta
+}
+
+func humanReadableSize(size int64) string {
+	if size < 0 {
+		return "unknown"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(size)
+	unit := units[0]
+	for i := 1; i < len(units) && value >= 1024; i++ {
+		value = value / 1024
+		unit = units[i]
+	}
+	if unit == "B" {
+		return fmt.Sprintf("%dB", size)
+	}
+	return fmt.Sprintf("%.1f%s", value, unit)
+}
+
+func transferAuthMethod(password, privateKey string) string {
+	if privateKey != "" {
+		return "private_key"
+	}
+	if password != "" {
+		return "password"
+	}
+	return "unknown"
+}
+
+func truncateTransferOutput(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "\n", " | ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	if len(value) <= 240 {
+		return value
+	}
+	return value[:240] + "..."
 }
 
 func addLegacySCPOptions(command string) string {
@@ -108,7 +512,42 @@ func addLegacySCPOptions(command string) string {
 	return command[:portFlagIndex] + legacyOptions + command[portFlagIndex:]
 }
 
+func invalidSSHExecuteResponse(instanceId, message string) ExecuteResponse {
+	return ExecuteResponse{
+		InstanceId: instanceId,
+		Success:    false,
+		Output:     message,
+		Code:       utils.ErrorCodeInvalidRequest,
+		Error:      message,
+	}
+}
+
+func validateExecuteRequest(req ExecuteRequest) string {
+	switch {
+	case strings.TrimSpace(req.Command) == "":
+		return "command is required"
+	case strings.TrimSpace(req.Host) == "":
+		return "host is required"
+	case strings.TrimSpace(req.User) == "":
+		return "user is required"
+	case req.Port == 0:
+		return "port must be greater than 0"
+	case req.ExecuteTimeout <= 0:
+		return "execute timeout must be greater than 0"
+	default:
+		return ""
+	}
+}
+
 func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
+	return executeWithConn(req, instanceId, nil)
+}
+
+func executeWithConn(req ExecuteRequest, instanceId string, nc *nats.Conn) ExecuteResponse {
+	if validationErr := validateExecuteRequest(req); validationErr != "" {
+		return invalidSSHExecuteResponse(instanceId, validationErr)
+	}
+
 	logger.Debugf("[SSH Execute] Instance: %s, Starting SSH connection to %s@%s:%d", instanceId, req.User, req.Host, req.Port)
 	logger.Debugf("[SSH Execute] Instance: %s, Command: %s, Timeout: %ds", instanceId, req.Command, req.ExecuteTimeout)
 
@@ -119,9 +558,9 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 		var err error
 
 		if req.Passphrase != "" {
-			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(req.PrivateKey), []byte(req.Passphrase))
+			signer, err = parsePrivateKeyWithPassphraseFn([]byte(req.PrivateKey), []byte(req.Passphrase))
 		} else {
-			signer, err = ssh.ParsePrivateKey([]byte(req.PrivateKey))
+			signer, err = parsePrivateKeyFn([]byte(req.PrivateKey))
 		}
 
 		if err != nil {
@@ -131,6 +570,7 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 				InstanceId: instanceId,
 				Success:    false,
 				Output:     errMsg,
+				Code:       utils.ErrorCodeInvalidRequest,
 				Error:      errMsg,
 			}
 		}
@@ -150,6 +590,7 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 			InstanceId: instanceId,
 			Success:    false,
 			Output:     errMsg,
+			Code:       utils.ErrorCodeInvalidRequest,
 			Error:      errMsg,
 		}
 	}
@@ -163,7 +604,7 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 	}
 
 	addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
-	client, err := ssh.Dial("tcp", addr, sshConfig)
+	client, err := sshDialFn("tcp", addr, sshConfig)
 	if err != nil {
 		if shouldRetryWithLegacy(err.Error()) {
 			logger.Warnf("[SSH Execute] Instance: %s, modern profile dial failed, retrying legacy profile for %s@%s:%d - Error: %v", instanceId, req.User, req.Host, req.Port, err)
@@ -172,15 +613,15 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 			if req.PrivateKey != "" {
 				var legacySigner ssh.Signer
 				if req.Passphrase != "" {
-					legacySigner, err = ssh.ParsePrivateKeyWithPassphrase([]byte(req.PrivateKey), []byte(req.Passphrase))
+					legacySigner, err = parsePrivateKeyWithPassphraseFn([]byte(req.PrivateKey), []byte(req.Passphrase))
 				} else {
-					legacySigner, err = ssh.ParsePrivateKey([]byte(req.PrivateKey))
+					legacySigner, err = parsePrivateKeyFn([]byte(req.PrivateKey))
 				}
 
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to parse private key for legacy retry: %v", err)
 					logger.Errorf("[SSH Execute] Instance: %s, %s", instanceId, errMsg)
-					return ExecuteResponse{InstanceId: instanceId, Success: false, Output: errMsg, Error: errMsg}
+					return ExecuteResponse{InstanceId: instanceId, Success: false, Output: errMsg, Code: utils.ErrorCodeInvalidRequest, Error: errMsg}
 				}
 
 				legacyAuthMethods = append(legacyAuthMethods, buildPublicKeyAuthMethod(legacySigner, profileLegacy))
@@ -198,7 +639,7 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 				HostKeyAlgorithms: hostKeyAlgorithmsForProfile(profileLegacy),
 			}
 
-			client, err = ssh.Dial("tcp", addr, legacyConfig)
+			client, err = sshDialFn("tcp", addr, legacyConfig)
 			if err == nil {
 				logger.Warnf("[SSH Execute] Instance: %s, legacy profile dial succeeded for %s@%s:%d", instanceId, req.User, req.Host, req.Port)
 			}
@@ -211,6 +652,7 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 				InstanceId: instanceId,
 				Success:    false,
 				Output:     errMsg,
+				Code:       utils.ErrorCodeDependencyFailure,
 				Error:      errMsg,
 			}
 		}
@@ -230,14 +672,25 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 			InstanceId: instanceId,
 			Success:    false,
 			Output:     errMsg,
+			Code:       utils.ErrorCodeDependencyFailure,
 			Error:      errMsg,
 		}
 	}
 	defer session.Close()
 
 	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
+	stdoutWriter := io.Writer(&stdout)
+	stderrWriter := io.Writer(&stderr)
+	var stdoutStreamWriter *streamLogWriter
+	var stderrStreamWriter *streamLogWriter
+	if req.StreamLogs && req.StreamLogTopic != "" && nc != nil {
+		stdoutStreamWriter = newStreamLogWriter(nc, req.StreamLogTopic, req.ExecutionID, "stdout")
+		stderrStreamWriter = newStreamLogWriter(nc, req.StreamLogTopic, req.ExecutionID, "stderr")
+		stdoutWriter = io.MultiWriter(&stdout, stdoutStreamWriter)
+		stderrWriter = io.MultiWriter(&stderr, stderrStreamWriter)
+	}
+	session.SetStdout(stdoutWriter)
+	session.SetStderr(stderrWriter)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.ExecuteTimeout)*time.Second)
 	defer cancel()
@@ -256,14 +709,27 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 		errMsg := fmt.Sprintf("Command timed out after %v (timeout: %ds)", duration, req.ExecuteTimeout)
 		logger.Warnf("[SSH Execute] Instance: %s, %s", instanceId, errMsg)
 		session.Signal(ssh.SIGKILL)
+		if stdoutStreamWriter != nil {
+			stdoutStreamWriter.Flush()
+		}
+		if stderrStreamWriter != nil {
+			stderrStreamWriter.Flush()
+		}
 		return ExecuteResponse{
 			Output:     stdout.String() + stderr.String(),
 			InstanceId: instanceId,
 			Success:    false,
+			Code:       utils.ErrorCodeTimeout,
 			Error:      errMsg,
 		}
 	case err := <-errChan:
 		duration := time.Since(startTime)
+		if stdoutStreamWriter != nil {
+			stdoutStreamWriter.Flush()
+		}
+		if stderrStreamWriter != nil {
+			stderrStreamWriter.Flush()
+		}
 		output := stdout.String()
 		if stderr.Len() > 0 {
 			output += stderr.String()
@@ -277,6 +743,7 @@ func Execute(req ExecuteRequest, instanceId string) ExecuteResponse {
 				Output:     output,
 				InstanceId: instanceId,
 				Success:    false,
+				Code:       utils.ErrorCodeExecutionFailure,
 				Error:      errMsg,
 			}
 		}
@@ -316,38 +783,7 @@ func SubscribeSSHExecutor(nc *nats.Conn, instanceId *string) {
 
 	_, err := nc.Subscribe(subject, func(msg *nats.Msg) {
 		logger.Debugf("[SSH Subscribe] Instance: %s, Received message, size: %d bytes", *instanceId, len(msg.Data))
-
-		var incoming struct {
-			Args   []json.RawMessage      `json:"args"`
-			Kwargs map[string]interface{} `json:"kwargs"`
-		}
-
-		if err := json.Unmarshal(msg.Data, &incoming); err != nil {
-			logger.Errorf("[SSH Subscribe] Instance: %s, Error unmarshalling incoming message: %v", *instanceId, err)
-			return
-		}
-
-		if len(incoming.Args) == 0 {
-			logger.Warnf("[SSH Subscribe] Instance: %s, No arguments received in message", *instanceId)
-			return
-		}
-
-		var sshExecuteRequest ExecuteRequest
-		if err := json.Unmarshal(incoming.Args[0], &sshExecuteRequest); err != nil {
-			logger.Errorf("[SSH Subscribe] Instance: %s, Error unmarshalling first arg to ssh.ExecuteRequest: %v", *instanceId, err)
-			return
-		}
-
-		logger.Debugf("[SSH Subscribe] Instance: %s, Parsed SSH request for %s@%s:%d", *instanceId, sshExecuteRequest.User, sshExecuteRequest.Host, sshExecuteRequest.Port)
-		responseData := Execute(sshExecuteRequest, *instanceId)
-		logger.Debugf("[SSH Subscribe] Instance: %s, SSH execution completed, success: %v", *instanceId, responseData.Success)
-
-		responseContent, _ := json.Marshal(responseData)
-		if err := msg.Respond(responseContent); err != nil {
-			logger.Errorf("[SSH Subscribe] Instance: %s, Error responding to SSH request: %v", *instanceId, err)
-		} else {
-			logger.Debugf("[SSH Subscribe] Instance: %s, Response sent successfully, size: %d bytes", *instanceId, len(responseContent))
-		}
+		respondSSHExecuteMessage(msg, msg.Data, *instanceId, nc)
 	})
 
 	if err != nil {
@@ -362,105 +798,10 @@ func SubscribeDownloadToRemote(nc *nats.Conn, instanceId *string) {
 	nc.Subscribe(subject, func(msg *nats.Msg) {
 		logger.Debugf("[Download Subscribe] Instance: %s, Received download request, size: %d bytes", *instanceId, len(msg.Data))
 
-		var incoming struct {
-			Args   []json.RawMessage      `json:"args"`
-			Kwargs map[string]interface{} `json:"kwargs"`
-		}
-
-		if err := json.Unmarshal(msg.Data, &incoming); err != nil {
-			logger.Errorf("[Download Subscribe] Instance: %s, Error unmarshalling incoming message: %v", *instanceId, err)
+		responseContent, ok := handleDownloadToRemoteMessage(msg.Data, *instanceId, nc)
+		if !ok {
+			logger.Errorf("[Download Subscribe] Instance: %s, Error unmarshalling incoming message", *instanceId)
 			return
-		}
-
-		if len(incoming.Args) == 0 {
-			logger.Warnf("[Download Subscribe] Instance: %s, No arguments received in message", *instanceId)
-			return
-		}
-
-		var downloadRequest DownloadFileRequest
-
-		if err := json.Unmarshal(incoming.Args[0], &downloadRequest); err != nil {
-			logger.Errorf("[Download Subscribe] Instance: %s, Error unmarshalling first arg to DownloadFileRequest: %v", *instanceId, err)
-			return
-		}
-
-		localTargetPath := downloadRequest.LocalPath
-		if localTargetPath == "" {
-			localTargetPath = "/tmp"
-		}
-
-		logger.Debugf("[Download Subscribe] Instance: %s, Starting download from bucket %s, file %s to local path %s", *instanceId, downloadRequest.BucketName, downloadRequest.FileKey, localTargetPath)
-
-		localdownloadRequest := utils.DownloadFileRequest{
-			BucketName:     downloadRequest.BucketName,
-			FileKey:        downloadRequest.FileKey,
-			FileName:       downloadRequest.FileName,
-			TargetPath:     localTargetPath,
-			ExecuteTimeout: downloadRequest.ExecuteTimeout,
-		}
-
-		logger.Debugf("[Download Subscribe] Instance: %s, Downloading file from S3: %s/%s", *instanceId, downloadRequest.BucketName, downloadRequest.FileKey)
-		err := utils.DownloadFile(localdownloadRequest, nc)
-		if err != nil {
-			logger.Errorf("[Download Subscribe] Instance: %s, Error downloading file from S3: %v", *instanceId, err)
-			return
-		}
-		logger.Debugf("[Download Subscribe] Instance: %s, File downloaded successfully to: %s/%s", *instanceId, localdownloadRequest.TargetPath, localdownloadRequest.FileName)
-
-		sourcePath := fmt.Sprintf("%s/%s", localdownloadRequest.TargetPath, localdownloadRequest.FileName)
-		scpCommand, cleanup, err := buildSCPCommand(
-			downloadRequest.User,
-			downloadRequest.Host,
-			downloadRequest.Password,
-			downloadRequest.PrivateKey,
-			downloadRequest.Port,
-			sourcePath,
-			downloadRequest.TargetPath,
-			true,
-			profileModern,
-		)
-
-		if cleanup != nil {
-			defer cleanup()
-		}
-
-		if err != nil {
-			logger.Errorf("[Download Subscribe] Instance: %s, Error building SCP command: %v", *instanceId, err)
-			errorResponse := local.ExecuteResponse{
-				InstanceId: *instanceId,
-				Success:    false,
-				Error:      fmt.Sprintf("Failed to build SCP command: %v", err),
-			}
-			responseContent, _ := json.Marshal(errorResponse)
-			msg.Respond(responseContent)
-			return
-		}
-
-		localExecuteRequest := local.ExecuteRequest{
-			Command:        scpCommand,
-			ExecuteTimeout: downloadRequest.ExecuteTimeout,
-		}
-
-		logger.Debugf("[Download Subscribe] Instance: %s, Starting SCP transfer to remote host: %s@%s:%s", *instanceId, downloadRequest.User, downloadRequest.Host, downloadRequest.TargetPath)
-		logger.Debugf("[Download Subscribe] Instance: %s, SCP command: %s", *instanceId, scpCommand)
-		responseData := executeSCPWithFallback(*instanceId, localExecuteRequest)
-
-		if responseData.Success {
-			logger.Debugf("[Download Subscribe] Instance: %s, File transfer to remote host completed successfully", *instanceId)
-		} else {
-			logger.Warnf("[Download Subscribe] Instance: %s, File transfer to remote host failed", *instanceId)
-			logger.Debugf("[Download Subscribe] Instance: %s, Failure output: %s", *instanceId, responseData.Output)
-		}
-
-		responseContent, err := json.Marshal(responseData)
-		if err != nil {
-			logger.Errorf("[Download Subscribe] Instance: %s, Error marshalling response: %v", *instanceId, err)
-			errorResponse := local.ExecuteResponse{
-				InstanceId: *instanceId,
-				Success:    false,
-				Error:      fmt.Sprintf("Failed to marshal response: %v", err),
-			}
-			responseContent, _ = json.Marshal(errorResponse)
 		}
 
 		if err := msg.Respond(responseContent); err != nil {
@@ -478,75 +819,11 @@ func SubscribeUploadToRemote(nc *nats.Conn, instanceId *string) {
 	_, err := nc.Subscribe(subject, func(msg *nats.Msg) {
 		logger.Debugf("[Upload Subscribe] Instance: %s, Received upload request, size: %d bytes", *instanceId, len(msg.Data))
 
-		var incoming struct {
-			Args   []json.RawMessage      `json:"args"`
-			Kwargs map[string]interface{} `json:"kwargs"`
-		}
-
-		if err := json.Unmarshal(msg.Data, &incoming); err != nil {
-			logger.Errorf("[Upload Subscribe] Instance: %s, Error unmarshalling incoming message: %v", *instanceId, err)
+		responseContent, ok := handleUploadToRemoteMessage(msg.Data, *instanceId)
+		if !ok {
+			logger.Errorf("[Upload Subscribe] Instance: %s, Error unmarshalling incoming message", *instanceId)
 			return
 		}
-
-		if len(incoming.Args) == 0 {
-			logger.Warnf("[Upload Subscribe] Instance: %s, No arguments received in message", *instanceId)
-			return
-		}
-
-		var uploadRequest UploadFileRequest
-
-		if err := json.Unmarshal(incoming.Args[0], &uploadRequest); err != nil {
-			logger.Errorf("[Upload Subscribe] Instance: %s, Error unmarshalling first arg to UploadFileRequest: %v", *instanceId, err)
-			return
-		}
-
-		logger.Debugf("[Upload Subscribe] Instance: %s, Starting upload from local path %s to remote host %s@%s:%s", *instanceId, uploadRequest.SourcePath, uploadRequest.User, uploadRequest.Host, uploadRequest.TargetPath)
-
-		scpCommand, cleanup, err := buildSCPCommand(
-			uploadRequest.User,
-			uploadRequest.Host,
-			uploadRequest.Password,
-			uploadRequest.PrivateKey,
-			uploadRequest.Port,
-			uploadRequest.SourcePath,
-			uploadRequest.TargetPath,
-			true,
-			profileModern,
-		)
-
-		if cleanup != nil {
-			defer cleanup()
-		}
-
-		if err != nil {
-			logger.Errorf("[Upload Subscribe] Instance: %s, Error building SCP command: %v", *instanceId, err)
-			errorResponse := local.ExecuteResponse{
-				InstanceId: *instanceId,
-				Success:    false,
-				Error:      fmt.Sprintf("Failed to build SCP command: %v", err),
-			}
-			responseContent, _ := json.Marshal(errorResponse)
-			msg.Respond(responseContent)
-			return
-		}
-
-		localExecuteRequest := local.ExecuteRequest{
-			Command:        scpCommand,
-			ExecuteTimeout: uploadRequest.ExecuteTimeout,
-		}
-
-		logger.Debugf("[Upload Subscribe] Instance: %s, Executing SCP command to upload file", *instanceId)
-		logger.Debugf("[Upload Subscribe] Instance: %s, SCP command: %s", *instanceId, scpCommand)
-		responseData := executeSCPWithFallback(*instanceId, localExecuteRequest)
-
-		if responseData.Success {
-			logger.Debugf("[Upload Subscribe] Instance: %s, File upload to remote host completed successfully", *instanceId)
-		} else {
-			logger.Warnf("[Upload Subscribe] Instance: %s, File upload to remote host failed", *instanceId)
-			logger.Debugf("[Upload Subscribe] Instance: %s, Failure output: %s", *instanceId, responseData.Output)
-		}
-
-		responseContent, _ := json.Marshal(responseData)
 		if err := msg.Respond(responseContent); err != nil {
 			logger.Errorf("[Upload Subscribe] Instance: %s, Error responding to upload request: %v", *instanceId, err)
 		} else {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Form, Input as AntdInput, Switch, message, Select, Skeleton } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { useUserInfoContext } from '@/context/userInfo';
-import { Model, ModelConfig, ModelGroup } from '@/app/opspilot/types/provider';
+import { Model, ModelConfig, ModelGroup, ProviderResourceType } from '@/app/opspilot/types/provider';
 import { CONFIG_MAP, MODEL_CATEGORY_OPTIONS, getProviderType } from '@/app/opspilot/constants/provider';
 import OperateModal from '@/components/operate-modal';
 import EditablePasswordField from '@/components/dynamic-form/editPasswordField';
@@ -12,7 +12,7 @@ import { useProviderApi } from '@/app/opspilot/api/provider';
 interface ProviderModalProps {
   visible: boolean;
   mode: 'add' | 'edit';
-  filterType: string;
+  filterType: ProviderResourceType;
   model?: Model | null;
   confirmLoading: boolean;
   onOk: (values: any) => Promise<void>;
@@ -24,17 +24,17 @@ const FormSkeleton: React.FC = () => {
     <div className="space-y-6">
       {Array.from({ length: 8 }).map((_, index) => (
         <div key={index} className="space-y-2">
-          <Skeleton.Button 
-            active 
-            size="small" 
-            style={{ width: 80, height: 16 }} 
+          <Skeleton.Button
+            active
+            size="small"
+            style={{ width: 80, height: 16 }}
             block={false}
           />
-          <Skeleton.Input 
-            active 
-            size="default" 
-            style={{ height: 32 }} 
-            block 
+          <Skeleton.Input
+            active
+            size="default"
+            style={{ height: 32 }}
+            block
           />
         </div>
       ))}
@@ -82,29 +82,29 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
   // Handle form data initialization
   React.useEffect(() => {
     if (!visible) return;
-    
+
     if (mode === 'edit' && model) {
       const fetchDetailAndSetForm = async () => {
         setModelDetailLoading(true);
         try {
           const modelDetail: Model = await fetchModelDetail(filterType, model.id);
-          
+
           const configField = CONFIG_MAP[filterType];
           const config = modelDetail[configField as keyof Model] as ModelConfig | undefined;
-          
+
           form.setFieldsValue({
             name: modelDetail.name || '',
-            modelName: filterType === 'llm_model' 
+            modelName: filterType === 'llm_model'
               ? modelDetail.llm_config?.model || ''
               : config?.model || '',
             model_type: modelDetail.model_type || '',
             label: modelDetail.label || '',
             team: modelDetail.team,
-            apiKey: filterType === 'llm_model' 
-              ? modelDetail.llm_config?.openai_api_key || '' 
+            apiKey: filterType === 'llm_model'
+              ? modelDetail.llm_config?.openai_api_key || ''
               : config?.api_key || '',
-            url: filterType === 'llm_model' 
-              ? modelDetail.llm_config?.openai_base_url || '' 
+            url: filterType === 'llm_model'
+              ? modelDetail.llm_config?.openai_base_url || ''
               : config?.base_url || '',
             enabled: modelDetail.enabled || false,
           });
@@ -115,7 +115,7 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
           setModelDetailLoading(false);
         }
       };
-      
+
       fetchDetailAndSetForm();
     } else {
       form.resetFields();
@@ -170,7 +170,7 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
             label={t('provider.form.type')}
             rules={[{ required: true, message: `${t('common.selectMsg')}${t('provider.form.type')}` }]}
           >
-            <Select 
+            <Select
               placeholder={`${t('common.selectMsg')}${t('provider.form.type')}`}
               loading={groupsLoading}
               showSearch
@@ -192,7 +192,7 @@ const ProviderModal: React.FC<ProviderModalProps> = ({
               label={t('provider.form.label')}
               rules={[{ required: true, message: `${t('common.selectMsg')}${t('provider.form.label')}` }]}
             >
-              <Select 
+              <Select
                 placeholder={`${t('common.selectMsg')}${t('provider.form.label')}`}
                 showSearch
                 filterOption={(input, option) =>

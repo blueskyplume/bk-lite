@@ -21,6 +21,7 @@ import {
   Tooltip,
 } from 'antd';
 import { useTranslation } from '@/utils/i18n';
+import { useOpsAnalysis } from '@/app/ops-analysis/context/common';
 import {
   LayoutItem,
   TimeConfig,
@@ -55,6 +56,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
     const { t } = useTranslation();
     const { getDashboardDetail, saveDashboard } = useDashBoardApi();
     const dataSourceManager = useDataSourceManager();
+    const { fetchDataSources } = useOpsAnalysis();
     const [isEditMode, setIsEditMode] = useState(false);
     const [addModalVisible, setAddModalVisible] = useState(false);
     const [layout, setLayout] = useState<LayoutItem[]>([]);
@@ -128,6 +130,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
         )
       );
     });
+
+    useEffect(() => {
+      void fetchDataSources();
+    }, [fetchDataSources]);
 
     useEffect(() => {
       const loadDashboardData = async () => {
@@ -270,6 +276,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
           dataSource: config?.dataSource,
           chartType: config?.chartType || '',
           dataSourceParams: config?.dataSourceParams || [],
+          tableConfig: config?.tableConfig,
         },
       };
       setLayout((prev) => [...prev, newWidget]);
@@ -353,6 +360,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                   dataSource: values.dataSource,
                   chartType: values.chartType,
                   dataSourceParams: values.dataSourceParams,
+                  tableConfig: values.tableConfig,
                 },
               };
             }
@@ -529,14 +537,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                             {item.name}
                           </h4>
                           {
-                            <p className="text-sm text-[var(--color-text-2)] mt-1">
+                            <p className="text-sm text-(--color-text-2) mt-1">
                               {item.description || '--'}
                             </p>
                           }
                         </div>
                         {isEditMode && (
                           <Dropdown overlay={menu} trigger={['click']}>
-                            <button className="no-drag text-[var(--color-text-2)] hover:text-[var(--color-text-1)] transition-colors">
+                            <button className="no-drag text-(--color-text-2) hover:text-(--color-text-1) transition-colors cursor-pointer">
                               <MoreOutlined style={{ fontSize: '20px' }} />
                             </button>
                           </Dropdown>
@@ -549,6 +557,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                           config={item.valueConfig}
                           globalTimeRange={globalTimeRange}
                           refreshKey={refreshKey}
+                          dataSource={dataSourceManager.findDataSource(
+                            item.valueConfig?.dataSource,
+                          )}
                         />
                       </div>
                     </div>

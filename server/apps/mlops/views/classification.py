@@ -21,10 +21,10 @@ from apps.mlops.utils.webhook_client import (
     WebhookConnectionError,
     WebhookTimeoutError,
 )
+from apps.mlops.predict_url_builder import build_predict_url
 from apps.mlops.utils import mlflow_service
 from apps.mlops.utils.validators import validate_serving_status_change
 from apps.mlops.services import (
-    get_host_address,
     get_image_by_prefix,
     get_mlflow_train_config,
     get_mlflow_tracking_uri,
@@ -37,9 +37,11 @@ from apps.mlops.serializers.algorithm_config import (
     AlgorithmConfigListSerializer,
 )
 from apps.mlops.filters.algorithm_config import AlgorithmConfigFilter
+from apps.mlops.views.base import TeamModelViewSet
+from apps.mlops.utils.group_scope import filter_queryset_by_parent_team
 
 
-class ClassificationDatasetViewSet(ModelViewSet):
+class ClassificationDatasetViewSet(TeamModelViewSet):
     queryset = ClassificationDataset.objects.all()
     serializer_class = ClassificationDatasetSerializer
     pagination_class = CustomPageNumberPagination
@@ -68,15 +70,13 @@ class ClassificationDatasetViewSet(ModelViewSet):
         return super().update(request, *args, **kwargs)
 
 
-class ClassificationServingViewSet(ModelViewSet):
-    queryset = ClassificationServing.objects.select_related(
-        "train_job", "train_job__dataset_version", "train_job__dataset_version__dataset"
-    ).all()
+class ClassificationServingViewSet(TeamModelViewSet):
+    queryset = ClassificationServing.objects.select_related("train_job", "train_job__dataset_version", "train_job__dataset_version__dataset").all()
     serializer_class = ClassificationServingSerializer
     pagination_class = CustomPageNumberPagination
     filterset_class = ClassificationServingFilter
     ordering = ("-id",)
-    permission_key = "dataset.classification_serving"
+    permission_key = "serving.classification_serving"
 
     MLFLOW_PREFIX = "Classification"  # MLflow 命名前缀
 
@@ -157,9 +157,7 @@ class ClassificationServingViewSet(ModelViewSet):
                 response.data["container_info"] = container_info
 
                 # 更新数据库
-                ClassificationServing.objects.filter(id=response.data["id"]).update(
-                    container_info=container_info
-                )
+                ClassificationServing.objects.filter(id=response.data["id"]).update(container_info=container_info)
             else:
                 response.data["container_info"] = {
                     "status": "error",
@@ -224,9 +222,7 @@ class ClassificationServingViewSet(ModelViewSet):
 
             try:
                 # 动态获取推理镜像
-                train_image = get_image_by_prefix(
-                    self.MLFLOW_PREFIX, serving.train_job.algorithm
-                )
+                train_image = get_image_by_prefix(self.MLFLOW_PREFIX, serving.train_job.algorithm)
 
                 # 调用 WebhookClient 启动服务
                 result = WebhookClient.serve(
@@ -238,9 +234,7 @@ class ClassificationServingViewSet(ModelViewSet):
                 )
 
                 serving.container_info = result
-                serving.port = (
-                    int(result.get("port", 0)) if result.get("port") else serving.port
-                )
+                serving.port = int(result.get("port", 0)) if result.get("port") else serving.port
                 serving.save(update_fields=["container_info", "port"])
 
                 response.data["container_info"] = result
@@ -268,9 +262,7 @@ class ClassificationServingViewSet(ModelViewSet):
                         serving.save(update_fields=["container_info"])
 
                         response.data["container_info"] = container_info
-                        response.data["message"] = (
-                            "服务已创建，检测到容器已存在并同步容器状态"
-                        )
+                        response.data["message"] = "服务已创建，检测到容器已存在并同步容器状态"
                         response.data["warning"] = "容器已存在，已同步容器信息"
                     except WebhookError:
                         serving.container_info = {
@@ -309,13 +301,8 @@ class ClassificationServingViewSet(ModelViewSet):
         old_train_job_id = instance.train_job.id
 
         # 检测是否更新了影响容器的字段（基于请求数据与旧值对比）
-        model_version_changed = "model_version" in request.data and str(
-            request.data["model_version"]
-        ) != str(old_model_version)
-        train_job_changed = (
-            "train_job" in request.data
-            and int(request.data["train_job"]) != old_train_job_id
-        )
+        model_version_changed = "model_version" in request.data and str(request.data["model_version"]) != str(old_model_version)
+        train_job_changed = "train_job" in request.data and int(request.data["train_job"]) != old_train_job_id
         port_changed = "port" in request.data and request.data.get("port") != old_port
 
         container_id = f"Classification_Serving_{instance.id}"
@@ -373,9 +360,7 @@ class ClassificationServingViewSet(ModelViewSet):
                 model_uri = self._resolve_model_uri(instance)
 
                 # 动态获取推理镜像
-                train_image = get_image_by_prefix(
-                    self.MLFLOW_PREFIX, instance.train_job.algorithm
-                )
+                train_image = get_image_by_prefix(self.MLFLOW_PREFIX, instance.train_job.algorithm)
 
                 # 启动新容器
                 result = WebhookClient.serve(
@@ -388,9 +373,7 @@ class ClassificationServingViewSet(ModelViewSet):
 
                 # 更新容器信息（status 由用户控制，不修改）
                 instance.container_info = result
-                instance.port = (
-                    int(result.get("port", 0)) if result.get("port") else instance.port
-                )
+                instance.port = int(result.get("port", 0)) if result.get("port") else instance.port
                 instance.save(update_fields=["container_info", "port"])
 
                 # 更新返回数据
@@ -442,9 +425,7 @@ class ClassificationServingViewSet(ModelViewSet):
 
             try:
                 # 动态获取推理镜像
-                train_image = get_image_by_prefix(
-                    self.MLFLOW_PREFIX, serving.train_job.algorithm
-                )
+                train_image = get_image_by_prefix(self.MLFLOW_PREFIX, serving.train_job.algorithm)
 
                 # 调用 WebhookClient 启动服务
                 result = WebhookClient.serve(
@@ -457,9 +438,7 @@ class ClassificationServingViewSet(ModelViewSet):
 
                 # 正常启动成功，仅更新容器信息
                 serving.container_info = result
-                serving.port = (
-                    int(result.get("port", 0)) if result.get("port") else serving.port
-                )
+                serving.port = int(result.get("port", 0)) if result.get("port") else serving.port
                 serving.save(update_fields=["container_info", "port"])
 
                 return Response(
@@ -515,13 +494,9 @@ class ClassificationServingViewSet(ModelViewSet):
                     )
 
         except WebhookTimeoutError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookConnectionError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
             logger.error(f"启动 serving 服务失败: {str(e)}", exc_info=True)
             return Response(
@@ -553,18 +528,12 @@ class ClassificationServingViewSet(ModelViewSet):
             )
 
         except WebhookTimeoutError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookConnectionError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookError as e:
             logger.error(f"停止 serving 失败: {e}")
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
             logger.error(f"停止 serving 服务失败: {str(e)}", exc_info=True)
             return Response(
@@ -605,18 +574,12 @@ class ClassificationServingViewSet(ModelViewSet):
             )
 
         except WebhookTimeoutError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookConnectionError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookError as e:
             logger.error(f"删除容器失败: {e}")
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
             logger.error(f"删除 serving 容器失败: {str(e)}", exc_info=True)
             return Response(
@@ -648,49 +611,42 @@ class ClassificationServingViewSet(ModelViewSet):
         return mlflow_service.resolve_model_uri(model_name, "latest")
 
     @action(detail=True, methods=["post"], url_path="predict")
-    @HasPermission("classification-View")
+    @HasPermission("classification-Predict")
     def predict(self, request, *args, **kwargs):
         """
-        调用 serving 服务进行分类预测
+        调用 serving 服务进行文本分类预测
+
+        请求参数:
+            texts: 待预测文本列表，list[str]，例如 ["text1", "text2"]
+            config: 可选推理配置参数（dict）
         """
         try:
             serving = self.get_object()
 
-            # 获取动态服务地址
-            host_address = get_host_address()
-            if not host_address:
+            texts = request.data.get("texts")
+            config = request.data.get("config")
+
+            if not texts:
+                return Response({"error": "texts 参数不能为空"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not isinstance(texts, list):
+                return Response({"error": "texts 必须是数组格式"}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                predict_url = build_predict_url(
+                    serving_id=f"Classification_Serving_{serving.id}",
+                    container_info=serving.container_info,
+                )
+            except ValueError as e:
                 return Response(
-                    {
-                        "error": "服务地址未配置，请检查环境变量 DEFAULT_ZONE_VAR_NODE_SERVER_URL"
-                    },
+                    {"error": str(e)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
-            data = request.data.get("data")
-
-            if not data:
-                return Response(
-                    {"error": "data 参数不能为空"}, status=status.HTTP_400_BAD_REQUEST
-                )
-
-            if not isinstance(data, list):
-                return Response(
-                    {"error": "data 必须是数组格式"}, status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # 获取实际运行端口，防御性处理 container_info 为空的情况
-            port = (serving.container_info or {}).get("port")
-            if not port:
-                return Response(
-                    {"error": "服务端口未配置，请确认服务已启动"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # 构建预测服务 URL
-            predict_url = f"http://{host_address}:{port}/predict"
 
             # 构建请求体
-            payload = {"data": data}
+            payload = {"texts": texts}
+            if config is not None:
+                payload["config"] = config
 
             # 发起 HTTP POST 请求
             response = requests.post(
@@ -710,9 +666,7 @@ class ClassificationServingViewSet(ModelViewSet):
                     error_code = error_info.get("code", "UNKNOWN")
                     error_message = error_info.get("message", "预测失败")
 
-                    logger.error(
-                        f"预测服务返回失败: serving_id={serving.id}, code={error_code}, message={error_message}"
-                    )
+                    logger.error(f"预测服务返回失败: serving_id={serving.id}, code={error_code}, message={error_message}")
                     return Response(
                         {
                             "error": error_message,
@@ -734,34 +688,22 @@ class ClassificationServingViewSet(ModelViewSet):
                     error_msg = f"{error_msg} - {response.text[:200]}"
 
                 logger.error(f"预测失败: {error_msg}")
-                return Response(
-                    {"error": error_msg}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
+                return Response({"error": error_msg}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except requests.exceptions.Timeout:
             error_msg = f"预测请求超时（超过 60 秒）"
             logger.error(f"预测超时: serving_id={serving.id}")
-            return Response(
-                {"error": error_msg}, status=status.HTTP_504_GATEWAY_TIMEOUT
-            )
+            return Response({"error": error_msg}, status=status.HTTP_504_GATEWAY_TIMEOUT)
         except requests.exceptions.ConnectionError as e:
             error_msg = f"无法连接预测服务: {str(e)}"
             logger.error(f"预测连接失败: serving_id={serving.id}, error={e}")
-            return Response(
-                {"error": error_msg}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+            return Response({"error": error_msg}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except requests.exceptions.RequestException as e:
             error_msg = f"预测请求异常: {str(e)}"
-            logger.error(
-                f"预测请求异常: serving_id={serving.id}, error={e}", exc_info=True
-            )
-            return Response(
-                {"error": error_msg}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"预测请求异常: serving_id={serving.id}, error={e}", exc_info=True)
+            return Response({"error": error_msg}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
-            logger.error(
-                f"预测失败: serving_id={serving.id}, error={str(e)}", exc_info=True
-            )
+            logger.error(f"预测失败: serving_id={serving.id}, error={str(e)}", exc_info=True)
             return Response(
                 {"error": f"预测失败: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -775,6 +717,9 @@ class ClassificationTrainDataViewSet(ModelViewSet):
     filterset_class = ClassificationTrainDataFilter
     ordering = ("-id",)
     permission_key = "dataset.classification_train_data"
+
+    def get_queryset(self):
+        return filter_queryset_by_parent_team(super().get_queryset(), self.request, "dataset__team")
 
     @HasPermission("classification-View")
     def list(self, request, *args, **kwargs):
@@ -797,15 +742,13 @@ class ClassificationTrainDataViewSet(ModelViewSet):
         return super().update(request, *args, **kwargs)
 
 
-class ClassificationTrainJobViewSet(ModelViewSet):
-    queryset = ClassificationTrainJob.objects.select_related(
-        "dataset_version", "dataset_version__dataset"
-    ).all()
+class ClassificationTrainJobViewSet(TeamModelViewSet):
+    queryset = ClassificationTrainJob.objects.select_related("dataset_version", "dataset_version__dataset").all()
     serializer_class = ClassificationTrainJobSerializer
     pagination_class = CustomPageNumberPagination
     filterset_class = ClassificationTrainJobFilter
     ordering = ("-id",)
-    permission_key = "dataset.classification_train_job"
+    permission_key = "train_job.classification_train_job"
 
     MLFLOW_PREFIX = "Classification"  # MLflow 命名前缀
 
@@ -840,9 +783,7 @@ class ClassificationTrainJobViewSet(ModelViewSet):
 
             # 检查任务状态
             if train_job.status == TrainJobStatus.RUNNING:
-                return Response(
-                    {"error": "训练任务已在运行中"}, status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "训练任务已在运行中"}, status=status.HTTP_400_BAD_REQUEST)
 
             # 获取训练配置
             try:
@@ -855,18 +796,11 @@ class ClassificationTrainJobViewSet(ModelViewSet):
                 )
 
             # 检查必要字段
-            if (
-                not train_job.dataset_version
-                or not train_job.dataset_version.dataset_file
-            ):
-                return Response(
-                    {"error": "数据集文件不存在"}, status=status.HTTP_400_BAD_REQUEST
-                )
+            if not train_job.dataset_version or not train_job.dataset_version.dataset_file:
+                return Response({"error": "数据集文件不存在"}, status=status.HTTP_400_BAD_REQUEST)
 
             if not train_job.config_url:
-                return Response(
-                    {"error": "训练配置文件不存在"}, status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "训练配置文件不存在"}, status=status.HTTP_400_BAD_REQUEST)
 
             # 构建训练任务标识
             job_id = mlflow_service.build_job_id(
@@ -903,10 +837,7 @@ class ClassificationTrainJobViewSet(ModelViewSet):
                     current_run_count = len(runs) if not runs.empty else 0
                 expected_run_count = current_run_count + 1
             except Exception:
-                logger.warning(
-                    f"查询 MLflow run 数量失败，降级 expected_run_count=0, "
-                    f"TrainJob ID={train_job.id}"
-                )
+                logger.warning(f"查询 MLflow run 数量失败，降级 expected_run_count=0, TrainJob ID={train_job.id}")
 
             WebhookClient.train(
                 job_id=job_id,
@@ -925,13 +856,8 @@ class ClassificationTrainJobViewSet(ModelViewSet):
             train_job.save(update_fields=["status"])
 
             # 启动异步轮询训练状态
-            logger.info(
-                f"触发轮询任务: TrainJob ID={train_job.id}, "
-                f"预期 run 数量: {expected_run_count}"
-            )
-            poll_train_job_status.delay(
-                train_job.id, self.MLFLOW_PREFIX, expected_run_count
-            )
+            logger.info(f"触发轮询任务: TrainJob ID={train_job.id}, 预期 run 数量: {expected_run_count}")
+            poll_train_job_status.delay(train_job.id, self.MLFLOW_PREFIX, expected_run_count)
 
             return Response(
                 {
@@ -942,18 +868,12 @@ class ClassificationTrainJobViewSet(ModelViewSet):
             )
 
         except WebhookTimeoutError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookConnectionError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookError as e:
             logger.error(f"启动训练任务失败: {e}")
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
             logger.error(f"启动训练任务失败: {str(e)}", exc_info=True)
             return Response(
@@ -972,9 +892,7 @@ class ClassificationTrainJobViewSet(ModelViewSet):
 
             # 检查任务状态
             if train_job.status != TrainJobStatus.RUNNING:
-                return Response(
-                    {"error": "训练任务未在运行中"}, status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "训练任务未在运行中"}, status=status.HTTP_400_BAD_REQUEST)
 
             # 构建训练任务标识
             job_id = mlflow_service.build_job_id(
@@ -1000,18 +918,12 @@ class ClassificationTrainJobViewSet(ModelViewSet):
             )
 
         except WebhookTimeoutError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookConnectionError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except WebhookError as e:
             logger.error(f"停止训练任务失败: {e}")
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
             logger.error(f"停止训练任务失败: {str(e)}", exc_info=True)
             return Response(
@@ -1087,9 +999,7 @@ class ClassificationTrainJobViewSet(ModelViewSet):
                             duration_seconds = (end_time - start_time).total_seconds()
                         else:
                             current_time = pd.Timestamp.now(tz=start_time.tz)
-                            duration_seconds = (
-                                current_time - start_time
-                            ).total_seconds()
+                            duration_seconds = (current_time - start_time).total_seconds()
                         duration_minutes = duration_seconds / 60
                     else:
                         duration_minutes = 0
@@ -1106,15 +1016,9 @@ class ClassificationTrainJobViewSet(ModelViewSet):
                         "run_id": str(row["run_id"]),
                         "run_name": str(run_name),
                         "status": str(run_status),
-                        "start_time": start_time.isoformat()
-                        if pd.notna(start_time)
-                        else None,
-                        "end_time": end_time.isoformat()
-                        if pd.notna(end_time)
-                        else None,
-                        "duration_minutes": float(duration_minutes)
-                        if np.isfinite(duration_minutes)
-                        else 0,
+                        "start_time": start_time.isoformat() if pd.notna(start_time) else None,
+                        "end_time": end_time.isoformat() if pd.notna(end_time) else None,
+                        "duration_minutes": float(duration_minutes) if np.isfinite(duration_minutes) else 0,
                     }
                     run_datas.append(run_data)
 
@@ -1153,9 +1057,7 @@ class ClassificationTrainJobViewSet(ModelViewSet):
     def get_runs_metrics_list(self, request, run_id: str):
         try:
             # 获取运行的指标列表（过滤系统指标）
-            model_metrics = mlflow_service.get_run_metrics(
-                run_id=run_id, filter_system=True
-            )
+            model_metrics = mlflow_service.get_run_metrics(run_id=run_id, filter_system=True)
 
             return Response({"run_id": run_id, "metrics": model_metrics})
 
@@ -1227,12 +1129,8 @@ class ClassificationTrainJobViewSet(ModelViewSet):
                     "run_id": run_id,
                     "run_name": run_name,
                     "status": run_status,
-                    "start_time": pd.Timestamp(start_time, unit="ms").isoformat()
-                    if start_time
-                    else None,
-                    "end_time": pd.Timestamp(end_time, unit="ms").isoformat()
-                    if end_time
-                    else None,
+                    "start_time": pd.Timestamp(start_time, unit="ms").isoformat() if start_time else None,
+                    "end_time": pd.Timestamp(end_time, unit="ms").isoformat() if end_time else None,
                     "params": params,
                 }
             )
@@ -1327,6 +1225,9 @@ class ClassificationDatasetReleaseViewSet(ModelViewSet):
     ordering = ("-id",)
     permission_key = "dataset.classification_dataset_release"
 
+    def get_queryset(self):
+        return filter_queryset_by_parent_team(super().get_queryset(), self.request, "dataset__team")
+
     @HasPermission("classification-View")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
@@ -1357,9 +1258,7 @@ class ClassificationDatasetReleaseViewSet(ModelViewSet):
             release = self.get_object()
 
             if not release.dataset_file or not release.dataset_file.name:
-                return Response(
-                    {"error": "数据集文件不存在"}, status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({"error": "数据集文件不存在"}, status=status.HTTP_404_NOT_FOUND)
 
             # 获取文件
             file = release.dataset_file.open("rb")
@@ -1389,13 +1288,7 @@ class ClassificationAlgorithmConfigViewSet(ModelViewSet):
     permission_key = "algorithm.classification_algorithm_config"
 
     def get_serializer_class(self):
-        if (
-            self.action == "list"
-            and not self.request.query_params.get(
-                "include_form_config", "false"
-            ).lower()
-            == "true"
-        ):
+        if self.action == "list" and not self.request.query_params.get("include_form_config", "false").lower() == "true":
             return AlgorithmConfigListSerializer
         return AlgorithmConfigSerializer
 
@@ -1421,9 +1314,7 @@ class ClassificationAlgorithmConfigViewSet(ModelViewSet):
         instance = self.get_object()
         is_active_new = request.data.get("is_active")
         if instance.is_active and is_active_new is False:
-            task_count = ClassificationTrainJob.objects.filter(
-                algorithm=instance.name
-            ).count()
+            task_count = ClassificationTrainJob.objects.filter(algorithm=instance.name).count()
             if task_count > 0:
                 return Response(
                     {
@@ -1437,9 +1328,7 @@ class ClassificationAlgorithmConfigViewSet(ModelViewSet):
     @HasPermission("classification-Delete")
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        task_count = ClassificationTrainJob.objects.filter(
-            algorithm=instance.name
-        ).count()
+        task_count = ClassificationTrainJob.objects.filter(algorithm=instance.name).count()
         if task_count > 0:
             return Response(
                 {
@@ -1464,11 +1353,7 @@ class ClassificationAlgorithmConfigViewSet(ModelViewSet):
         if not name:
             return Response({"error": "name 参数必填"}, status=400)
         try:
-            config = AlgorithmConfig.objects.get(
-                algorithm_type="classification", name=name, is_active=True
-            )
+            config = AlgorithmConfig.objects.get(algorithm_type="classification", name=name, is_active=True)
             return Response({"image": config.image})
         except AlgorithmConfig.DoesNotExist:
-            return Response(
-                {"error": f"未找到算法配置: classification/{name}"}, status=404
-            )
+            return Response({"error": f"未找到算法配置: classification/{name}"}, status=404)

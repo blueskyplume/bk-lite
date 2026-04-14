@@ -64,6 +64,7 @@ export interface AttrFieldType {
   attr_name: string;
   attr_type: string;
   is_only?: boolean;
+  unique_display_type?: UniqueDisplayType;
   is_required: boolean;
   editable: boolean;
   option: AttrOption;
@@ -71,6 +72,10 @@ export interface AttrFieldType {
   isEdit?: boolean;
   children?: AttrFieldType[];
   user_prompt?: string;
+  enum_rule_type?: EnumRuleType;
+  public_library_id?: string | null;
+  enum_select_mode?: 'single' | 'multiple';
+  default_value?: string[];
   [key: string]: unknown;
 }
 
@@ -124,6 +129,7 @@ export interface AssetDataFieldProps {
   userList: UserItem[];
   instDetail: InstDetail;
   onsuccessEdit: () => void;
+  onSubscribe?: () => void;
 }
 
 export interface InstDetail {
@@ -264,6 +270,7 @@ export interface FieldConfig {
   title: string;
   model_id: string;
   list: Array<any>;
+  source?: 'create' | 'copy' | 'edit' | 'batchEdit';
 }
 
 export interface FieldModalRef {
@@ -291,9 +298,82 @@ export interface AttrItem {
   is_required: boolean;
   editable: boolean;
   is_only: boolean;
+  unique_display_type?: UniqueDisplayType;
   group_id?: string;
   order?: number;
 }
+
+export type UniqueDisplayType = 'none' | 'single' | 'joint'
+
+export interface ModelUniqueRuleItem {
+  rule_id: string;
+  order: number;
+  field_ids: string[];
+  field_names: string[];
+}
+
+export interface UniqueRuleFieldMeta {
+  attr_id: string;
+  attr_name: string;
+  attr_type: string;
+  is_required: boolean;
+  selectable: boolean;
+  disabled_reason: string;
+}
+
+export interface UniqueRuleListResponse {
+  rules: ModelUniqueRuleItem[];
+  candidate_fields: UniqueRuleFieldMeta[];
+}
+
+export interface UniqueRulePayload {
+  field_ids: string[];
+}
+
+export interface AutoAssociationRuleMatchPair {
+  src_field_id: string;
+  dst_field_id: string;
+}
+
+export interface AutoAssociationRuleConfig {
+  enabled: boolean;
+  match_pairs: AutoAssociationRuleMatchPair[];
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface AutoAssociationRuleAssociationItem {
+  model_asst_id: string;
+  src_model_id: string;
+  dst_model_id: string;
+  asst_id?: string;
+  asst_name?: string;
+  mapping: string;
+}
+
+export interface ModelAutoAssociationRuleItem extends AutoAssociationRuleAssociationItem {
+  _id?: string | number;
+  rule_id: string;
+  auto_relation_rule: AutoAssociationRuleConfig;
+  [key: string]: unknown;
+}
+
+export interface AutoAssociationRuleFormAssociationItem extends AutoAssociationRuleAssociationItem {
+  current_side: 'src' | 'dst';
+  form_source_model_id: string;
+  form_source_model_name?: string;
+  form_target_model_id: string;
+  form_target_model_name?: string;
+}
+
+export interface AutoAssociationRulePayload {
+  model_asst_id?: string;
+  rule_id?: string;
+  enabled: boolean;
+  match_pairs: AutoAssociationRuleMatchPair[];
+}
+
+export type ModelAutoAssociationRuleListResponse = ModelAutoAssociationRuleItem[];
 
 // 获取模型完整信息接口相关类型
 export interface FullInfoAttrItem {
@@ -307,6 +387,10 @@ export interface FullInfoAttrItem {
   is_required: boolean;
   is_pre: boolean;
   user_prompt?: string;
+  enum_rule_type?: EnumRuleType;
+  public_library_id?: string | null;
+  enum_select_mode?: 'single' | 'multiple';
+  default_value?: string[];
   [key: string]: unknown;
 }
 
@@ -323,10 +407,17 @@ export interface FullInfoGroupItem {
   can_delete: boolean;
 }
 
+export interface FullInfoUniqueRuleItem {
+  rule_id: string;
+  order: number;
+  field_ids: string[];
+}
+
 export interface ModelFullInfo {
   model_id: string;
   model_name: string;
   groups: FullInfoGroupItem[];
+  unique_rules?: FullInfoUniqueRuleItem[];
   total_groups: number;
   total_attrs: number;
 }

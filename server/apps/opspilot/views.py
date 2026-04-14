@@ -14,13 +14,15 @@ from apps.base.models import UserAPISecret
 from apps.core.logger import opspilot_logger as logger
 from apps.core.utils.exempt import api_exempt
 from apps.core.utils.loader import LanguageLoader
-from apps.opspilot.models import Bot, BotChannel, BotConversationHistory, BotWorkFlow, LLMSkill
+from apps.opspilot.enum import WorkFlowTaskStatus
+from apps.opspilot.models import Bot, BotChannel, BotConversationHistory, BotWorkFlow, LLMSkill, WorkFlowTaskResult
 from apps.opspilot.services.chat_service import ChatService
 from apps.opspilot.services.skill_execute_service import SkillExecuteService
 from apps.opspilot.tasks import chat_flow_test_execute_task
 from apps.opspilot.utils.bot_utils import insert_skill_log, set_time_range
 from apps.opspilot.utils.chat_flow_utils.engine.factory import create_chat_flow_engine
 from apps.opspilot.utils.dingtalk_chat_flow_utils import DingTalkChatFlowUtils, start_dingtalk_stream_client
+from apps.opspilot.utils.execution_interrupt import request_interrupt
 from apps.opspilot.utils.sse_chat import generate_stream_error, stream_chat
 from apps.opspilot.utils.wechat_chat_flow_utils import WechatChatFlowUtils
 from apps.opspilot.utils.wechat_official_chat_flow_utils import WechatOfficialChatFlowUtils
@@ -574,24 +576,11 @@ def execute_chat_flow(request, bot_id, node_id):
     # 获取Bot的工作流配置
     bot_chat_flow = BotWorkFlow.objects.filter(bot_id=bot_obj.id).first()
     if not bot_chat_flow:
-        return JsonResponse(
-            {
-                "result": False,
-                "message": loader.get(
-                    "error.no_chat_flow_configured",
-                    "No chat flow configured for this bot.",
-                ),
-            }
-        )
+        return JsonResponse({"result": False, "message": loader.get("error.no_chat_flow_configured", "No chat flow configured for this bot.")})
 
     # 检查工作流是否有配置数据
     if not bot_chat_flow.flow_json:
-        return JsonResponse(
-            {
-                "result": False,
-                "message": loader.get("error.chat_flow_config_empty", "Chat flow configuration is empty."),
-            }
-        )
+        return JsonResponse({"result": False, "message": loader.get("error.chat_flow_config_empty", "Chat flow configuration is empty.")})
 
     try:
         # 创建ChatFlow引擎 - 使用数据库中的工作流配置
@@ -609,28 +598,24 @@ def execute_chat_flow(request, bot_id, node_id):
             "bot_id": bot_id,
             "node_id": node_id,
             "session_id": session_id,
+            "execution_id": engine.execution_id,
             "locale": getattr(user, "locale", "en"),  # 用户语言设置，用于 browser-use 输出国际化
         }
 
         logger.info(f"开始执行ChatFlow流程，bot_id: {bot_id}, node_id: {node_id}, user: {user.username}, node_type: {node_type}")
 
         if is_test:
+            has_running_test = WorkFlowTaskResult.objects.filter(bot_work_flow__bot_id=bot_obj.id, status=WorkFlowTaskStatus.RUNNING).exists()
+            if has_running_test:
+                msg = loader.get("error.chat_flow_test_running", "A workflow test execution is already running for this bot.")
+                return JsonResponse({"result": False, "message": msg})
+
             execution_id = str(uuid.uuid4())
             input_data["entry_type"] = node_type
             input_data["execution_id"] = execution_id
 
             async_task = chat_flow_test_execute_task.delay(bot_chat_flow.id, node_id, input_data, node_type, execution_id)
-            return JsonResponse(
-                {
-                    "result": True,
-                    "data": {
-                        "status": "accepted",
-                        "execution_id": execution_id,
-                        "task_id": async_task.id,
-                    },
-                },
-                status=202,
-            )
+            return JsonResponse({"result": True, "data": {"status": "accepted", "execution_id": execution_id, "task_id": async_task.id}})
 
         # 区分流式响应节点类型：openai、agui、embedded_chat、mobile、web_chat
         stream_node_types = ["openai", "agui", "embedded_chat", "mobile", "web_chat"]
@@ -650,6 +635,41 @@ def execute_chat_flow(request, bot_id, node_id):
         logger.exception("ChatFlow execution failed: bot_id=%s, node_id=%s", bot_id, node_id)
         # 流式错误响应，参考 llm_view.py
         return LLMViewSet.create_error_stream_response(str(e))
+
+
+def interrupt_chat_flow_execution(request):
+    """按 execution_id 请求中断 ChatFlow 执行，仅供本地 server 内部场景使用。"""
+    loader = get_loader(request)
+    kwargs, parse_error = parse_json_body(request)
+    if parse_error:
+        return JsonResponse({"result": False, "message": parse_error}, status=400)
+
+    execution_id = kwargs.get("execution_id", "")
+    if not execution_id:
+        return JsonResponse({"result": False, "message": loader.get("error.execution_id_required", "execution_id is required")}, status=400)
+
+    token = extract_api_token(request)
+    is_valid, msg = validate_openai_token(token, request.COOKIES.get("current_team") or None)
+    if not is_valid:
+        return JsonResponse(msg)
+
+    request_interrupt(execution_id, reason=kwargs.get("reason", "user_manual"))
+    task_result = WorkFlowTaskResult.objects.filter(execution_id=execution_id).order_by("-id").first()
+    if task_result and task_result.status not in {WorkFlowTaskStatus.SUCCESS, WorkFlowTaskStatus.FAIL, WorkFlowTaskStatus.INTERRUPTED}:
+        task_result.status = WorkFlowTaskStatus.INTERRUPTED
+        task_result.finished_at = datetime.datetime.now(datetime.UTC)
+        task_result.save(update_fields=["status", "finished_at"])
+
+    return JsonResponse(
+        {
+            "result": True,
+            "data": {
+                "execution_id": execution_id,
+                "status": WorkFlowTaskStatus.INTERRUPTED,
+                "interrupt_requested": True,
+            },
+        }
+    )
 
 
 @api_exempt

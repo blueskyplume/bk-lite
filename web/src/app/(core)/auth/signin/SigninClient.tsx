@@ -1,24 +1,33 @@
 "use client";
+import { ArrowLeftOutlined } from "@ant-design/icons";
 import { signIn } from "next-auth/react";
 import { useState, useEffect } from "react";
-import Image from "next/image";
 import { Select, Input } from "antd";
 import PasswordResetForm from "./PasswordResetForm";
 import OtpVerificationForm from "./OtpVerificationForm";
+import WechatQrLoginPanel from "./WechatQrLoginPanel";
+import { useTheme } from '@/context/theme';
+import { usePortalBranding } from "@/hooks/usePortalBranding";
 import { saveAuthToken } from "@/utils/crossDomainAuth";
-import { buildOauthCallbackBridgeUrl, buildThirdLoginCallbackUrl, resolveThirdLoginFlag } from "@/utils/authRedirect";
+import { AUTH_POPUP_SUCCESS_MESSAGE, buildOauthCallbackBridgeUrl, buildPopupSigninUrl, buildThirdLoginCallbackUrl, buildWechatPopupUrl, resolveThirdLoginFlag } from "@/utils/authRedirect";
 
 interface SigninClientProps {
-  searchParams: {
+  searchParams?: {
     callbackUrl: string;
     error: string;
     third_login?: string;
     thirdLogin?: string;
+    popup?: string;
+    provider?: string;
   };
-  signinErrors: Record<string | "default", string>;
+  signinErrors?: Record<string | "default", string>;
+  mode?: 'page' | 'modal';
+  onAuthenticated?: () => void;
+  showThirdPartyLogin?: boolean;
 }
 
 type AuthStep = 'login' | 'reset-password' | 'otp-verification';
+type ModalThirdPartyView = 'login' | 'wechat';
 
 interface LoginResponse {
   temporary_pwd?: boolean;
@@ -43,8 +52,21 @@ interface BkSettings {
   url?: string;
 }
 
-export default function SigninClient({ searchParams: { callbackUrl, error, third_login, thirdLogin }, signinErrors }: SigninClientProps) {
+export default function SigninClient({
+  searchParams,
+  signinErrors = {},
+  mode = 'page',
+  onAuthenticated,
+  showThirdPartyLogin = true,
+}: SigninClientProps) {
+  const callbackUrl = searchParams?.callbackUrl || "/";
+  const error = searchParams?.error || "";
+  const third_login = searchParams?.third_login;
+  const thirdLogin = searchParams?.thirdLogin;
+  const popup = searchParams?.popup;
+  const provider = searchParams?.provider;
   const thirdLoginFlag = resolveThirdLoginFlag(thirdLogin, third_login);
+  const isPopupWindowMode = popup === 'true' || popup === '1';
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [domain, setDomain] = useState("");
@@ -57,9 +79,15 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
   const [loginData, setLoginData] = useState<LoginResponse>({});
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
   const [wechatSettings, setWechatSettings] = useState<WeChatSettings | null>(null);
+  const { themeName } = useTheme();
+  const { logoUrl } = usePortalBranding();
   const [loadingWechatSettings, setLoadingWechatSettings] = useState(true);
   const [bkSettings, setBkSettings] = useState<BkSettings | null>(null);
   const [loadingBkSettings, setLoadingBkSettings] = useState(true);
+  const [hasTriggeredPopupProvider, setHasTriggeredPopupProvider] = useState(false);
+  const [modalThirdPartyView, setModalThirdPartyView] = useState<ModalThirdPartyView>('login');
+  const isModalMode = mode === 'modal';
+  const isDarkTheme = themeName === 'dark';
 
   useEffect(() => {
     const userAgent = navigator.userAgent.toLowerCase();
@@ -70,6 +98,84 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
     fetchBkSettings();
     fetchDomainList();
   }, []);
+
+  const finishAuthentication = (targetUrl: string) => {
+    if (onAuthenticated) {
+      onAuthenticated();
+      return;
+    }
+
+    if (isPopupWindowMode && window.opener && !window.opener.closed) {
+      window.opener.postMessage({
+        type: AUTH_POPUP_SUCCESS_MESSAGE,
+        targetUrl,
+      }, window.location.origin);
+
+      window.setTimeout(() => {
+        window.close();
+      }, 100);
+      return;
+    }
+
+    window.location.href = targetUrl;
+  };
+
+  const checkExistingAuthentication = async () => {
+    try {
+      const response = await fetch('/api/proxy/core/api/get_bk_settings/', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+        credentials: 'include',
+      });
+
+      const responseData = await response.json();
+      const userData = responseData?.data?.user;
+
+      if (response.ok && responseData?.result && userData && (userData.username || userData.id)) {
+        await completeAuthentication(userData);
+        return true;
+      }
+    } catch (existingAuthError) {
+      console.error('Failed to check existing authentication in popup:', existingAuthError);
+    }
+
+    return false;
+  };
+
+  const openThirdPartyPopup = (targetProvider: 'wechat' | 'bk') => {
+    const popupUrl = targetProvider === 'wechat'
+      ? buildWechatPopupUrl({
+        callbackUrl: callbackUrl || '/',
+        thirdLogin: true,
+      })
+      : buildPopupSigninUrl({
+        callbackUrl: callbackUrl || '/',
+        thirdLogin: true,
+        provider: targetProvider,
+      });
+
+    const width = 520;
+    const height = 760;
+    const left = window.screenX + Math.max((window.outerWidth - width) / 2, 0);
+    const top = window.screenY + Math.max((window.outerHeight - height) / 2, 0);
+
+    const openedWindow = window.open(
+      popupUrl,
+      'bklite-third-party-login',
+      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+
+    if (!openedWindow) {
+      setFormError('Unable to open login popup. Please allow popups and try again.');
+      return;
+    }
+
+    openedWindow.focus();
+  };
 
   const fetchDomainList = async () => {
     try {
@@ -304,7 +410,7 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
         );
 
         console.log('SignIn successful, redirecting to:', targetUrl);
-        window.location.href = targetUrl;
+        finishAuthentication(targetUrl);
       } else {
         console.error('SignIn failed with unknown error');
         setFormError("Authentication failed");
@@ -318,8 +424,19 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
   };
 
   const handleWechatSignIn = async () => {
+    if (mode === 'modal' && !isPopupWindowMode) {
+      setModalThirdPartyView('wechat');
+      return;
+    }
+
     console.log("Starting WeChat login process...");
-    const oauthCallbackUrl = buildOauthCallbackBridgeUrl(callbackUrl || "/", thirdLoginFlag);
+    const oauthCallbackUrl = isPopupWindowMode
+      ? buildPopupSigninUrl({
+        callbackUrl: callbackUrl || '/',
+        thirdLogin: true,
+        provider: 'wechat',
+      })
+      : buildOauthCallbackBridgeUrl(callbackUrl || '/', thirdLoginFlag, 'wechat');
 
     console.log("Callback URL:", oauthCallbackUrl);
 
@@ -330,19 +447,71 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
   };
 
   const handleBkSignIn = () => {
+    if (mode === 'modal' && !isPopupWindowMode) {
+      openThirdPartyPopup('bk');
+      return;
+    }
+
     if (bkSettings?.url) {
       const currentDomain = window.location.origin;
-      const bkLoginUrl = `${bkSettings.url}?callbackUrl=${encodeURIComponent(currentDomain)}`;
+      const targetCallbackUrl = isPopupWindowMode
+        ? `${currentDomain}${buildPopupSigninUrl({
+          callbackUrl: callbackUrl || '/',
+          thirdLogin: true,
+          provider: 'bk',
+        })}`
+        : currentDomain;
+      const bkLoginUrl = `${bkSettings.url}?callbackUrl=${encodeURIComponent(targetCallbackUrl)}`;
       console.log("Redirecting to BK login:", bkLoginUrl);
       window.location.href = bkLoginUrl;
     }
   };
 
+  useEffect(() => {
+    if (thirdLoginFlag) {
+      return;
+    }
+
+    if (!isPopupWindowMode || !provider || hasTriggeredPopupProvider || authStep !== 'login') {
+      return;
+    }
+
+    if (provider === 'wechat') {
+      if (loadingWechatSettings) {
+        return;
+      }
+
+      if (!wechatSettings?.enabled) {
+        setFormError('WeChat login is not available.');
+        setHasTriggeredPopupProvider(true);
+        return;
+      }
+
+      setHasTriggeredPopupProvider(true);
+      void handleWechatSignIn();
+      return;
+    }
+
+    if (provider === 'bk') {
+      if (loadingBkSettings) {
+        return;
+      }
+
+      setHasTriggeredPopupProvider(true);
+      void (async () => {
+        const hasExistingAuth = await checkExistingAuthentication();
+        if (!hasExistingAuth) {
+          handleBkSignIn();
+        }
+      })();
+    }
+  }, [authStep, bkSettings?.is_open_logining, hasTriggeredPopupProvider, isPopupWindowMode, loadingBkSettings, loadingWechatSettings, provider, thirdLoginFlag, wechatSettings?.enabled]);
+
   const renderLoginForm = () => (
-    <form onSubmit={handleLoginSubmit} className="flex flex-col space-y-6 w-full">
-      <div className="space-y-2">
+    <form onSubmit={handleLoginSubmit} className={`flex w-full flex-col ${isModalMode ? 'space-y-5' : 'space-y-6'}`}>
+      <div className={isModalMode ? 'space-y-1.5' : 'space-y-2'}>
         <div className="flex justify-between items-center">
-          <label htmlFor="domain" className="text-sm font-medium text-[var(--color-text-1)]">Domain</label>
+          <label htmlFor="domain" className={`font-medium ${isModalMode ? 'text-[13px] text-(--color-text-1)' : 'text-sm text-(--color-text-1)'}`}>Domain</label>
           {loadingDomains && (
             <div className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin"></div>
           )}
@@ -356,7 +525,7 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
           disabled={loadingDomains}
           className="w-full"
           size="middle"
-          style={{ height: '48px' }}
+          style={{ height: isModalMode ? '40px' : '48px' }}
           dropdownStyle={{
             borderRadius: '8px',
             boxShadow: '0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'
@@ -392,8 +561,8 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
         )}
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="username" className="text-sm font-medium text-[var(--color-text-1)]">Username</label>
+      <div className={isModalMode ? 'space-y-1.5' : 'space-y-2'}>
+        <label htmlFor="username" className={`font-medium ${isModalMode ? 'text-[13px] text-(--color-text-1)' : 'text-sm text-(--color-text-1)'}`}>Username</label>
         <Input
           id="username"
           placeholder="Enter your username"
@@ -401,12 +570,12 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
           onChange={(e) => setUsername(e.target.value)}
           size="large"
           required
-          className="h-12"
+          className={isModalMode ? 'h-10 rounded-xl' : 'h-12'}
         />
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="password" className="text-sm font-medium text-[var(--color-text-1)]">Password</label>
+      <div className={isModalMode ? 'space-y-1.5' : 'space-y-2'}>
+        <label htmlFor="password" className={`font-medium ${isModalMode ? 'text-[13px] text-(--color-text-1)' : 'text-sm text-(--color-text-1)'}`}>Password</label>
         <Input.Password
           id="password"
           placeholder="Enter your password"
@@ -414,14 +583,14 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
           onChange={(e) => setPassword(e.target.value)}
           size="large"
           required
-          className="h-12"
+          className={isModalMode ? 'h-10 rounded-xl' : 'h-12'}
         />
       </div>
 
       <button
         type="submit"
         disabled={isLoading}
-        className={`w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg shadow transition-all duration-150 ease-in-out transform hover:-translate-y-0.5 ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+        className={`w-full text-white font-medium transition-all duration-150 ease-in-out ${isModalMode ? 'h-11 rounded-xl bg-[#246BFD] px-4 text-[14px] shadow-[0_12px_28px_rgba(36,107,253,0.24)] hover:bg-[#1F5DE0]' : 'rounded-lg bg-blue-600 px-4 py-3 shadow hover:-translate-y-0.5 hover:bg-blue-700'} ${isLoading ? 'cursor-not-allowed opacity-70' : ''}`}
       >
         {isLoading ? (
           <span className="flex items-center justify-center">
@@ -463,20 +632,20 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
 
     if (isLoading) {
       return (
-        <div className="mt-6">
+        <div className={isModalMode ? 'mt-5' : 'mt-6'}>
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-[var(--color-border-3)]"></div>
+              <div className="w-full border-t border-(--color-border-3)"></div>
             </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-[var(--color-bg)] text-[var(--color-text-1)]">Or continue with</span>
+            <div className={`relative flex justify-center ${isModalMode ? 'text-[12px]' : 'text-sm'}`}>
+              <span className={`px-3 ${isModalMode ? 'bg-transparent text-(--color-text-3)' : 'bg-(--color-bg) text-(--color-text-1)'}`}>Or continue with</span>
             </div>
           </div>
 
-          <div className="mt-6 space-y-3">
-            <div className="w-full h-12 bg-gray-200 rounded-lg animate-pulse"></div>
+          <div className={isModalMode ? 'mt-5 space-y-2.5' : 'mt-6 space-y-3'}>
+            <div className={`w-full animate-pulse bg-(--color-fill-2) ${isModalMode ? 'h-10 rounded-xl' : 'h-12 rounded-lg'}`}></div>
             {loadingBkSettings && (
-              <div className="w-full h-12 bg-gray-200 rounded-lg animate-pulse"></div>
+              <div className={`w-full animate-pulse bg-(--color-fill-2) ${isModalMode ? 'h-10 rounded-xl' : 'h-12 rounded-lg'}`}></div>
             )}
           </div>
         </div>
@@ -488,21 +657,27 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
     }
 
     return (
-      <div className="mt-6">
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-[var(--color-border-3)]"></div>
+      <div className={isModalMode ? 'mt-5' : 'mt-6'}>
+        {isModalMode ? (
+          <div className="flex justify-center text-[12px] text-(--color-text-3)">
+            <span>Or continue with</span>
           </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-[var(--color-bg)] text-[var(--color-text-1)]">Or continue with</span>
+        ) : (
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-(--color-border-3)"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-(--color-bg) px-3 text-(--color-text-1)">Or continue with</span>
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="mt-6 space-y-3">
+        <div className={isModalMode ? 'mt-5 space-y-2.5' : 'mt-6 space-y-3'}>
           {hasWechat && (
             <button
               onClick={handleWechatSignIn}
-              className="w-full flex items-center justify-center px-4 py-3 text-sm font-medium rounded-lg shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
+              className={`flex w-full items-center justify-center font-medium text-white transition-colors duration-200 ${isModalMode ? 'h-11 rounded-xl bg-[#10B14A] px-4 text-[14px] shadow-[0_10px_24px_rgba(16,177,74,0.18)] hover:bg-[#0F9E43]' : 'rounded-lg bg-green-600 px-4 py-3 text-sm shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500'}`}
             >
               Sign in with WeChat
             </button>
@@ -511,7 +686,7 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
           {hasBkLogin && (
             <button
               onClick={handleBkSignIn}
-              className="w-full flex items-center justify-center px-4 py-3 text-sm font-medium rounded-lg shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+              className={`flex w-full items-center justify-center font-medium text-white transition-colors duration-200 ${isModalMode ? 'h-11 rounded-xl bg-[#246BFD] px-4 text-[14px] shadow-[0_10px_24px_rgba(36,107,253,0.18)] hover:bg-[#1F5DE0]' : 'rounded-lg bg-blue-600 px-4 py-3 text-sm shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'}`}
             >
               Sign in with BlueKing
             </button>
@@ -519,7 +694,7 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
         </div>
 
         {isWechatBrowser && hasWechat && (
-          <div className="mt-4 text-center text-sm text-green-600">
+          <div className="mt-4 text-center text-sm text-[#10B14A]">
             You are using WeChat browser, for best experience use the WeChat login.
           </div>
         )}
@@ -527,10 +702,80 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
     );
   };
 
+  const content = (
+    <div className={`w-full ${isModalMode ? '' : 'max-w-md'}`} style={isModalMode ? { maxWidth: 388 } : undefined}>
+      {mode === 'page' && (
+        <div className="text-center mb-10">
+          <div className="flex justify-center mb-6">
+            <img src={logoUrl} alt="Logo" className="h-14 w-auto object-contain" />
+          </div>
+          <h2 className="text-3xl font-bold text-(--color-text-1)">
+            {authStep === 'login' && 'Sign In'}
+            {authStep === 'reset-password' && 'Reset Password'}
+            {authStep === 'otp-verification' && 'Verify Identity'}
+          </h2>
+          <p className="text-(--color-text-3) mt-2">
+            {authStep === 'login' && 'Enter your credentials to continue'}
+            {authStep === 'reset-password' && 'Create a new password to secure your account'}
+            {authStep === 'otp-verification' && 'Complete the verification process'}
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className={`mb-6 rounded border text-red-700 ${isModalMode ? 'px-3 py-2.5 text-[12px]' : 'border-l-4 border-red-500 bg-red-50 p-4'}`} style={isModalMode ? { borderColor: isDarkTheme ? 'rgba(239, 68, 68, 0.35)' : '#F5D4D4', background: isDarkTheme ? 'rgba(127, 29, 29, 0.18)' : '#FFF7F7' } : undefined}>
+          <p className="font-medium">{signinErrors[error.toLowerCase()] || signinErrors.default || error}</p>
+        </div>
+      )}
+
+      {formError && (
+        <div className={`mb-6 rounded border text-red-700 ${isModalMode ? 'px-3 py-2.5 text-[12px]' : 'border-l-4 border-red-500 bg-red-50 p-4'}`} style={isModalMode ? { borderColor: isDarkTheme ? 'rgba(239, 68, 68, 0.35)' : '#F5D4D4', background: isDarkTheme ? 'rgba(127, 29, 29, 0.18)' : '#FFF7F7' } : undefined}>
+          <p className="font-medium">{formError}</p>
+        </div>
+      )}
+
+      {authStep === 'login' && modalThirdPartyView === 'login' && renderLoginForm()}
+      {authStep === 'reset-password' && renderPasswordResetForm()}
+      {authStep === 'otp-verification' && renderOtpVerificationForm()}
+
+      {authStep === 'login' && mode === 'modal' && modalThirdPartyView === 'wechat' && (
+        <div className="pt-1">
+          <div className="mx-auto mb-4 flex w-full max-w-52 items-center justify-center">
+            <div className="relative w-full">
+              <button
+                type="button"
+                onClick={() => setModalThirdPartyView('login')}
+                className="absolute left-0 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[10px] transition-colors"
+                style={{
+                  background: isDarkTheme ? 'var(--color-fill-2)' : '#EEF4FF',
+                  color: isDarkTheme ? 'var(--color-text-2)' : '#4B73B6',
+                }}
+                aria-label="返回"
+              >
+                <ArrowLeftOutlined className="text-[9px]" />
+              </button>
+              <div className="text-center text-[12px] font-normal tracking-normal text-(--color-text-3)">微信扫码登录</div>
+            </div>
+          </div>
+          <WechatQrLoginPanel
+            callbackUrl={callbackUrl}
+            thirdLogin="true"
+          />
+        </div>
+      )}
+
+      {showThirdPartyLogin && authStep === 'login' && modalThirdPartyView === 'login' && renderWechatLoginSection()}
+    </div>
+  );
+
+  if (mode === 'modal') {
+    return <div className="mx-auto w-full py-1" style={{ maxWidth: 388 }}>{content}</div>;
+  }
+
   return (
     <div className="flex w-[calc(100%+2rem)] h-screen -m-4">
       <div
-        className="w-3/5 hidden md:block bg-gradient-to-br from-blue-500 to-indigo-700"
+        className="w-3/5 hidden md:block bg-linear-to-br from-blue-500 to-indigo-700"
         style={{
           backgroundImage: "url('/system-login-bg.jpg')",
           backgroundSize: "cover",
@@ -539,41 +784,9 @@ export default function SigninClient({ searchParams: { callbackUrl, error, third
       >
       </div>
 
-      <div className="w-full h-full md:w-2/5 flex items-center justify-center p-8 bg-[var(--bg-color-1)] overflow-y-auto">
-        <div className="w-full h-full max-w-md">
-          <div className="text-center mb-10">
-            <div className="flex justify-center mb-6">
-              <Image src="/logo-site.png" alt="Logo" width={60} height={60} className="h-14 w-auto" />
-            </div>
-            <h2 className="text-3xl font-bold text-[var(--color-text-1)]">
-              {authStep === 'login' && 'Sign In'}
-              {authStep === 'reset-password' && 'Reset Password'}
-              {authStep === 'otp-verification' && 'Verify Identity'}
-            </h2>
-            <p className="text-[var(--color-text-3)] mt-2">
-              {authStep === 'login' && 'Enter your credentials to continue'}
-              {authStep === 'reset-password' && 'Create a new password to secure your account'}
-              {authStep === 'otp-verification' && 'Complete the verification process'}
-            </p>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded mb-6">
-              <p className="font-medium">{signinErrors[error.toLowerCase()]}</p>
-            </div>
-          )}
-
-          {formError && (
-            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded mb-6">
-              <p className="font-medium">{formError}</p>
-            </div>
-          )}
-
-          {authStep === 'login' && renderLoginForm()}
-          {authStep === 'reset-password' && renderPasswordResetForm()}
-          {authStep === 'otp-verification' && renderOtpVerificationForm()}
-
-          {authStep === 'login' && renderWechatLoginSection()}
+      <div className="w-full h-full md:w-2/5 flex items-center justify-center p-8 bg-(--bg-color-1) overflow-y-auto">
+        <div className="w-full h-full flex items-center justify-center">
+          {content}
         </div>
       </div>
     </div>

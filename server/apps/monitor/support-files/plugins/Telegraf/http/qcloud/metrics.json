@@ -6,7 +6,7 @@
   "objects": [
     {
       "name": "TCP",
-      "icon": "zonghenengyuanfuwupingtaikuangjiaicon-",
+      "icon": "mm-tencentCloud_腾讯云",
       "type": "Tencent Cloud",
       "level": "base",
       "description": "",
@@ -29,7 +29,7 @@
     },
     {
       "name": "CVM",
-      "icon": "yunfuwuqi",
+      "icon": "mm-cvm_云服务器",
       "type": "Tencent Cloud",
       "level": "derivative",
       "description": "",

@@ -15,7 +15,7 @@ from apps.opspilot.viewsets import (
     LLMModelViewSet,
     LLMViewSet,
     ManualKnowledgeViewSet,
-    ModelTypeViewSet,
+    ModelVendorViewSet,
     OCRProviderViewSet,
     QAPairsViewSet,
     RasaModelViewSet,
@@ -35,7 +35,7 @@ router.register(r"model_provider_mgmt/llm", LLMViewSet)
 router.register(r"model_provider_mgmt/llm_model", LLMModelViewSet)
 router.register(r"model_provider_mgmt/skill_tools", SkillToolsViewSet)
 router.register(r"model_provider_mgmt/skill_log", SkillRequestLogViewSet)
-router.register(r"model_provider_mgmt/model_type", ModelTypeViewSet)
+router.register(r"model_provider_mgmt/model_vendor", ModelVendorViewSet)
 
 # bot
 router.register(r"bot_mgmt/bot", BotViewSet)
@@ -100,6 +100,11 @@ urlpatterns += [
         r"bot_mgmt/execute_chat_flow/<int:bot_id>/<str:node_id>/",
         views.execute_chat_flow,
         name="execute_chat_flow",
+    ),
+    path(
+        r"bot_mgmt/interrupt_chat_flow_execution/",
+        views.interrupt_chat_flow_execution,
+        name="interrupt_chat_flow_execution",
     ),
     path(
         r"bot_mgmt/execute_chat_flow_wechat/<int:bot_id>/",

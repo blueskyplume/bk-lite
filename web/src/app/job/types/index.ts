@@ -70,6 +70,7 @@ export type TargetOS = 'linux' | 'windows';
 export type TargetSource = 'sync' | 'manual';
 export type CredentialSource = 'manual' | 'credential';
 export type SSHCredentialType = 'key' | 'password';
+export type WinRMScheme = 'http' | 'https';
 
 export interface Target {
   id: number;
@@ -136,6 +137,11 @@ export interface TargetFormData {
   ssh_credential_type: SSHCredentialType;
   ssh_password?: string;
   ssh_key_file?: File;
+  winrm_port: number;
+  winrm_scheme: WinRMScheme;
+  winrm_user: string;
+  winrm_password?: string;
+  winrm_cert_validation: boolean;
   team: number[];
 }
 
@@ -167,6 +173,26 @@ export interface Script {
   created_at: string;
   updated_by: string;
   updated_at: string;
+}
+
+export interface DashboardTrend {
+  date: string;
+  execution_count: number;
+  success_count: number;
+  failed_count: number;
+}
+
+export interface DashboardSuccessRatePeriod {
+  execution_total: number;
+  success_count: number;
+  failed_count: number;
+  success_rate: number;
+}
+
+export interface DashboardSuccessRateCompare {
+  days: number;
+  current_period: DashboardSuccessRatePeriod;
+  success_rate_increase: number;
 }
 
 export interface ScriptListResponse {

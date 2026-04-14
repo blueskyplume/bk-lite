@@ -207,7 +207,6 @@ class CollectRunStatusType(object):
     TIME_OUT = 4
     WRITING = 5
     FORCE_STOP = 6
-    EXAMINE = 7  # 审批 但是不做枚举
 
     CHOICE = (
         (NOT_START, "未执行"),
@@ -215,7 +214,6 @@ class CollectRunStatusType(object):
         (SUCCESS, "成功"),
         (ERROR, "异常"),
         (TIME_OUT, "超时"),
-        (EXAMINE, "待审批"),
         (WRITING, "正在写入"),
         (FORCE_STOP, "强制终止"),
     )
@@ -265,6 +263,24 @@ class CollectInputMethod(object):
     )
 
 
+class DataCleanupStrategy(object):
+    """
+    数据清理策略
+    """
+
+    NO_CLEANUP = "no_cleanup"  # 不清理（默认）
+    IMMEDIATELY = "immediately"  # 及时清理：采集同步时立即删除不存在的实例
+    AFTER_EXPIRATION = "after_expiration"  # 过期删除：定时任务检查过期实例并删除
+
+    CHOICE = (
+        (NO_CLEANUP, "不清理"),
+        (IMMEDIATELY, "及时清理"),
+        (AFTER_EXPIRATION, "过期删除"),
+    )
+
+    DEFAULT = NO_CLEANUP
+
+
 class CollectDriverTypes(object):
     """
     采集驱动类型
@@ -276,9 +292,12 @@ class CollectDriverTypes(object):
     CHOICE = ((PROTOCOL, "协议采集"), (JOB, "脚本采集"))
 
 
-# 采集对象树
+# 采集对象树基线骨架
 """
-encrypted_fields: 需要加密的字段列表 新增采集对象后需要配置加密字段到encrypted_fields
+encrypted_fields: 需要加密的字段列表。
+
+当前 COLLECT_OBJ_TREE 作为社区版对象树基线骨架使用。
+运行时对象树会在此基础上，叠加 enterprise 中定义的额外 children。
 """
 COLLECT_OBJ_TREE = [
     {
@@ -371,6 +390,16 @@ COLLECT_OBJ_TREE = [
                 "type": CollectDriverTypes.JOB,
                 "tag": ["Agent", "JOB", "Linux"],
                 "desc": "采集Redis关键配置信息",
+                "encrypted_fields": ["password"],
+            },
+            {
+                "id": "es",
+                "model_id": "es",
+                "name": "【BETA】Elasticsearch",
+                "task_type": CollectPluginTypes.DB,
+                "type": CollectDriverTypes.JOB,
+                "tag": ["Agent", "JOB", "Linux"],
+                "desc": "采集Elasticsearch关键配置信息",
                 "encrypted_fields": ["password"],
             },
         ],
@@ -519,6 +548,4 @@ VIEW = "View"
 APP_NAME = "cmdb"
 
 # ===========
-SECRET_KEY = os.getenv(
-    "SECRET_KEY", "cmdb_secret_key_2025_cb9c88c61e374c51a9a83f1b2b2c1b1d"
-)
+SECRET_KEY = os.getenv("SECRET_KEY", "cmdb_secret_key_2025_cb9c88c61e374c51a9a83f1b2b2c1b1d")

@@ -1,4 +1,4 @@
-FROM bklite/server:base
+FROM ghcr.io/tencentblueking/bk-lite/server-base:latest
 
 ARG NEXUS_PYTHON_REPOSITY
 

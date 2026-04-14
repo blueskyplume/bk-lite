@@ -2,8 +2,6 @@ FROM python:3.12
 
 WORKDIR /apps
 
-RUN sed -i 's/deb.debian.org/repo.huaweicloud.com/g' /etc/apt/sources.list.d/debian.sources
-
 RUN apt-get update -y && \
     apt-get upgrade -y && \
     apt-get install -y vim supervisor && \
@@ -51,7 +49,17 @@ RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor
 
 # Pre-install patchright and download Chromium browser
 # NOTE: patchright version must match the version pinned in pyproject.toml
-RUN pip3 install patchright==1.57.2 && \
-    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright patchright install chromium
+RUN pip3 install patchright==1.57.2 && patchright install chromium
 
-ENV EXECUTABLE_PATH=/root/.cache/ms-playwright/chromium-1200/chrome-linux64/chrome
+RUN PATCHRIGHT_CHROME=$(python3 -c "\
+from patchright.sync_api import sync_playwright; \
+pw = sync_playwright().start(); \
+print(pw.chromium.executable_path); \
+pw.stop()") && \
+    echo "Detected Chrome path: $PATCHRIGHT_CHROME" && \
+    ln -sf "$PATCHRIGHT_CHROME" /usr/local/bin/chromium-patchright && \
+    chmod +x /usr/local/bin/chromium-patchright
+
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium-patchright
+
+ENV EXECUTABLE_PATH=/usr/local/bin/chromium-patchright

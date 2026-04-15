@@ -382,6 +382,16 @@ COLLECT_OBJ_TREE = [
                 "desc": "采集PostgreSQL关键配置信息",
                 "encrypted_fields": ["password"],
             },
+            {
+                "id": "mssql",
+                "model_id": "mssql",
+                "name": "【BETA】MSSQL",
+                "task_type": CollectPluginTypes.PROTOCOL,
+                "type": CollectDriverTypes.PROTOCOL,
+                "tag": ["Agentless", "TCP", "Windows", "SQL Server"],
+                "desc": "采集MSSQL关键配置信息",
+                "encrypted_fields": ["password"],
+            },
              {
                  "id": "redis",
                  "model_id": "redis",

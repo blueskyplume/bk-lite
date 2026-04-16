@@ -526,6 +526,10 @@ class UniversalTrainer:
             model_kwargs["cost_model"] = self.config.cost_model
             model_kwargs["event_window"] = self.config.event_window
 
+        if model_type == "EWMA":
+            model_kwargs["scale_method"] = self.config.scale_method
+            model_kwargs["severity_cap"] = self.config.severity_cap
+
         logger.info(f"创建模型: {model_type}")
         logger.debug(f"随机种子: {random_state}")
 
@@ -645,6 +649,14 @@ class UniversalTrainer:
                 prefix="test",
             )
             metrics.update(pelt_metrics)
+
+        if self.config.model_type.upper() == "EWMA":
+            drift_metrics = model.evaluate_drifts(
+                X_test,
+                y_test,
+                prefix="test",
+            )
+            metrics.update(drift_metrics)
 
         # 只输出数值统计指标到日志（过滤列表和内部数据）
         summary = {

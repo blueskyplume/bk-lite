@@ -64,14 +64,14 @@ const IntegrationDetailLayout = ({
     },
     ...(templateType === 'snmp'
       ? [
-          {
-            name: 'collect',
-            title: '采集',
-            url: '/monitor/integration/list/detail/collect',
-            icon: '',
-            operation: []
-          }
-        ]
+        {
+          name: 'collect',
+          title: '采集',
+          url: '/monitor/integration/list/detail/collect',
+          icon: '',
+          operation: []
+        }
+      ]
       : [])
   ];
 

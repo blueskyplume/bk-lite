@@ -264,55 +264,56 @@ class PELTModel(BaseAnomalyModel):
                             )
                             metrics = candidate.evaluate(val_data, labels_array)
                             fallback_metric = "f1"
-                            score = float(metrics.get(metric, metrics[fallback_metric]))
-                            trial_num_changepoints = float(
-                                changepoint_eval.get("num_changepoints", 0.0)
-                            )
-                            trial_metric_keys = (
-                                [
-                                    "changepoint_precision",
-                                    "changepoint_recall",
-                                    "changepoint_f1",
-                                    "num_changepoints",
-                                ]
-                                if metric in changepoint_metrics
-                                else ["precision", "recall", "f1", "auc", "num_changepoints"]
-                            )
-                            trial_metrics = MLFlowUtils.filter_numeric_metrics(metrics)
-                            trial_metrics["num_changepoints"] = trial_num_changepoints
-                            trial_metrics = MLFlowUtils.filter_numeric_metrics(
-                                trial_metrics, trial_metric_keys
-                            )
-                            trial_metrics.setdefault(str(metric), float(score))
-                            self.hyperopt_history_.append(
-                                {
-                                    "trial": int(eval_count),
-                                    "metric": str(metric),
-                                    "score": float(score),
-                                    "pen": float(pen),
-                                    "min_size": int(min_size),
-                                    "jump": int(jump),
-                                    "status": "ok",
-                                    **trial_metrics,
-                            }
-                            )
 
-                            logger.debug(
-                                f"PELT trial [{eval_count}/{total_evals}] | pen={pen} | min_size={min_size} | jump={jump} | metrics: "
-                                f"{MLFlowUtils.format_metrics_for_log(trial_metrics, trial_metric_keys)}"
-                            )
+                        score = float(metrics.get(metric, metrics[fallback_metric]))
+                        trial_num_changepoints = float(
+                            changepoint_eval.get("num_changepoints", 0.0)
+                        )
+                        trial_metric_keys = (
+                            [
+                                "changepoint_precision",
+                                "changepoint_recall",
+                                "changepoint_f1",
+                                "num_changepoints",
+                            ]
+                            if metric in changepoint_metrics
+                            else ["precision", "recall", "f1", "auc", "num_changepoints"]
+                        )
+                        trial_metrics = MLFlowUtils.filter_numeric_metrics(metrics)
+                        trial_metrics["num_changepoints"] = trial_num_changepoints
+                        trial_metrics = MLFlowUtils.filter_numeric_metrics(
+                            trial_metrics, trial_metric_keys
+                        )
+                        trial_metrics.setdefault(str(metric), float(score))
+                        self.hyperopt_history_.append(
+                            {
+                                "trial": int(eval_count),
+                                "metric": str(metric),
+                                "score": float(score),
+                                "pen": float(pen),
+                                "min_size": int(min_size),
+                                "jump": int(jump),
+                                "status": "ok",
+                                **trial_metrics,
+                            }
+                        )
+
+                        logger.debug(
+                            f"PELT trial [{eval_count}/{total_evals}] | pen={pen} | min_size={min_size} | jump={jump} | metrics: "
+                            f"{MLFlowUtils.format_metrics_for_log(trial_metrics, trial_metric_keys)}"
+                        )
 
                         # 每轮试验记录到 MLflow（镜像 ECOD 的 hyperopt/* 命名）
-                            if mlflow.active_run():
-                                MLFlowUtils.log_metrics_batch(
-                                    trial_metrics,
-                                    prefix="hyperopt/val_",
-                                    step=eval_count,
-                                )
-                                mlflow.log_metric(
-                                    "hyperopt/trial_score", score, step=eval_count
-                                )
-                                mlflow.log_metric("hyperopt/success", 1.0, step=eval_count)
+                        if mlflow.active_run():
+                            MLFlowUtils.log_metrics_batch(
+                                trial_metrics,
+                                prefix="hyperopt/val_",
+                                step=eval_count,
+                            )
+                            mlflow.log_metric(
+                                "hyperopt/trial_score", score, step=eval_count
+                            )
+                            mlflow.log_metric("hyperopt/success", 1.0, step=eval_count)
 
                     except Exception as exc:
                         error_msg = str(exc)[:150]

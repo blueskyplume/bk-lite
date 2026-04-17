@@ -30,7 +30,7 @@ const ContentDrawer: React.FC<ContentDrawerProps> = ({ visible, onClose, content
       width={600}
     >
       <div className="whitespace-pre-wrap leading-6">
-        {formatContent(content)}
+        {formatContent(content ?? '')}
       </div>
     </Drawer>
   );

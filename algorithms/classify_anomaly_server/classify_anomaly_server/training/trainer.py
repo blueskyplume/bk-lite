@@ -581,7 +581,28 @@ class UniversalTrainer:
             train_X, val_X, train_y, val_y, self.config
         )
 
-        logger.info(f"超参数优化完成: {best_params}")
+        trial_history = getattr(model, "hyperopt_history_", [])
+        best_metric = self.config.metric
+        if trial_history:
+            success_trials = [
+                item for item in trial_history if item.get("status", "ok") == "ok"
+            ]
+            failed_trials = len(trial_history) - len(success_trials)
+            best_trial_score = (
+                max(float(item.get("score", float("-inf"))) for item in success_trials)
+                if success_trials
+                else None
+            )
+            logger.info(
+                f"Hyperopt summary | model={self.config.model_type} | metric={best_metric} | "
+                f"trials={len(trial_history)} | success={len(success_trials)} | failed={failed_trials} | "
+                f"best_score={best_trial_score} | best_params={best_params}"
+            )
+        else:
+            logger.info(
+                f"Hyperopt summary | model={self.config.model_type} | metric={best_metric} | "
+                f"trials=0 | best_params={best_params}"
+            )
 
         return best_params
 

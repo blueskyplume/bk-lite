@@ -19,6 +19,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from loguru import logger
 
+from ..mlflow_utils import MLFlowUtils
 from .base import BaseAnomalyModel, ModelRegistry
 
 
@@ -324,7 +325,7 @@ class EWMAModel(BaseAnomalyModel):
         no_progress_count = 0
         early_stopped = False
 
-        logger.info(f"开始 EWMA 超参数优化: max_evals={max_evals}, metric={metric}")
+        logger.info(f"开始 EWMA 超参数优化 | max_evals={max_evals} | metric={metric}")
         if early_stop_enabled:
             logger.info(f"早停机制: 启用 (patience={patience})")
 
@@ -347,67 +348,90 @@ class EWMAModel(BaseAnomalyModel):
                             severity_cap=resolved_severity_cap,
                         )
                         candidate.fit(train_data)
+                        score: float | None = None
 
-                        if metric in drift_metrics:
-                            drift_eval = candidate.evaluate_drifts(
-                                val_data, labels_array
-                            )
-                            eval_metrics = drift_eval
-                            fallback_metric = "drift_f1"
-                        else:
-                            drift_eval = candidate.evaluate_drifts(
-                                val_data, labels_array
-                            )
-                            eval_metrics = candidate.evaluate(val_data, labels_array)
-                            fallback_metric = "f1"
-
-                        score = float(
-                            eval_metrics.get(metric, eval_metrics[fallback_metric])
-                        )
-
-                        self.hyperopt_history_.append(
-                            {
-                                "trial": int(eval_count),
-                                "metric": str(metric),
-                                "score": float(score),
-                                "alpha": float(alpha),
-                                "scale_window": int(scale_window),
-                                "threshold": float(threshold_val),
-                                "n_consecutive": int(n_consecutive),
-                            }
-                        )
-
-                        logger.debug(
-                            f"EWMA trial [{eval_count}/{total_evals}] "
-                            f"alpha={alpha}, sw={scale_window}, "
-                            f"thr={threshold_val}, nc={n_consecutive}: "
-                            f"{metric}={score:.4f}"
-                        )
-
-                        if mlflow.active_run():
-                            mlflow.log_metric(
-                                f"hyperopt/val_{metric}", score, step=eval_count
-                            )
+                        try:
                             if metric in drift_metrics:
-                                for dk in (
-                                    "drift_precision",
-                                    "drift_recall",
-                                    "drift_f1",
-                                ):
-                                    mlflow.log_metric(
-                                        f"hyperopt/val_{dk}",
-                                        float(eval_metrics.get(dk, 0.0)),
-                                        step=eval_count,
-                                    )
+                                drift_eval = candidate.evaluate_drifts(
+                                    val_data, labels_array
+                                )
+                                eval_metrics = drift_eval
+                                fallback_metric = "drift_f1"
                             else:
-                                for pk in ("f1", "precision", "recall"):
-                                    mlflow.log_metric(
-                                        f"hyperopt/val_{pk}",
-                                        float(eval_metrics.get(pk, 0.0)),
+                                drift_eval = candidate.evaluate_drifts(
+                                    val_data, labels_array
+                                )
+                                eval_metrics = candidate.evaluate(val_data, labels_array)
+                                fallback_metric = "f1"
+
+                                score = float(
+                                    eval_metrics.get(metric, eval_metrics[fallback_metric])
+                                )
+                                trial_metric_keys = (
+                                    ["drift_precision", "drift_recall", "drift_f1"]
+                                    if metric in drift_metrics
+                                    else ["precision", "recall", "f1", "auc"]
+                                )
+                                trial_metrics = MLFlowUtils.filter_numeric_metrics(
+                                    eval_metrics, trial_metric_keys
+                                )
+                                trial_metrics.setdefault(str(metric), float(score))
+
+                                self.hyperopt_history_.append(
+                                    {
+                                        "trial": int(eval_count),
+                                        "metric": str(metric),
+                                        "score": float(score),
+                                        "alpha": float(alpha),
+                                        "scale_window": int(scale_window),
+                                        "threshold": float(threshold_val),
+                                        "n_consecutive": int(n_consecutive),
+                                        "status": "ok",
+                                        **trial_metrics,
+                                }
+                                )
+
+                                logger.debug(
+                                    f"EWMA trial [{eval_count}/{total_evals}] | alpha={alpha} | sw={scale_window} | "
+                                    f"thr={threshold_val} | nc={n_consecutive} | metrics: "
+                                    f"{MLFlowUtils.format_metrics_for_log(trial_metrics, trial_metric_keys)}"
+                                )
+
+                                if mlflow.active_run():
+                                    MLFlowUtils.log_metrics_batch(
+                                        trial_metrics,
+                                        prefix="hyperopt/val_",
                                         step=eval_count,
                                     )
+                                    mlflow.log_metric(
+                                        "hyperopt/trial_score", score, step=eval_count
+                                    )
+                                    mlflow.log_metric("hyperopt/success", 1.0, step=eval_count)
 
-                        if score > best_score:
+                        except Exception as exc:
+                            error_msg = str(exc)[:150]
+                            self.hyperopt_history_.append(
+                                {
+                                    "trial": int(eval_count),
+                                    "metric": str(metric),
+                                    "alpha": float(alpha),
+                                    "scale_window": int(scale_window),
+                                    "threshold": float(threshold_val),
+                                    "n_consecutive": int(n_consecutive),
+                                    "status": "failed",
+                                    "error": error_msg,
+                                }
+                            )
+                            logger.error(
+                                f"EWMA trial [{eval_count}/{total_evals}] FAILED | alpha={alpha} | sw={scale_window} | "
+                                f"thr={threshold_val} | nc={n_consecutive} | error={error_msg}"
+                            )
+                            if mlflow.active_run():
+                                mlflow.log_metric("hyperopt/success", 0.0, step=eval_count)
+                                mlflow.log_param(f"trial_{eval_count}_error", error_msg)
+                            raise
+
+                        if score is not None and score > best_score:
                             best_score = score
                             no_progress_count = 0
                             best_params = {
@@ -459,8 +483,8 @@ class EWMAModel(BaseAnomalyModel):
 
             mlflow.log_metrics(summary_metrics)
             logger.info(
-                f"EWMA 超参数搜索完成: {eval_count} 轮, 最优 {metric}={best_score:.4f}, "
-                f"参数={best_params}"
+                f"EWMA Hyperopt summary | trials={eval_count}/{total_evals} | best_{metric}={best_score:.4f} | "
+                f"best_params={best_params}"
             )
             mlflow.log_dict(
                 {"trial_history": self.hyperopt_history_},

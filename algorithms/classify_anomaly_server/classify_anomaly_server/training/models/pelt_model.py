@@ -12,6 +12,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from loguru import logger
 
+from ..mlflow_utils import MLFlowUtils
 from .base import BaseAnomalyModel, ModelRegistry
 from .pelt_utils import (
     detect_changepoints,
@@ -228,7 +229,7 @@ class PELTModel(BaseAnomalyModel):
         total_evals = min(max_evals, grid_total_evals)
         early_stopped = False
 
-        logger.info(f"开始超参数优化: max_evals={max_evals}, metric={metric}")
+        logger.info(f"开始超参数优化 | model=PELT | max_evals={max_evals} | metric={metric}")
         if early_stop_enabled:
             logger.info(f"早停机制: 启用 (patience={patience})")
 
@@ -249,79 +250,92 @@ class PELTModel(BaseAnomalyModel):
                         event_window=resolved_event_window,
                     )
                     candidate.fit(train_data)
-                    if metric in changepoint_metrics:
-                        changepoint_eval = candidate.evaluate_changepoints(
-                            val_data, labels_array
-                        )
-                        metrics = changepoint_eval
-                        fallback_metric = "changepoint_f1"
-                    else:
-                        changepoint_eval = candidate.evaluate_changepoints(
-                            val_data, labels_array
-                        )
-                        metrics = candidate.evaluate(val_data, labels_array)
-                        fallback_metric = "f1"
-                    score = float(metrics.get(metric, metrics[fallback_metric]))
-                    trial_num_changepoints = float(
-                        changepoint_eval.get("num_changepoints", 0.0)
-                    )
-                    self.hyperopt_history_.append(
-                        {
-                            "trial": int(eval_count),
-                            "metric": str(metric),
-                            "score": float(score),
-                            "pen": float(pen),
-                            "min_size": int(min_size),
-                            "jump": int(jump),
-                            "num_changepoints": trial_num_changepoints,
-                        }
-                    )
-
-                    logger.debug(
-                        f"PELT trial [{eval_count}/{total_evals}] "
-                        f"pen={pen}, min_size={min_size}, jump={jump}: "
-                        f"{metric}={score:.4f}"
-                    )
-
-                    # 每轮试验记录到 MLflow（镜像 ECOD 的 hyperopt/* 命名）
-                    if mlflow.active_run():
-                        mlflow.log_metric(
-                            f"hyperopt/val_{metric}", score, step=eval_count
-                        )
+                    score: float | None = None
+                    try:
                         if metric in changepoint_metrics:
-                            mlflow.log_metric(
-                                "hyperopt/val_changepoint_precision",
-                                float(metrics.get("changepoint_precision", 0.0)),
-                                step=eval_count,
+                            changepoint_eval = candidate.evaluate_changepoints(
+                                val_data, labels_array
                             )
-                            mlflow.log_metric(
-                                "hyperopt/val_changepoint_recall",
-                                float(metrics.get("changepoint_recall", 0.0)),
-                                step=eval_count,
-                            )
-                            mlflow.log_metric(
-                                "hyperopt/val_changepoint_f1",
-                                float(metrics.get("changepoint_f1", score)),
-                                step=eval_count,
-                            )
+                            metrics = changepoint_eval
+                            fallback_metric = "changepoint_f1"
                         else:
-                            mlflow.log_metric(
-                                "hyperopt/val_f1",
-                                float(metrics.get("f1", score)),
-                                step=eval_count,
+                            changepoint_eval = candidate.evaluate_changepoints(
+                                val_data, labels_array
                             )
-                            mlflow.log_metric(
-                                "hyperopt/val_precision",
-                                float(metrics.get("precision", 0.0)),
-                                step=eval_count,
+                            metrics = candidate.evaluate(val_data, labels_array)
+                            fallback_metric = "f1"
+                            score = float(metrics.get(metric, metrics[fallback_metric]))
+                            trial_num_changepoints = float(
+                                changepoint_eval.get("num_changepoints", 0.0)
                             )
-                            mlflow.log_metric(
-                                "hyperopt/val_recall",
-                                float(metrics.get("recall", 0.0)),
-                                step=eval_count,
+                            trial_metric_keys = (
+                                [
+                                    "changepoint_precision",
+                                    "changepoint_recall",
+                                    "changepoint_f1",
+                                    "num_changepoints",
+                                ]
+                                if metric in changepoint_metrics
+                                else ["precision", "recall", "f1", "auc", "num_changepoints"]
+                            )
+                            trial_metrics = MLFlowUtils.filter_numeric_metrics(metrics)
+                            trial_metrics["num_changepoints"] = trial_num_changepoints
+                            trial_metrics = MLFlowUtils.filter_numeric_metrics(
+                                trial_metrics, trial_metric_keys
+                            )
+                            trial_metrics.setdefault(str(metric), float(score))
+                            self.hyperopt_history_.append(
+                                {
+                                    "trial": int(eval_count),
+                                    "metric": str(metric),
+                                    "score": float(score),
+                                    "pen": float(pen),
+                                    "min_size": int(min_size),
+                                    "jump": int(jump),
+                                    "status": "ok",
+                                    **trial_metrics,
+                            }
                             )
 
-                    if score > best_score:
+                            logger.debug(
+                                f"PELT trial [{eval_count}/{total_evals}] | pen={pen} | min_size={min_size} | jump={jump} | metrics: "
+                                f"{MLFlowUtils.format_metrics_for_log(trial_metrics, trial_metric_keys)}"
+                            )
+
+                        # 每轮试验记录到 MLflow（镜像 ECOD 的 hyperopt/* 命名）
+                            if mlflow.active_run():
+                                MLFlowUtils.log_metrics_batch(
+                                    trial_metrics,
+                                    prefix="hyperopt/val_",
+                                    step=eval_count,
+                                )
+                                mlflow.log_metric(
+                                    "hyperopt/trial_score", score, step=eval_count
+                                )
+                                mlflow.log_metric("hyperopt/success", 1.0, step=eval_count)
+
+                    except Exception as exc:
+                        error_msg = str(exc)[:150]
+                        self.hyperopt_history_.append(
+                            {
+                                "trial": int(eval_count),
+                                "metric": str(metric),
+                                "pen": float(pen),
+                                "min_size": int(min_size),
+                                "jump": int(jump),
+                                "status": "failed",
+                                "error": error_msg,
+                            }
+                        )
+                        logger.error(
+                            f"PELT trial [{eval_count}/{total_evals}] FAILED | pen={pen} | min_size={min_size} | jump={jump} | error={error_msg}"
+                        )
+                        if mlflow.active_run():
+                            mlflow.log_metric("hyperopt/success", 0.0, step=eval_count)
+                            mlflow.log_param(f"trial_{eval_count}_error", error_msg)
+                        raise
+
+                    if score is not None and score > best_score:
                         best_score = score
                         no_progress_count = 0
                         best_params = {
@@ -378,8 +392,8 @@ class PELTModel(BaseAnomalyModel):
 
             mlflow.log_metrics(summary_metrics)
             logger.info(
-                f"PELT 超参数搜索完成: {eval_count} 轮, 最优 {metric}={best_score:.4f}, "
-                f"参数={best_params}"
+                f"PELT Hyperopt summary | trials={eval_count}/{total_evals} | best_{metric}={best_score:.4f} | "
+                f"best_params={best_params}"
             )
             mlflow.log_dict(
                 {"trial_history": self.hyperopt_history_},

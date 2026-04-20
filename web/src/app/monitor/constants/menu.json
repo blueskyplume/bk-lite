@@ -79,10 +79,9 @@
             },
             {
               "title": "采集",
-              "icon": "guanli",
+              "icon": "caijiqi",
               "url": "/monitor/integration/list/detail/collect",
-              "name": "integration_collect",
-              "withParentPermission": true
+              "name": "integration_collect"
             }
           ]
         },
@@ -187,10 +186,9 @@
             },
             {
               "title": "Collect",
-              "icon": "guanli",
+              "icon": "caijiqi",
               "url": "/monitor/integration/list/detail/collect",
-              "name": "integration_collect",
-              "withParentPermission": true
+              "name": "integration_collect"
             }
           ]
         },

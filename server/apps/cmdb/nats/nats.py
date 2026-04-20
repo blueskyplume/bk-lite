@@ -1,17 +1,134 @@
 import nats_client
 from apps.cmdb.constants.constants import PERMISSION_MODEL, PERMISSION_INSTANCES, PERMISSION_TASK, CollectPluginTypes
+from apps.cmdb.display_field.constants import (
+    DISPLAY_SUFFIX,
+    FIELD_TYPE_ENUM,
+    FIELD_TYPE_ORGANIZATION,
+    FIELD_TYPE_TABLE,
+    FIELD_TYPE_TAG,
+    FIELD_TYPE_USER,
+    USER_DISPLAY_FORMAT,
+)
+from apps.cmdb.display_field.handler import DisplayFieldConverter, DisplayFieldHandler
+from apps.cmdb.display_field.cache import ExcludeFieldsCache
 from apps.cmdb.services.model import ModelManage
 from apps.cmdb.services.classification import ClassificationManage
 from apps.cmdb.models.collect_model import CollectModels
 from apps.cmdb.services.instance import InstanceManage
-from apps.cmdb.services.config_file_service import ConfigFileService
-from apps.cmdb.constants.constants import CollectRunStatusType
+from apps.system_mgmt.models import Group, User
+
+
+def _normalize_to_list(value):
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item not in (None, "")]
+    return [value]
+
+
+def _build_authoritative_maps(instances, attrs):
+    org_ids = set()
+    user_ids = set()
+    enum_name_maps = {}
+
+    for attr in attrs:
+        if attr.get("is_display_field"):
+            continue
+
+        attr_id = attr.get("attr_id")
+        attr_type = attr.get("attr_type")
+
+        if attr_type == FIELD_TYPE_ENUM:
+            enum_name_maps[attr_id] = {str(option.get("id")): option.get("name") for option in attr.get("option", []) if option}
+            continue
+
+        if attr_type not in {FIELD_TYPE_ORGANIZATION, FIELD_TYPE_USER}:
+            continue
+
+        for instance in instances:
+            raw_value = instance.get(attr_id)
+            values = _normalize_to_list(raw_value)
+            if attr_type == FIELD_TYPE_ORGANIZATION:
+                org_ids.update(values)
+            else:
+                user_ids.update(values)
+
+    group_name_map = {group["id"]: group["name"] for group in Group.objects.filter(id__in=org_ids).values("id", "name")}
+    user_info_map = {user["id"]: user for user in User.objects.filter(id__in=user_ids).values("id", "username", "display_name")}
+
+    return group_name_map, user_info_map, enum_name_maps
+
+
+def _format_user_value(user_id, user_info_map):
+    user_info = user_info_map.get(user_id)
+    if not user_info:
+        return str(user_id)
+
+    username = user_info.get("username", "")
+    display_name = user_info.get("display_name", "")
+    if display_name and str(display_name).strip():
+        return USER_DISPLAY_FORMAT.format(display_name=display_name, username=username)
+    return username or str(user_id)
+
+
+def _format_instance_for_asset_query(instance, attrs, group_name_map, user_info_map, enum_name_maps):
+    formatted = {}
+    attr_map = {attr.get("attr_id"): attr for attr in attrs if attr.get("attr_id") and not attr.get("is_display_field")}
+
+    for key, value in instance.items():
+        if key.endswith(DISPLAY_SUFFIX):
+            continue
+
+        attr = attr_map.get(key)
+        if not attr:
+            formatted[key] = value
+            continue
+
+        attr_type = attr.get("attr_type")
+
+        if attr_type == FIELD_TYPE_ORGANIZATION:
+            values = _normalize_to_list(value)
+            names = [str(group_name_map.get(org_id, org_id)) for org_id in values]
+            formatted[key] = ", ".join(names) if names else ""
+        elif attr_type == FIELD_TYPE_USER:
+            values = _normalize_to_list(value)
+            names = [_format_user_value(user_id, user_info_map) for user_id in values]
+            formatted[key] = ", ".join([name for name in names if name]) if names else ""
+        elif attr_type == FIELD_TYPE_ENUM:
+            enum_name_map = enum_name_maps.get(key, {})
+            if isinstance(value, list):
+                formatted[key] = ", ".join([str(enum_name_map.get(str(item), item)) for item in value if item is not None])
+            elif value in (None, ""):
+                formatted[key] = ""
+            else:
+                formatted[key] = enum_name_map.get(str(value), value)
+        elif attr_type == FIELD_TYPE_TAG:
+            formatted[key] = DisplayFieldConverter.convert_tag(value)
+        elif attr_type == FIELD_TYPE_TABLE:
+            formatted[key] = DisplayFieldConverter.convert_table(value)
+        else:
+            formatted[key] = value
+
+    return DisplayFieldHandler.remove_display_fields(formatted)
+
+
+def _format_asset_instances_response(model_id, instances):
+    if not instances:
+        return []
+
+    attrs = ExcludeFieldsCache.get_model_attrs(model_id)
+    if not attrs:
+        return [DisplayFieldHandler.remove_display_fields(dict(instance)) for instance in instances]
+
+    group_name_map, user_info_map, enum_name_maps = _build_authoritative_maps(instances, attrs)
+
+    return [_format_instance_for_asset_query(dict(instance), attrs, group_name_map, user_info_map, enum_name_maps) for instance in instances]
 
 
 @nats_client.register
 def get_cmdb_module_data(module, child_module, page, page_size, group_id):
     """
-    获取cmdb模块实例数据
+        获取cmdb模块实例数据
     """
     page = int(page)
     page_size = int(page_size)
@@ -21,7 +138,7 @@ def get_cmdb_module_data(module, child_module, page, page_size, group_id):
         end = page * page_size
         instances = CollectModels.objects.filter(task_type=child_module).values("id", "name", "model_id")[start:end]
         count = instances.count()
-        queryset = [{"id": str(i["id"]), "name": f"{i['model_id']}_{i['name']}"} for i in instances]
+        queryset = [{"id": str(i['id']), "name": f"{i['model_id']}_{i['name']}"} for i in instances]
     elif module == PERMISSION_INSTANCES:
         instances, count = InstanceManage.instance_list(
             model_id=child_module,  # 使用实际模型ID
@@ -30,11 +147,14 @@ def get_cmdb_module_data(module, child_module, page, page_size, group_id):
             page_size=page_size,
             order="",
             creator="",
-            permission_map={},
+            permission_map={}
         )
         queryset = []
         for instance in instances:
-            queryset.append({"name": instance["inst_name"], "id": instance["inst_name"]})
+            queryset.append({
+                "name": instance["inst_name"],
+                "id": instance["inst_name"]
+            })
     elif module == PERMISSION_MODEL:
         models = ModelManage.search_model(classification_ids=[child_module])
         count = len(models)
@@ -43,28 +163,31 @@ def get_cmdb_module_data(module, child_module, page, page_size, group_id):
     else:
         raise ValueError("Invalid module type")
 
-    result = {"count": count, "items": list(queryset)}
+    result = {
+        "count": count,
+        "items": list(queryset)
+    }
     return result
 
 
 @nats_client.register
 def get_cmdb_module_list():
     """
-    获取cmdb模块列表
+        获取cmdb模块列表
     """
     classifications = ClassificationManage.search_model_classification()
     classification_list = []
     model_children = []
     for classification in classifications:
-        model_children.append(
-            {
-                "name": classification["classification_id"],
-                "display_name": classification["classification_name"],
-            }
-        )
-        classification_list.append(
-            {"name": classification["classification_id"], "display_name": classification["classification_name"], "children": []}
-        )
+        model_children.append({
+            "name": classification["classification_id"],
+            "display_name": classification["classification_name"],
+        })
+        classification_list.append({
+            "name": classification["classification_id"],
+            "display_name": classification["classification_name"],
+            "children": []
+        })
 
     """
         根据模型分类id进行数据封装
@@ -75,12 +198,10 @@ def get_cmdb_module_list():
         if model["classification_id"] not in model_map:
             model_map[model["classification_id"]] = []
 
-        model_map[model["classification_id"]].append(
-            {
-                "name": model["model_id"],
-                "display_name": model["model_name"],
-            }
-        )
+        model_map[model["classification_id"]].append({
+            "name": model["model_id"],
+            "display_name": model["model_name"],
+        })
 
     for _classification in classification_list:
         classification_id = _classification["name"]
@@ -93,7 +214,7 @@ def get_cmdb_module_list():
     result = [
         {"name": PERMISSION_MODEL, "display_name": "Model", "children": model_children},
         {"name": PERMISSION_INSTANCES, "display_name": "Instance", "children": classification_list},
-        {"name": PERMISSION_TASK, "display_name": "Task", "children": task_children},
+        {"name": PERMISSION_TASK, "display_name": "Task", "children": task_children}
     ]
     return result
 
@@ -101,7 +222,7 @@ def get_cmdb_module_list():
 @nats_client.register
 def search_instances(params):
     """
-    根据参数查询实例
+        根据参数查询实例
     """
     model_id = params["model_id"]
     inst_name = params.get("inst_name", None)
@@ -168,7 +289,9 @@ def query_asset_instances(
                 start = item.get("start")
                 end = item.get("end")
                 if start and end:
-                    normalized.append({"field": field, "type": "time", "start": start, "end": end})
+                    normalized.append(
+                        {"field": field, "type": "time", "start": start, "end": end}
+                    )
                 return
 
             if "value" not in item:
@@ -182,7 +305,9 @@ def query_asset_instances(
             if isinstance(value, list) and not value:
                 return
 
-            normalized.append({"field": field, "type": condition_type, "value": value})
+            normalized.append(
+                {"field": field, "type": condition_type, "value": value}
+            )
 
         def walk(node):
             if node is None:
@@ -215,11 +340,13 @@ def query_asset_instances(
         permission_map={},
     )
 
+    formatted_instances = _format_asset_instances_response(model_id, instances)
+
     return {
         "result": True,
         "data": {
             "count": count,
-            "items": instances,
+            "items": formatted_instances,
         },
         "message": "",
     }
@@ -238,55 +365,13 @@ def sync_display_fields(organizations=None, users=None):
         任务提交结果 {"task_id": "uuid", "status": "submitted"}
     """
     from apps.cmdb.display_field.sync import sync_display_fields_for_system_mgmt
-
-    result = sync_display_fields_for_system_mgmt(organizations=organizations, users=users)
+    
+    result = sync_display_fields_for_system_mgmt(
+        organizations=organizations or [],
+        users=users or [],
+    )
 
     return result
-
-
-@nats_client.register
-def receive_config_file_result(data):
-    process_result = ConfigFileService.process_collect_result(data or {})
-    version_obj = process_result["version_obj"]
-    changed = process_result["changed"]
-    task = version_obj.collect_task
-    task.exec_status = CollectRunStatusType.SUCCESS if version_obj.status == "success" else CollectRunStatusType.ERROR
-    task.collect_data = {
-        "config_file": {
-            "version": version_obj.version,
-            "changed": changed,
-            "content_key": version_obj.content_key,
-            "status": version_obj.status,
-        }
-    }
-    task.format_data = {
-        "add": [],
-        "update": [],
-        "delete": [],
-        "association": [],
-        "__raw_data__": [{"__time__": version_obj.version, "status": version_obj.status}],
-        "all": 1,
-    }
-    task.collect_digest = {
-        "add": 0,
-        "add_error": 0,
-        "update": 0,
-        "update_error": 0,
-        "delete": 0,
-        "delete_error": 0,
-        "association": 0,
-        "association_error": 0,
-        "add_success": 0,
-        "update_success": 0,
-        "delete_success": 0,
-        "association_success": 0,
-        "all": 1,
-        "last_time": version_obj.version,
-    }
-    if version_obj.status != "success":
-        task.collect_digest["message"] = version_obj.error_message or "配置文件采集失败"
-    task.save(update_fields=["exec_status", "collect_data", "format_data", "collect_digest"])
-    return {"result": True}
 
 @nats_client.register
 def model_inst_count(*args, **kwargs):

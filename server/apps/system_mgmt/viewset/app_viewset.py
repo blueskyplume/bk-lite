@@ -5,7 +5,7 @@ from apps.core.utils.viewset_utils import LanguageViewSet
 from apps.system_mgmt.models import App
 from apps.system_mgmt.serializers.app_serializer import AppSerializer
 from apps.system_mgmt.utils.operation_log_utils import log_operation
-
+import json
 
 class AppViewSet(LanguageViewSet):
     queryset = App.objects.all().order_by("name")

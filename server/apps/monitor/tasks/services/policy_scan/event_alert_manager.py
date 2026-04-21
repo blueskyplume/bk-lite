@@ -301,8 +301,6 @@ class EventAlertManager:
         for event in event_objs:
             if event.level == "info":
                 continue
-            if event.level == "no_data" and self.policy.no_data_alert <= 0:
-                continue
             events_to_notify.append(event)
 
         if not events_to_notify:

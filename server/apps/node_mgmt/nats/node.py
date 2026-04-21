@@ -39,9 +39,7 @@ class NatsService:
         return encrypted_config
 
     @staticmethod
-    def _merge_and_encrypt_env_config(
-        old_env_config: dict, new_env_config: dict
-    ) -> dict:
+    def _merge_and_encrypt_env_config(old_env_config: dict, new_env_config: dict) -> dict:
         """
         合并并智能加密环境变量配置
         只对变化的密码字段进行加密，未变化的保持原值
@@ -59,10 +57,7 @@ class NatsService:
 
         for key, value in new_env_config.items():
             # 如果不是密码字段，直接使用新值
-            if (
-                EnvVariableConstants.SENSITIVE_FIELD_KEYWORD not in key.lower()
-                or not value
-            ):
+            if EnvVariableConstants.SENSITIVE_FIELD_KEYWORD not in key.lower() or not value:
                 merged_config[key] = value
                 continue
 
@@ -79,9 +74,7 @@ class NatsService:
         return merged_config
 
     @transaction.atomic
-    def batch_create_configs_and_child_configs(
-        self, configs: list, child_configs: list
-    ):
+    def batch_create_configs_and_child_configs(self, configs: list, child_configs: list):
         """
         批量创建配置及其子配置（带事务保护）
         :param configs: 配置列表
@@ -102,20 +95,11 @@ class NatsService:
             - env_config: 环境变量配置（可选）
         """
 
-        cloud_regions = Node.objects.filter(
-            id__in=[i["node_id"] for i in configs]
-        ).values("id", "cloud_region_id", "operating_system")
-        cloud_region_map = {
-            i["id"]: (i["cloud_region_id"], i["operating_system"])
-            for i in cloud_regions
-        }
+        cloud_regions = Node.objects.filter(id__in=[i["node_id"] for i in configs]).values("id", "cloud_region_id", "operating_system")
+        cloud_region_map = {i["id"]: (i["cloud_region_id"], i["operating_system"]) for i in cloud_regions}
 
-        collectors = Collector.objects.filter(
-            name__in=[i["collector_name"] for i in configs]
-        ).values("name", "node_operating_system", "id")
-        collector_map = {
-            (i["name"], i["node_operating_system"]): i["id"] for i in collectors
-        }
+        collectors = Collector.objects.filter(name__in=[i["collector_name"] for i in configs]).values("name", "node_operating_system", "id")
+        collector_map = {(i["name"], i["node_operating_system"]): i["id"] for i in collectors}
 
         conf_objs, node_config_assos = [], []
         for config in configs:
@@ -123,9 +107,7 @@ class NatsService:
             collector_id = collector_map[(config["collector_name"], operating_system)]
 
             # 加密包含password的环境变量
-            encrypted_env_config = self._encrypt_password_fields(
-                config.get("env_config", {})
-            )
+            encrypted_env_config = self._encrypt_password_fields(config.get("env_config", {}))
 
             conf_objs.append(
                 CollectorConfiguration(
@@ -137,16 +119,10 @@ class NatsService:
                     env_config=encrypted_env_config,
                 )
             )
-            node_config_assos.append(
-                NodeCollectorConfiguration(
-                    node_id=config["node_id"], collector_config_id=config["id"]
-                )
-            )
+            node_config_assos.append(NodeCollectorConfiguration(node_id=config["node_id"], collector_config_id=config["id"]))
 
         if conf_objs:
-            CollectorConfiguration.objects.bulk_create(
-                conf_objs, batch_size=DatabaseConstants.BULK_CREATE_BATCH_SIZE
-            )
+            CollectorConfiguration.objects.bulk_create(conf_objs, batch_size=DatabaseConstants.BULK_CREATE_BATCH_SIZE)
         if node_config_assos:
             NodeCollectorConfiguration.objects.bulk_create(
                 node_config_assos,
@@ -185,16 +161,12 @@ class NatsService:
             .distinct()
         )
 
-        base_config_map = {
-            (i["nodes__id"], i["collector__name"]): i["id"] for i in base_configs
-        }
+        base_config_map = {(i["nodes__id"], i["collector__name"]): i["id"] for i in base_configs}
 
         node_objs = []
         for config in configs:
             # 加密包含password的环境变量
-            encrypted_env_config = self._encrypt_password_fields(
-                config.get("env_config", {})
-            )
+            encrypted_env_config = self._encrypt_password_fields(config.get("env_config", {}))
 
             node_objs.append(
                 ChildConfig(
@@ -202,9 +174,7 @@ class NatsService:
                     collect_type=config["collect_type"],
                     config_type=config["type"],
                     content=config["content"],
-                    collector_config_id=base_config_map[
-                        (config["node_id"], config["collector_name"])
-                    ],
+                    collector_config_id=base_config_map[(config["node_id"], config["collector_name"])],
                     env_config=encrypted_env_config,
                     sort_order=config.get("sort_order", 0),
                     config_section=config.get("config_section", ""),
@@ -212,9 +182,7 @@ class NatsService:
             )
 
         if node_objs:
-            ChildConfig.objects.bulk_create(
-                node_objs, batch_size=DatabaseConstants.BULK_CREATE_BATCH_SIZE
-            )
+            ChildConfig.objects.bulk_create(node_objs, batch_size=DatabaseConstants.BULK_CREATE_BATCH_SIZE)
 
     @transaction.atomic
     def batch_create_child_configs(self, configs: list):
@@ -269,9 +237,7 @@ class NatsService:
 
         if env_config:
             # 智能合并并加密：只对变化的密码字段加密
-            merged_env_config = self._merge_and_encrypt_env_config(
-                child_config.env_config, env_config
-            )
+            merged_env_config = self._merge_and_encrypt_env_config(child_config.env_config, env_config)
             child_config.env_config = merged_env_config
 
         child_config.save()
@@ -293,9 +259,7 @@ class NatsService:
 
         if env_config:
             # 智能合并并加密：只对变化的密码字段加密
-            merged_env_config = self._merge_and_encrypt_env_config(
-                config.env_config, env_config
-            )
+            merged_env_config = self._merge_and_encrypt_env_config(config.env_config, env_config)
             config.env_config = merged_env_config
 
         config.save()
@@ -445,6 +409,12 @@ def get_child_configs_by_ids(ids: list):
 def get_configs_by_ids(ids: list):
     """根据ID获取配置"""
     return NatsService().get_configs_by_ids(ids)
+
+
+@nats_client.register
+def get_authorized_nodes_by_ids(node_ids: list, permission_data: dict = None):
+    """根据节点ID列表获取当前调用方有权限的节点"""
+    return NodeService.get_authorized_nodes_by_ids(node_ids, permission_data)
 
 
 @nats_client.register

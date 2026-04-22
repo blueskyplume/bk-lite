@@ -330,7 +330,7 @@ COLLECT_OBJ_TREE = [
     },
     {
         "id": "vmware",
-        "name": "VMware",
+        "name": "虚拟化",
         "children": [
             {
                 "id": "vmware_vc",

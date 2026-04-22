@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/nats-io/nats.go"
 	"golang.org/x/text/encoding/simplifiedchinese"

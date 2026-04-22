@@ -14,6 +14,7 @@ from apps.cmdb.display_field.cache import ExcludeFieldsCache
 from apps.cmdb.services.model import ModelManage
 from apps.cmdb.services.classification import ClassificationManage
 from apps.cmdb.models.collect_model import CollectModels
+from apps.cmdb.services.config_file_service import ConfigFileService
 from apps.cmdb.services.instance import InstanceManage
 from apps.system_mgmt.models import Group, User
 
@@ -231,6 +232,17 @@ def search_instances(params):
     instances, _ = InstanceManage.search_inst(model_id=model_id, inst_name=inst_name, _id=_id)
     result = instances[0] if instances else {}
     return result
+
+
+@nats_client.register
+def receive_config_file_result(data: dict):
+    """接收 Stargazer 回传的配置文件采集结果并落库。"""
+    result = ConfigFileService.process_collect_result(data)
+    return {
+        "result": True,
+        "changed": bool(result.get("changed", False)),
+        "task_updated": bool(result.get("task_updated", False)),
+    }
 
 
 @nats_client.register

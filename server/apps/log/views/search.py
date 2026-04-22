@@ -3,7 +3,7 @@ from rest_framework.viewsets import ViewSet, ModelViewSet
 
 from apps.core.utils.web_utils import WebUtils
 from apps.log.services.search import SearchService
-from apps.log.utils.log_group import LogGroupQueryBuilder
+from apps.log.services.access_scope import LogAccessScopeService
 from apps.log.models.log_group import SearchCondition
 from apps.log.serializers.log_group import SearchConditionSerializer
 from apps.log.serializers.search import LogFieldValuesSerializer, LogHitsSerializer, LogSearchSerializer, LogTopStatsSerializer
@@ -15,12 +15,21 @@ class LogSearchViewSet(ViewSet):
         serializer = LogFieldValuesSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
+        query = request.query_params.get("query", "*")
+        log_groups = request.query_params.getlist("log_groups") or request.query_params.getlist("log_groups[]")
+
+        try:
+            scope = LogAccessScopeService.resolve_scope(request, log_groups)
+        except ValueError as exc:
+            return WebUtils.response_error(error_message=str(exc), status_code=403)
 
         data = SearchService.field_values(
             validated_data.get("start_time", ""),
             validated_data.get("end_time", ""),
             validated_data["filed"],
             validated_data.get("limit", 100),
+            query=query,
+            log_groups=scope.log_groups,
         )
         return WebUtils.response_success(data)
 
@@ -46,17 +55,17 @@ class LogSearchViewSet(ViewSet):
         validated_data = serializer.validated_data
         log_groups = validated_data.get("log_groups", [])
 
-        # 验证日志分组
-        is_valid, error_msg, _ = LogGroupQueryBuilder.validate_log_groups(log_groups)
-        if not is_valid:
-            return WebUtils.response_error(error_msg)
+        try:
+            scope = LogAccessScopeService.resolve_scope(request, log_groups)
+        except ValueError as exc:
+            return WebUtils.response_error(error_message=str(exc), status_code=403)
 
         data = SearchService.search_logs(
             validated_data["query"],
             validated_data.get("start_time", ""),
             validated_data.get("end_time", ""),
             validated_data.get("limit", 10),
-            log_groups,
+            scope.log_groups,
         )
         return WebUtils.response_success(data)
 
@@ -70,10 +79,10 @@ class LogSearchViewSet(ViewSet):
         validated_data = serializer.validated_data
         log_groups = validated_data.get("log_groups", [])
 
-        # 验证日志分组
-        is_valid, error_msg, _ = LogGroupQueryBuilder.validate_log_groups(log_groups)
-        if not is_valid:
-            return WebUtils.response_error(error_msg)
+        try:
+            scope = LogAccessScopeService.resolve_scope(request, log_groups)
+        except ValueError as exc:
+            return WebUtils.response_error(error_message=str(exc), status_code=403)
 
         data = SearchService.search_hits(
             validated_data["query"],
@@ -82,7 +91,7 @@ class LogSearchViewSet(ViewSet):
             validated_data["field"],
             validated_data.get("fields_limit", 5),
             validated_data.get("step", "5m"),
-            log_groups,
+            scope.log_groups,
         )
         return WebUtils.response_success(data)
 
@@ -95,9 +104,10 @@ class LogSearchViewSet(ViewSet):
         validated_data = serializer.validated_data
         log_groups = validated_data.get("log_groups", [])
 
-        is_valid, error_msg, _ = LogGroupQueryBuilder.validate_log_groups(log_groups)
-        if not is_valid:
-            return WebUtils.response_error(error_message=error_msg)
+        try:
+            scope = LogAccessScopeService.resolve_scope(request, log_groups)
+        except ValueError as exc:
+            return WebUtils.response_error(error_message=str(exc), status_code=403)
 
         data = SearchService.top_stats(
             query=validated_data.get("query", "*"),
@@ -105,7 +115,7 @@ class LogSearchViewSet(ViewSet):
             end_time=validated_data.get("end_time", ""),
             attr=validated_data["attr"],
             top_num=validated_data.get("top_num", 5),
-            log_groups=log_groups,
+            log_groups=scope.log_groups,
         )
         return WebUtils.response_success(data)
 
@@ -122,18 +132,15 @@ class LogSearchViewSet(ViewSet):
         if log_groups_param:
             log_groups = [group.strip() for group in log_groups_param.split(",") if group.strip()]
 
-        if not log_groups:
-            return WebUtils.response_error("log_groups parameter is required.")
-
         if not query:
             return WebUtils.response_error("Query parameters are required.")
 
-        # 验证日志分组
-        is_valid, error_msg, _ = LogGroupQueryBuilder.validate_log_groups(log_groups)
-        if not is_valid:
-            return WebUtils.response_error(error_msg)
+        try:
+            scope = LogAccessScopeService.resolve_scope(request, log_groups)
+        except ValueError as exc:
+            return WebUtils.response_error(error_message=str(exc), status_code=403)
 
-        return SearchService.tail(query, log_groups)
+        return SearchService.tail(query, scope.log_groups)
 
 
 class SearchConditionViewSet(ModelViewSet):

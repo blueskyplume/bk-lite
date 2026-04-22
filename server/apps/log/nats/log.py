@@ -13,17 +13,7 @@ from apps.log.utils.query_log import VictoriaMetricsAPI
 
 
 def _normalize_bounded_int(value, field_name: str, default, max_value: int):
-    if value in (None, ""):
-        return default
-    try:
-        normalized = int(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{field_name} 必须是整数")
-    if normalized < 1:
-        raise ValueError(f"{field_name} 必须大于等于 1")
-    if normalized > max_value:
-        raise ValueError(f"{field_name} 不能大于 {max_value}")
-    return normalized
+    return VictoriaLogsConstants.normalize_bounded_int(value, field_name, default, max_value)
 
 
 @nats_client.register
@@ -33,7 +23,7 @@ def log_search(query, time_range, limit=10, *args, **kwargs):
     start_time = format_time_iso(start_time)
     end_time = format_time_iso(end_time)
     try:
-        limit = _normalize_bounded_int(limit, "limit", 10, VictoriaLogsConstants.QUERY_LIMIT_MAX)
+        limit = VictoriaLogsConstants.normalize_query_limit(limit, default=10)
     except ValueError as exc:
         return {"result": False, "data": [], "message": str(exc)}
     vm_api = VictoriaMetricsAPI()
@@ -48,7 +38,7 @@ def log_hits(query, time_range, field, fields_limit=5, step="5m", *args, **kwarg
     start_time = format_time_iso(start_time)
     end_time = format_time_iso(end_time)
     try:
-        fields_limit = _normalize_bounded_int(fields_limit, "fields_limit", 5, VictoriaLogsConstants.HITS_FIELDS_LIMIT_MAX)
+        fields_limit = VictoriaLogsConstants.normalize_hits_fields_limit(fields_limit, default=5)
     except ValueError as exc:
         return {"result": False, "data": [], "message": str(exc)}
     vm_api = VictoriaMetricsAPI()

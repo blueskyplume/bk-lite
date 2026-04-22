@@ -87,9 +87,9 @@ class VictoriaMetricsAPI:
         response.raise_for_status()
         return response.json()
 
-    def field_values(self, start, end, field, limit=100):
+    def field_values(self, start, end, field, limit=100, query=None):
         data = {
-            "query": f"{field}:*",
+            "query": query or f"{field}:*",
             "field": field,
             "start": start,
             "end": end,

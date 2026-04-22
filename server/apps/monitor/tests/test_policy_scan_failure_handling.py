@@ -306,11 +306,7 @@ def test_threshold_event_does_not_reuse_active_no_data_alert(monkeypatch):
 
     module = _load_module(
         "monitor_policy_event_alert_manager_key_test_module",
-        Path(__file__).resolve().parents[1]
-        / "tasks"
-        / "services"
-        / "policy_scan"
-        / "event_alert_manager.py",
+        Path(__file__).resolve().parents[1] / "tasks" / "services" / "policy_scan" / "event_alert_manager.py",
     )
 
     metric_instance_id = "('host-1',)"
@@ -332,13 +328,9 @@ def test_threshold_event_does_not_reuse_active_no_data_alert(monkeypatch):
     manager = object.__new__(module.EventAlertManager)
     manager.policy = types.SimpleNamespace(id=1006, name="mixed-policy")
     manager.active_alerts = [active_no_data_alert]
-    manager._create_alerts_from_events = lambda events: created_from_events.extend(
-        events
-    ) or [created_alert]
+    manager._create_alerts_from_events = lambda events: created_from_events.extend(events) or [created_alert]
     manager.create_events = lambda events: persisted_events.extend(events) or events
-    manager._update_existing_alerts_from_events = lambda events: existing_updates.extend(
-        events
-    )
+    manager._update_existing_alerts_from_events = lambda events: existing_updates.extend(events)
 
     threshold_event = {
         "metric_instance_id": metric_instance_id,
@@ -388,20 +380,14 @@ def test_send_notice_returns_channel_result_for_event_audit(monkeypatch):
     _install_module(
         monkeypatch,
         "apps.monitor.utils.system_mgmt_api",
-        SystemMgmtUtils=types.SimpleNamespace(
-            send_msg_with_channel=lambda *args: send_results[0]
-        ),
+        SystemMgmtUtils=types.SimpleNamespace(send_msg_with_channel=lambda *args: send_results[0]),
     )
     _install_module(monkeypatch, "apps.system_mgmt.models", Channel=object)
     _install_module(monkeypatch, "apps.core.logger", celery_logger=_Logger())
 
     module = _load_module(
         "monitor_policy_event_alert_manager_notice_test_module",
-        Path(__file__).resolve().parents[1]
-        / "tasks"
-        / "services"
-        / "policy_scan"
-        / "event_alert_manager.py",
+        Path(__file__).resolve().parents[1] / "tasks" / "services" / "policy_scan" / "event_alert_manager.py",
     )
 
     manager = object.__new__(module.EventAlertManager)
@@ -452,20 +438,14 @@ def test_alert_center_notification_result_is_persisted(monkeypatch):
     _install_module(
         monkeypatch,
         "apps.monitor.utils.system_mgmt_api",
-        SystemMgmtUtils=types.SimpleNamespace(
-            send_msg_with_channel=lambda *args: send_calls.append(args) or send_result
-        ),
+        SystemMgmtUtils=types.SimpleNamespace(send_msg_with_channel=lambda *args: send_calls.append(args) or send_result),
     )
     _install_module(monkeypatch, "apps.system_mgmt.models", Channel=object)
     _install_module(monkeypatch, "apps.core.logger", celery_logger=_Logger())
 
     module = _load_module(
         "monitor_policy_event_alert_manager_alert_center_test_module",
-        Path(__file__).resolve().parents[1]
-        / "tasks"
-        / "services"
-        / "policy_scan"
-        / "event_alert_manager.py",
+        Path(__file__).resolve().parents[1] / "tasks" / "services" / "policy_scan" / "event_alert_manager.py",
     )
 
     manager = object.__new__(module.EventAlertManager)
@@ -540,3 +520,45 @@ def test_last_over_time_uses_policy_window_in_range_selector(monkeypatch):
         )
     ]
     assert result["data"]["result"][0]["values"] == [[200, "7"]]
+
+
+def test_last_over_time_keeps_step_query_for_complex_pmq(monkeypatch):
+    query_calls = []
+
+    class VictoriaMetricsAPI:
+        def query(self, query, step="5m", time=None):
+            query_calls.append((query, step, time))
+            return {"data": {"result": [{"value": [200, "9"]}]}}
+
+    _install_module(
+        monkeypatch,
+        "apps.core.exceptions.base_app_exception",
+        BaseAppException=Exception,
+    )
+    _install_module(
+        monkeypatch,
+        "apps.monitor.utils.victoriametrics_api",
+        VictoriaMetricsAPI=VictoriaMetricsAPI,
+    )
+
+    module = _load_module(
+        "monitor_policy_methods_last_over_time_complex_query_test_module",
+        Path(__file__).resolve().parents[1] / "tasks" / "utils" / "policy_methods.py",
+    )
+
+    result = module.last_over_time(
+        "sum(rate(ping_percent_packet_loss{instance_type='ping'}[1m])) by (instance_id)",
+        start=100,
+        end=200,
+        step="5m",
+        group_by="instance_id",
+    )
+
+    assert query_calls == [
+        (
+            "any(last_over_time(sum(rate(ping_percent_packet_loss{instance_type='ping'}[1m])) by (instance_id))) by (instance_id)",
+            "5m",
+            200,
+        )
+    ]
+    assert result["data"]["result"][0]["values"] == [[200, "9"]]

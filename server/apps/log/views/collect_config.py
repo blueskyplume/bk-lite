@@ -229,7 +229,7 @@ class CollectInstanceViewSet(ViewSet):
             # 超管权限检查
             admin_cur_team = instance_res.get("all", {}).get("team")
             if admin_cur_team:
-                qs = CollectInstance.objects.filter(collectinstanceorganization__organization_in=admin_cur_team)
+                qs = CollectInstance.objects.filter(collectinstanceorganization__organization__in=admin_cur_team)
                 inst_permission_map = {}
             else:
                 objs = CollectInstance.objects.prefetch_related("collectinstanceorganization_set").all()

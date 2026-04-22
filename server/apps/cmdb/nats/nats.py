@@ -137,7 +137,7 @@ def _format_asset_instances_response(model_id, instances):
 @nats_client.register
 def get_cmdb_module_data(module, child_module, page, page_size, group_id):
     """
-        获取cmdb模块实例数据
+    获取cmdb模块实例数据
     """
     page = int(page)
     page_size = int(page_size)
@@ -147,7 +147,7 @@ def get_cmdb_module_data(module, child_module, page, page_size, group_id):
         end = page * page_size
         instances = CollectModels.objects.filter(task_type=child_module).values("id", "name", "model_id")[start:end]
         count = instances.count()
-        queryset = [{"id": str(i['id']), "name": f"{i['model_id']}_{i['name']}"} for i in instances]
+        queryset = [{"id": str(i["id"]), "name": f"{i['model_id']}_{i['name']}"} for i in instances]
     elif module == PERMISSION_INSTANCES:
         instances, count = InstanceManage.instance_list(
             model_id=child_module,  # 使用实际模型ID
@@ -156,14 +156,11 @@ def get_cmdb_module_data(module, child_module, page, page_size, group_id):
             page_size=page_size,
             order="",
             creator="",
-            permission_map={}
+            permission_map={},
         )
         queryset = []
         for instance in instances:
-            queryset.append({
-                "name": instance["inst_name"],
-                "id": instance["inst_name"]
-            })
+            queryset.append({"name": instance["inst_name"], "id": instance["inst_name"]})
     elif module == PERMISSION_MODEL:
         models = ModelManage.search_model(classification_ids=[child_module])
         count = len(models)
@@ -172,31 +169,28 @@ def get_cmdb_module_data(module, child_module, page, page_size, group_id):
     else:
         raise ValueError("Invalid module type")
 
-    result = {
-        "count": count,
-        "items": list(queryset)
-    }
+    result = {"count": count, "items": list(queryset)}
     return result
 
 
 @nats_client.register
 def get_cmdb_module_list():
     """
-        获取cmdb模块列表
+    获取cmdb模块列表
     """
     classifications = ClassificationManage.search_model_classification()
     classification_list = []
     model_children = []
     for classification in classifications:
-        model_children.append({
-            "name": classification["classification_id"],
-            "display_name": classification["classification_name"],
-        })
-        classification_list.append({
-            "name": classification["classification_id"],
-            "display_name": classification["classification_name"],
-            "children": []
-        })
+        model_children.append(
+            {
+                "name": classification["classification_id"],
+                "display_name": classification["classification_name"],
+            }
+        )
+        classification_list.append(
+            {"name": classification["classification_id"], "display_name": classification["classification_name"], "children": []}
+        )
 
     """
         根据模型分类id进行数据封装
@@ -207,10 +201,12 @@ def get_cmdb_module_list():
         if model["classification_id"] not in model_map:
             model_map[model["classification_id"]] = []
 
-        model_map[model["classification_id"]].append({
-            "name": model["model_id"],
-            "display_name": model["model_name"],
-        })
+        model_map[model["classification_id"]].append(
+            {
+                "name": model["model_id"],
+                "display_name": model["model_name"],
+            }
+        )
 
     for _classification in classification_list:
         classification_id = _classification["name"]
@@ -223,7 +219,7 @@ def get_cmdb_module_list():
     result = [
         {"name": PERMISSION_MODEL, "display_name": "Model", "children": model_children},
         {"name": PERMISSION_INSTANCES, "display_name": "Instance", "children": classification_list},
-        {"name": PERMISSION_TASK, "display_name": "Task", "children": task_children}
+        {"name": PERMISSION_TASK, "display_name": "Task", "children": task_children},
     ]
     return result
 
@@ -231,7 +227,7 @@ def get_cmdb_module_list():
 @nats_client.register
 def search_instances(params):
     """
-        根据参数查询实例
+    根据参数查询实例
     """
     model_id = params["model_id"]
     inst_name = params.get("inst_name", None)
@@ -298,9 +294,7 @@ def query_asset_instances(
                 start = item.get("start")
                 end = item.get("end")
                 if start and end:
-                    normalized.append(
-                        {"field": field, "type": "time", "start": start, "end": end}
-                    )
+                    normalized.append({"field": field, "type": "time", "start": start, "end": end})
                 return
 
             if "value" not in item:
@@ -314,9 +308,7 @@ def query_asset_instances(
             if isinstance(value, list) and not value:
                 return
 
-            normalized.append(
-                {"field": field, "type": condition_type, "value": value}
-            )
+            normalized.append({"field": field, "type": condition_type, "value": value})
 
         def walk(node):
             if node is None:
@@ -365,21 +357,21 @@ def query_asset_instances(
 def sync_display_fields(organizations=None, users=None):
     """
     同步组织/用户的 _display 字段
-    
+
     Args:
         organizations: 组织变更数据列表 [{"id": 1, "name": "新组织名"}]，可选
         users: 用户变更数据列表 [{"id": 1, "username": "admin", "display_name": "新显示名"}]，可选
-    
+
     Returns:
         任务提交结果 {"task_id": "uuid", "status": "submitted"}
     """
     from apps.cmdb.display_field.sync import sync_display_fields_for_system_mgmt
-    
+
     result = sync_display_fields_for_system_mgmt(
         organizations=organizations or [],
         users=users or [],
     )
-    
+
     return result
 
 
@@ -651,3 +643,12 @@ def get_model_inst_statistics(user_info=None, **kwargs):
     result_data.sort(key=lambda x: (-x["count"], x["classification"], x["model"]))
 
     return {"result": True, "data": result_data, "message": ""}
+
+
+@nats_client.register
+def model_inst_count(*args, **kwargs):
+    """
+    获取模型实例数量
+    """
+    result = InstanceManage.model_inst_count(permissions_map={}, creator="")
+    return {"result": True, "message": "", "data": result}

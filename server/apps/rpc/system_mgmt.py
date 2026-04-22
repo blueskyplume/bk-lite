@@ -86,6 +86,15 @@ class SystemMgmt(object):
         return_data = self.client.run("get_group_users", group=group, include_children=include_children)
         return return_data
 
+    def get_group_users_scoped(self, actor_context, group=None, include_children=False):
+        return_data = self.client.run(
+            "get_group_users_scoped",
+            actor_context=actor_context,
+            group=group,
+            include_children=include_children,
+        )
+        return return_data
+
     def get_all_users(self):
         return_data = self.client.run("get_all_users")
         return return_data
@@ -115,6 +124,16 @@ class SystemMgmt(object):
         :param include_children: bool , True、False
         """
         return_data = self.client.run("search_channel_list", channel_type=channel_type, teams=teams, include_children=include_children)
+        return return_data
+
+    def search_channel_list_scoped(self, actor_context, channel_type="", teams=None, include_children=False):
+        return_data = self.client.run(
+            "search_channel_list_scoped",
+            actor_context=actor_context,
+            channel_type=channel_type,
+            teams=teams,
+            include_children=include_children,
+        )
         return return_data
 
     def send_msg_with_channel(self, channel_id, title, content, receivers, attachments=None):

@@ -71,7 +71,6 @@ class ConfigFileService(object):
             error_message = str(payload.get("error") or payload.get("error_message") or "")
             content_base64 = payload.get("content_base64") or ""
             stale_callback = cls._is_stale_callback(task, version)
-            status, error_message = cls._apply_storage_limit(status, file_size, error_message)
 
             with transaction.atomic():
                 if status != ConfigFileVersionStatus.SUCCESS:
@@ -88,6 +87,13 @@ class ConfigFileService(object):
                     return {"version_obj": None, "changed": False, "task_updated": task_updated}
 
                 text_content = cls._decode_content(content_base64)
+                text_content = cls._truncate_content_for_storage(
+                    text_content=text_content,
+                    file_size=file_size,
+                    file_path=file_path,
+                    task_id=task.id,
+                    instance_id=instance_id,
+                )
                 content_hash = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
                 latest_success_version = cls._get_latest_success_version(task.id, instance_id, file_path)
                 if latest_success_version and latest_success_version.content_hash == content_hash:
@@ -250,12 +256,26 @@ class ConfigFileService(object):
         return version_time
 
     @staticmethod
-    def _apply_storage_limit(status: str, file_size: int, error_message: str) -> tuple[str, str]:
-        if status != ConfigFileVersionStatus.SUCCESS:
-            return status, error_message
-        if file_size <= MAX_CONFIG_FILE_SIZE_LIMIT:
-            return status, error_message
-        return ConfigFileVersionStatus.FILE_TOO_LARGE, f"文件大小超过 5MB 限制，当前大小 {file_size} Bytes"
+    def _truncate_content_for_storage(
+        text_content: str,
+        file_size: int,
+        file_path: str,
+        task_id: int | str,
+        instance_id: str,
+    ) -> str:
+        raw_content = (text_content or "").encode("utf-8")
+        if len(raw_content) <= MAX_CONFIG_FILE_SIZE_LIMIT:
+            return text_content
+
+        logger.warning(
+            "[ConfigFileService] 配置文件内容超过 5MB，按上限截断后保存: task_id=%s, instance_id=%s, file_path=%s, original_size=%s",
+            task_id,
+            instance_id,
+            file_path,
+            file_size or len(raw_content),
+        )
+        truncated_content = raw_content[:MAX_CONFIG_FILE_SIZE_LIMIT].decode("utf-8", errors="ignore")
+        return truncated_content
 
     @staticmethod
     def _is_stale_callback(task: CollectModels, version: str) -> bool:

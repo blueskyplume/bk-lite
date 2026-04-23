@@ -125,6 +125,9 @@ const useApiClient = () => {
   const post = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
     try {
       const response = await apiClient.post<T>(url, data, config);
+      if (config?.responseType === 'blob') {
+        return response.data;
+      }
       return handleResponse(response, onError);
     } catch (error) {
       throw error;
@@ -134,6 +137,9 @@ const useApiClient = () => {
   const put = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
     try {
       const response = await apiClient.put<T>(url, data, config);
+      if (config?.responseType === 'blob') {
+        return response.data;
+      }
       return handleResponse(response, onError);
     } catch (error) {
       throw error;
@@ -143,6 +149,9 @@ const useApiClient = () => {
   const del = useCallback(async <T = any>(url: string, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
     try {
       const response = await apiClient.delete<T>(url, config);
+      if (config?.responseType === 'blob') {
+        return response.data;
+      }
       return handleResponse(response, onError);
     } catch (error) {
       throw error;
@@ -152,6 +161,9 @@ const useApiClient = () => {
   const patch = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
     try {
       const response = await apiClient.patch<T>(url, data, config);
+      if (config?.responseType === 'blob') {
+        return response.data;
+      }
       return handleResponse(response, onError);
     } catch (error) {
       throw error;

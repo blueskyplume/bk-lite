@@ -12,15 +12,18 @@ from apps.core.logger import opspilot_logger as logger
 from apps.core.mixinx import EncryptMixin
 from apps.core.utils.loader import LanguageLoader
 from apps.core.utils.viewset_utils import AuthViewSet, LanguageViewSet
+from apps.opspilot.metis.llm.tools.mssql.connection import normalize_mssql_instance, test_mssql_instance
 from apps.opspilot.metis.llm.tools.mysql.connection import normalize_mysql_instance, test_mysql_instance
 from apps.opspilot.metis.llm.tools.oracle.connection import normalize_oracle_instance, test_oracle_instance
 from apps.opspilot.metis.llm.tools.redis.connection import normalize_redis_instance, test_redis_instance
 from apps.opspilot.models import KnowledgeBase, LLMModel, LLMSkill, SkillRequestLog, SkillTools, UserPin
 from apps.opspilot.serializers.llm_serializer import LLMModelSerializer, LLMSerializer, SkillRequestLogSerializer, SkillToolsSerializer
 from apps.opspilot.services.builtin_tools import (
+    BUILTIN_MSSQL_TOOL_NAME,
     BUILTIN_MYSQL_TOOL_NAME,
     BUILTIN_ORACLE_TOOL_NAME,
     BUILTIN_REDIS_TOOL_NAME,
+    build_builtin_mssql_tool,
     build_builtin_mysql_tool,
     build_builtin_oracle_tool,
     build_builtin_redis_tool,
@@ -126,11 +129,16 @@ class LLMViewSet(AuthViewSet):
             return JsonResponse({"result": False, "message": message})
         params["team"] = params.get("team", []) or [int(request.COOKIES.get("current_team"))]
         params["enable_conversation_history"] = True
-        params["skill_prompt"] = """你是关于专业机器人，请按照以下要求进行回复
+        params[
+            "skill_prompt"
+        ] = """你是关于专业机器人，请按照以下要求进行回复
 1、请根据用户的问题，从知识库检索关联的知识进行总结回复
 2、请根据用户需求，从工具中选取适当的工具进行执行
 3、回复的语句请保证准确，不要杜撰
 4、请按照要点有条理的梳理答案"""
+        for item in params.get("skill_params", []):
+            if item.get("type") == "password":
+                EncryptMixin.encrypt_field("value", item)
         serializer = self.get_serializer(data=params)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
@@ -184,6 +192,16 @@ class LLMViewSet(AuthViewSet):
                 if i.get("type") == "password":
                     EncryptMixin.decrypt_field("value", i)
                     EncryptMixin.encrypt_field("value", i)
+        # 处理 skill_params 中 password 类型的加密/保留
+        old_skill_params = {p.get("key"): p for p in (instance.skill_params or [])}
+        for item in params.get("skill_params", []):
+            if item.get("type") == "password":
+                if item.get("value") == "******":
+                    old_param = old_skill_params.get(item.get("key"))
+                    if old_param:
+                        item["value"] = old_param["value"]
+                else:
+                    EncryptMixin.encrypt_field("value", item)
         for key in params.keys():
             if hasattr(instance, key):
                 setattr(instance, key, params[key])
@@ -279,6 +297,10 @@ class LLMViewSet(AuthViewSet):
             params["enable_suggest"] = params["enable_suggest"] if params.get("enable_suggest") else skill_obj.enable_suggest
             params["enable_query_rewrite"] = params["enable_query_rewrite"] if params.get("enable_query_rewrite") else skill_obj.enable_query_rewrite
             params["locale"] = getattr(request.user, "locale", "en")  # 用户语言设置
+            # 合并前端传入的 skill_params 和 DB 中的值（处理 ****** 掩码）
+            from apps.opspilot.utils.prompt_utils import merge_skill_params
+
+            params["skill_params"] = merge_skill_params(params.get("skill_params", []), skill_obj.skill_params or [])
             # 调用stream_chat函数返回流式响应
             return stream_chat(params, skill_obj.name, {}, current_ip, params["user_message"])
         except LLMSkill.DoesNotExist:
@@ -350,6 +372,10 @@ class LLMViewSet(AuthViewSet):
             params["enable_query_rewrite"] = params["enable_query_rewrite"] if params.get("enable_query_rewrite") else skill_obj.enable_query_rewrite
             params["locale"] = getattr(request.user, "locale", "en")  # 用户语言设置
             params["browser_use_force_task"] = True
+            # 合并前端传入的 skill_params 和 DB 中的值（处理 ****** 掩码）
+            from apps.opspilot.utils.prompt_utils import merge_skill_params
+
+            params["skill_params"] = merge_skill_params(params.get("skill_params", []), skill_obj.skill_params or [])
 
             # 调用AGUI协议的流式响应
             return stream_agui_chat(params, skill_obj.name, {}, current_ip, params["user_message"])
@@ -494,6 +520,8 @@ class SkillToolsViewSet(AuthViewSet):
                 response.data.append(build_builtin_mysql_tool(loader))
             if not any(item.get("name") == BUILTIN_ORACLE_TOOL_NAME for item in response.data):
                 response.data.append(build_builtin_oracle_tool(loader))
+            if not any(item.get("name") == BUILTIN_MSSQL_TOOL_NAME for item in response.data):
+                response.data.append(build_builtin_mssql_tool(loader))
         return response
 
     @HasPermission("tool_list-Add")
@@ -616,3 +644,16 @@ class SkillToolsViewSet(AuthViewSet):
         except Exception as error:
             return JsonResponse({"result": False, "message": f"Oracle connection test failed: {error}"}, status=status.HTTP_400_BAD_REQUEST)
         return JsonResponse({"result": False, "message": "Oracle connection test failed"}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(methods=["POST"], detail=False)
+    @HasPermission("tool_list-View")
+    def test_mssql_connection(self, request):
+        try:
+            instance = normalize_mssql_instance(request.data)
+            if test_mssql_instance(instance):
+                return JsonResponse({"result": True, "data": {"success": True}})
+        except ValueError as error:
+            return JsonResponse({"result": False, "message": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as error:
+            return JsonResponse({"result": False, "message": f"MSSQL connection test failed: {error}"}, status=status.HTTP_400_BAD_REQUEST)
+        return JsonResponse({"result": False, "message": "MSSQL connection test failed"}, status=status.HTTP_400_BAD_REQUEST)

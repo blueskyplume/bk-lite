@@ -8,6 +8,7 @@ import shutil
 import ssl
 import stat
 import uuid
+import zipfile
 from codecs import decode as codecs_decode
 from dataclasses import dataclass
 from pathlib import Path
@@ -544,6 +545,29 @@ async def prepare_playbook_execution(
 
     playbook_path = payload.playbook_path
     playbook_content = payload.playbook_content
+
+    # Playbook ZIP 包处理：当有 files 但没有 file_distribution 时，
+    # 下载 ZIP 文件并解压到 workspace，playbook_path 指向解压后的入口文件
+    if payload.files and not payload.file_distribution:
+        for file_item in payload.files:
+            bucket_name = str(file_item.get("bucket_name", "")).strip()
+            if not bucket_name:
+                raise ValueError("file item bucket_name is required")
+            local_path = await download_object_to_workspace(config, workspace, bucket_name, file_item)
+            if local_path.endswith(".zip"):
+                with zipfile.ZipFile(local_path, "r") as zf:
+                    zf.extractall(workspace)
+                # 在解压后的内容中查找 playbook.yml 入口文件
+                playbook_entry = payload.playbook_path or "playbook.yml"
+                # 支持 ZIP 内有顶层目录的情况（如 playbook-template/playbook.yml）
+                candidates = list(workspace.rglob(Path(playbook_entry).name))
+                if candidates:
+                    playbook_path = str(candidates[0])
+                else:
+                    raise ValueError(f"ZIP 解压后未找到入口文件: {playbook_entry}")
+                # 已通过 ZIP 提供 playbook，清除 playbook_content 避免被覆盖
+                playbook_content = None
+
     if payload.file_distribution:
         bucket_name = str(payload.file_distribution.get("bucket_name", "")).strip()
         target_path = str(payload.file_distribution.get("target_path", "")).strip()

@@ -282,7 +282,7 @@
         "influxdb_httpd_serverError_rate": "HTTP 5XX次数/分钟",
         "influxdb_httpd_pointsWrittenDropped_rate": "Write API丢点数/分钟",
         "influxdb_httpd_pointsWrittenFail_rate": "Write API持久化失败数/分钟",
-      "influxdb_httpd_writeReq_rate": "写入请求速率 (次/分钟)",
+      "influxdb_httpd_writeReq_rate": "写入请求速率（次/秒）",
       "influxdb_httpd_queryReq_rate": "查询请求速率",
       "influxdb_runtime_HeapAlloc": "Runtime堆已分配内存",
       "reportTime": "上报时间",

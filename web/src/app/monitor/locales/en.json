@@ -282,7 +282,7 @@
         "influxdb_httpd_serverError_rate": "HTTP 5XX Per Minute",
         "influxdb_httpd_pointsWrittenDropped_rate": "Dropped Write Points Per Minute",
         "influxdb_httpd_pointsWrittenFail_rate": "Write Persistence Failures Per Minute",
-      "influxdb_httpd_writeReq_rate": "Write Request Rate (per minute)",
+      "influxdb_httpd_writeReq_rate": "Write Request Rate (per second)",
       "influxdb_httpd_queryReq_rate": "Query Request Rate",
       "influxdb_runtime_HeapAlloc": "Runtime Heap Alloc",
       "reportTime": "Report Time",

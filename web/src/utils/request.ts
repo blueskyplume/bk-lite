@@ -26,7 +26,7 @@ const setToken = (token: string | null) => {
   tokenRef.current = token;
 };
 
-const handleResponse = (response: AxiosResponse, _onError?: () => void) => {
+const handleResponse = (response: AxiosResponse) => {
   const { result, message: msg, data } = response.data;
   if (!result) {
     throw new Error(msg);
@@ -107,49 +107,49 @@ const useApiClient = () => {
     return config?.responseType === 'blob' ? response.data : handleResponse(response);
   }, []);
 
-  const post = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
+  const post = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
     try {
       const response = await apiClient.post<T>(url, data, config);
       if (config?.responseType === 'blob') {
         return response.data;
       }
-      return handleResponse(response, onError);
+      return handleResponse(response);
     } catch (error) {
       throw error;
     }
   }, []);
 
-  const put = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
+  const put = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
     try {
       const response = await apiClient.put<T>(url, data, config);
       if (config?.responseType === 'blob') {
         return response.data;
       }
-      return handleResponse(response, onError);
+      return handleResponse(response);
     } catch (error) {
       throw error;
     }
   }, []);
 
-  const del = useCallback(async <T = any>(url: string, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
+  const del = useCallback(async <T = any>(url: string, config?: AxiosRequestConfig): Promise<T> => {
     try {
       const response = await apiClient.delete<T>(url, config);
       if (config?.responseType === 'blob') {
         return response.data;
       }
-      return handleResponse(response, onError);
+      return handleResponse(response);
     } catch (error) {
       throw error;
     }
   }, []);
 
-  const patch = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig, onError?: () => void): Promise<T> => {
+  const patch = useCallback(async <T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
     try {
       const response = await apiClient.patch<T>(url, data, config);
       if (config?.responseType === 'blob') {
         return response.data;
       }
-      return handleResponse(response, onError);
+      return handleResponse(response);
     } catch (error) {
       throw error;
     }

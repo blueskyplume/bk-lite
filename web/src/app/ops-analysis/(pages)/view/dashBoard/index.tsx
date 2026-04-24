@@ -604,28 +604,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
     const handleFilterConfigConfirm = (
       newDefinitions: UnifiedFilterDefinition[],
     ) => {
-      const hasDefinitionChanged = newDefinitions.some((newDef) => {
-        const oldDef = definitions.find((d) => d.id === newDef.id);
-        if (!oldDef) return newDef.enabled;
-        return (
-          oldDef.enabled !== newDef.enabled ||
-          oldDef.key !== newDef.key ||
-          oldDef.type !== newDef.type ||
-          JSON.stringify(oldDef.defaultValue) !== JSON.stringify(newDef.defaultValue)
-        );
-      });
-
-      const hasDefinitionRemoved = definitions.some(
-        (oldDef) => oldDef.enabled && !newDefinitions.find((d) => d.id === oldDef.id)
-      );
-
       updateDefinitions(newDefinitions);
       const updatedValues = syncFilterValuesWithDefinitions(newDefinitions, filterValues);
       setFilterValues(updatedValues);
-
-      if (hasDefinitionChanged || hasDefinitionRemoved) {
-        setRefreshKey((prev) => prev + 1);
-      }
     };
 
     const handleDelete = (id: string) => {
@@ -780,7 +761,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(
                   layout={layout}
                   onLayoutChange={onLayoutChange}
                   cols={12}
-                  rowHeight={100}
+                  rowHeight={60}
                   margin={[12, 12]}
                   containerPadding={[12, 12]}
                   draggableCancel=".no-drag, .widget-body"

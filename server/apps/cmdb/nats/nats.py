@@ -584,9 +584,12 @@ def get_instance_group_by(model_id=None, field=None, user_info=None, **kwargs):
             format_permission_dict=format_permission_dict,
         )
 
+    display_field = f"{field}{DISPLAY_SUFFIX}"
     group_counts = {}
     for inst in instances:
-        value = inst.get(field)
+        value = inst.get(display_field)
+        if value in (None, "", []):
+            value = inst.get(field)
         if value is None:
             value = "unknown"
         key = str(value)

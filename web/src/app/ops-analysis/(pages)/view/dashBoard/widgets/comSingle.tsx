@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Spin, Empty } from 'antd';
 import {
   getColorByThreshold,
@@ -41,6 +41,9 @@ const ComSingle: React.FC<ComSingleProps> = ({
   config,
   onReady,
 }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+
   const extractValue = (data: unknown): number | string | null => {
     if (data === null || data === undefined) {
       return null;
@@ -105,6 +108,25 @@ const ComSingle: React.FC<ComSingleProps> = ({
     }
   }, [isDataReady, loading, onReady]);
 
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    const updateSize = () => {
+      setContainerSize({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      });
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, []);
+
   if (loading) {
     return (
       <div className="h-full flex flex-col items-center justify-center">
@@ -121,13 +143,24 @@ const ComSingle: React.FC<ComSingleProps> = ({
     );
   }
 
+  const displayText = String(displayValue);
+  const textLength = Math.max(displayText.length, 1);
+  const adaptiveFontSize = (() => {
+    const { width, height } = containerSize;
+    if (!width || !height) return 42;
+
+    const heightBasedSize = height * 0.5;
+    const widthBasedSize = width / Math.max(textLength * 0.6, 2.6);
+    return Math.max(36, Math.min(104, Math.min(heightBasedSize, widthBasedSize)));
+  })();
+
   return (
-    <div className="h-full flex flex-col items-center justify-center">
+    <div ref={containerRef} className="h-full flex flex-col items-center justify-center px-4">
       <div
-        className="text-4xl font-bold transition-colors duration-300"
-        style={{ color }}
+        className="font-bold transition-colors duration-300 leading-none text-center"
+        style={{ color, fontSize: adaptiveFontSize }}
       >
-        {displayValue}
+        {displayText}
       </div>
     </div>
   );

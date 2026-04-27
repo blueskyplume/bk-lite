@@ -56,7 +56,7 @@
       "display_name": "主节点切换频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟主节点切换频率。",
       "query": "rate(etcd_server_leader_changes_seen_total_counter{__$labels__}[5m])"
@@ -67,7 +67,7 @@
       "display_name": "心跳发送失败频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟心跳发送失败频率。",
       "query": "rate(etcd_server_heartbeat_send_failures_total_counter{__$labels__}[5m])"
@@ -78,7 +78,7 @@
       "display_name": "健康检查失败频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟健康检查失败频率。",
       "query": "rate(etcd_server_health_failures_counter{__$labels__}[5m])"
@@ -232,7 +232,7 @@
       "display_name": "提案失败频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟提案失败频率。",
       "query": "rate(etcd_server_proposals_failed_total_counter{__$labels__}[5m])"
@@ -243,7 +243,7 @@
       "display_name": "提案提交频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟提案提交频率。",
       "query": "rate(etcd_server_proposals_committed_total_gauge{__$labels__}[5m])"
@@ -254,7 +254,7 @@
       "display_name": "提案应用频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟提案应用频率。",
       "query": "rate(etcd_server_proposals_applied_total_gauge{__$labels__}[5m])"
@@ -276,7 +276,7 @@
       "display_name": "慢应用请求频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟慢应用请求频率。",
       "query": "rate(etcd_server_slow_apply_total_counter{__$labels__}[5m])"
@@ -287,7 +287,7 @@
       "display_name": "读索引失败频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟读索引失败频率。",
       "query": "rate(etcd_server_read_indexes_failed_total_counter{__$labels__}[5m])"
@@ -298,7 +298,7 @@
       "display_name": "慢读索引频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟慢读索引请求频率。",
       "query": "rate(etcd_server_slow_read_indexes_total_counter{__$labels__}[5m])"
@@ -309,7 +309,7 @@
       "display_name": "客户端请求频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟 etcd 处理的客户端请求频率。",
       "query": "sum(rate(etcd_server_client_requests_total_counter{__$labels__}[5m])) by (instance_id)"
@@ -320,7 +320,7 @@
       "display_name": "RPC 请求频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟一元 RPC 请求频率。",
       "query": "sum(rate(grpc_server_started_total_counter{grpc_type=\"unary\", instance_type=\"etcd\", __$labels__}[5m])) by (instance_id)"
@@ -331,7 +331,7 @@
       "display_name": "RPC 失败频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟非 OK 的一元 RPC 失败频率。",
       "query": "sum(rate(grpc_server_handled_total_counter{grpc_type=\"unary\", grpc_code!=\"OK\", instance_type=\"etcd\", __$labels__}[5m])) by (instance_id)"
@@ -386,7 +386,7 @@
       "display_name": "节点间发送失败频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟节点间发送失败频率。",
       "query": "sum(rate(etcd_network_peer_sent_failures_total_counter{__$labels__}[5m])) by (instance_id)"
@@ -419,7 +419,7 @@
       "display_name": "压缩键处理频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟压缩处理的键数量频率。",
       "query": "rate(etcd_debugging_mvcc_db_compaction_keys_total_counter{__$labels__}[5m])"
@@ -430,7 +430,7 @@
       "display_name": "写入频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟写入操作频率。",
       "query": "rate(etcd_mvcc_put_total_counter{__$labels__}[5m])"
@@ -441,7 +441,7 @@
       "display_name": "删除频率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [],
       "description": "最近 5 分钟删除操作频率。",
       "query": "rate(etcd_mvcc_delete_total_counter{__$labels__}[5m])"

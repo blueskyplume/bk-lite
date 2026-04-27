@@ -39,7 +39,7 @@
       "display_name": "HTTP 认证失败速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",
@@ -55,7 +55,7 @@
       "display_name": "HTTP 4XX 错误速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",
@@ -71,7 +71,7 @@
       "display_name": "HTTP 5XX 错误速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",
@@ -87,7 +87,7 @@
       "display_name": "写点丢弃速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",
@@ -103,7 +103,7 @@
       "display_name": "写入持久化失败速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",
@@ -119,7 +119,7 @@
       "display_name": "写入请求速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",
@@ -135,7 +135,7 @@
       "display_name": "查询请求速率",
       "instance_id_keys": ["instance_id"],
       "data_type": "Number",
-      "unit": "hertz",
+      "unit": "cps",
       "dimensions": [
         {
           "name": "bind",

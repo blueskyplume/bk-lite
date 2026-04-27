@@ -157,7 +157,8 @@
       "change_handler": {
         "type": "simple",
         "source_fields": ["server"],
-        "target_field": "instance_name"
+        "target_field": "instance_name",
+        "regex": "^(?:https?://)?([^/]+)"
       }
     },
     {

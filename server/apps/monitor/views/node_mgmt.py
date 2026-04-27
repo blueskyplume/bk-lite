@@ -2,6 +2,7 @@ from rest_framework.decorators import action
 from rest_framework.viewsets import ViewSet
 
 from apps.core.exceptions.base_app_exception import BaseAppException
+from apps.core.utils.user_group import normalize_user_group_ids
 from apps.core.utils.web_utils import WebUtils
 from apps.monitor.services.node_mgmt import InstanceConfigService
 from apps.rpc.node_mgmt import NodeMgmt
@@ -25,15 +26,20 @@ def _build_actor_context(request):
         "current_team": current_team,
         "include_children": request.COOKIES.get("include_children", "0") == "1",
         "is_superuser": request.user.is_superuser,
-        "group_list": [int(group["id"]) for group in getattr(request.user, "group_list", []) if isinstance(group, dict) and "id" in group],
+        "group_list": normalize_user_group_ids(getattr(request.user, "group_list", [])),
     }
 
 
 class NodeMgmtView(ViewSet):
     @action(methods=["post"], detail=False, url_path="nodes")
     def get_nodes(self, request):
-        orgs = {i["id"] for i in request.user.group_list if i["name"] == "OpsPilotGuest"}
-        orgs.add(request.COOKIES.get("current_team"))
+        actor_context = _build_actor_context(request)
+        orgs = {
+            int(group["id"])
+            for group in getattr(request.user, "group_list", [])
+            if isinstance(group, dict) and group.get("name") == "OpsPilotGuest" and group.get("id") is not None
+        }
+        orgs.add(actor_context["current_team"])
 
         page, page_size = parse_page_params(request.data, default_page=1, default_page_size=10, allow_page_size_all=True)
 
@@ -53,7 +59,7 @@ class NodeMgmtView(ViewSet):
                 permission_data={
                     "username": request.user.username,
                     "domain": request.user.domain,
-                    "current_team": request.COOKIES.get("current_team"),
+                    "current_team": actor_context["current_team"],
                 },
             )
         )

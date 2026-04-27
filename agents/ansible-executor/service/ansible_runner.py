@@ -1,13 +1,16 @@
 import asyncio
+import contextlib
 import importlib
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import ssl
 import stat
 import uuid
+import zipfile
 from codecs import decode as codecs_decode
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,6 +226,7 @@ async def download_object_to_workspace(config: ServiceConfig, workspace: Path, b
         raise ValueError("file_key is required")
     if not file_name:
         raise ValueError("file name is required")
+    destination = _safe_workspace_path(workspace, file_name, "file name")
 
     nats_client_module = importlib.import_module("nats.aio.client")
     nc = nats_client_module.Client()
@@ -253,13 +257,42 @@ async def download_object_to_workspace(config: ServiceConfig, workspace: Path, b
     try:
         js = nc.jetstream(timeout=120)
         object_store = await js.object_store(bucket_name)
-        destination = workspace / file_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("wb") as target_file:
             await object_store.get(file_key, writeinto=target_file)
         return str(destination)
     finally:
         await nc.close()
+
+
+def _safe_workspace_path(workspace: Path, relative_path: str, field_name: str) -> Path:
+    raw_path = str(relative_path).strip()
+    if not raw_path:
+        raise ValueError(f"{field_name} is required")
+    candidate = Path(raw_path)
+    if candidate.is_absolute() or any(part in {"..", ""} for part in candidate.parts):
+        raise ValueError(f"{field_name} must be a relative path inside workspace")
+
+    base = workspace.resolve()
+    target = (base / candidate).resolve(strict=False)
+    try:
+        target.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must stay inside workspace") from exc
+    return target
+
+
+def _safe_extract_zip(zip_file: zipfile.ZipFile, workspace: Path) -> None:
+    for member in zip_file.infolist():
+        safe_target = _safe_workspace_path(workspace, member.filename, "zip member")
+        if member.is_dir():
+            continue
+        mode = member.external_attr >> 16
+        if stat.S_ISLNK(mode):
+            raise ValueError(f"zip member must not be symlink: {member.filename}")
+        if safe_target.exists() and safe_target.is_symlink():
+            raise ValueError(f"zip member target must not be symlink: {member.filename}")
+    zip_file.extractall(workspace)
 
 
 def _normalize_windows_target_path(target_path: str) -> str:
@@ -402,6 +435,86 @@ def parse_ansible_output_per_host(output: str) -> list[dict[str, Any]]:
     return results
 
 
+def parse_playbook_recap(output: str) -> list[dict[str, Any]]:
+    """
+    解析 playbook 输出的 PLAY RECAP 部分，构建 per-host 结果数组。
+
+    PLAY RECAP 格式示例：
+        10.10.41.149  : ok=1  changed=0  unreachable=0  failed=0  skipped=0  rescued=0  ignored=0
+
+    判定逻辑：failed > 0 或 unreachable > 0 时视为失败。
+    """
+    recap_pattern = re.compile(r"^(\S+)\s+:\s+ok=(\d+)\s+changed=(\d+)\s+unreachable=(\d+)\s+failed=(\d+)")
+
+    # 找到 PLAY RECAP 行之后的内容
+    lines = str(output or "").splitlines()
+    recap_start = -1
+    for i, line in enumerate(lines):
+        if line.strip().startswith("PLAY RECAP"):
+            recap_start = i + 1
+            break
+
+    if recap_start < 0:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for line in lines[recap_start:]:
+        matched = recap_pattern.match(line.strip())
+        if not matched:
+            continue
+
+        host = matched.group(1)
+        unreachable = int(matched.group(4))
+        failed = int(matched.group(5))
+
+        is_failed = failed > 0 or unreachable > 0
+        status = "failed" if is_failed else "success"
+
+        # 提取该 host 的 task 输出片段
+        host_output = _extract_host_task_output(lines[: recap_start - 1], host)
+
+        results.append(
+            {
+                "host": host,
+                "status": status,
+                "raw_status": "FAILED" if is_failed else "SUCCESS",
+                "stdout": host_output if not is_failed else "",
+                "stderr": host_output if is_failed else "",
+                "exit_code": 1 if is_failed else 0,
+                "error_message": host_output if is_failed else "",
+            }
+        )
+
+    return results
+
+
+def _extract_host_task_output(lines: list[str], host: str) -> str:
+    """从 playbook 输出中提取指定 host 的 task 输出行。"""
+    host_lines: list[str] = []
+    capturing = False
+
+    for line in lines:
+        # 匹配 ok: [host], changed: [host], fatal: [host], skipping: [host] 等
+        if re.match(rf"^(ok|changed|fatal|failed|skipping|unreachable):\s+\[{re.escape(host)}\]", line):
+            capturing = True
+            host_lines.append(line)
+            continue
+
+        # 新 TASK 或 PLAY 行结束当前捕获
+        if line.startswith("TASK [") or line.startswith("PLAY [") or line.startswith("PLAY RECAP"):
+            capturing = False
+            continue
+
+        # task path 行跳过
+        if line.startswith("task path:"):
+            continue
+
+        if capturing:
+            host_lines.append(line)
+
+    return "\n".join(host_lines).strip()
+
+
 def _build_host_credentials_inventory(workspace: Path, host_credentials: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for idx, item in enumerate(host_credentials):
@@ -536,6 +649,22 @@ async def prepare_playbook_execution(
     workspace = create_task_workspace(payload.task_id)
     extra_vars = dict(payload.extra_vars or {})
 
+    logger.info(
+        "[prepare_playbook_start] task_id=%s workspace=%s playbook_path=%s "
+        "has_playbook_content=%s has_files=%s has_file_distribution=%s "
+        "has_host_credentials=%s has_private_key=%s extra_vars_keys=%s timeout=%s",
+        payload.task_id,
+        workspace,
+        payload.playbook_path,
+        bool(payload.playbook_content),
+        bool(payload.files),
+        bool(payload.file_distribution),
+        bool(payload.host_credentials),
+        bool(payload.private_key_content),
+        list((payload.extra_vars or {}).keys()),
+        payload.execute_timeout,
+    )
+
     if payload.private_key_content and not payload.host_credentials:
         private_key_path = _materialize_private_key(workspace, payload.private_key_content)
         extra_vars.setdefault("ansible_ssh_private_key_file", private_key_path)
@@ -544,6 +673,45 @@ async def prepare_playbook_execution(
 
     playbook_path = payload.playbook_path
     playbook_content = payload.playbook_content
+
+    # Playbook ZIP 包处理：当有 files 但没有 file_distribution 时，
+    # 下载 ZIP 文件并解压到 workspace，playbook_path 指向解压后的入口文件
+    if payload.files and not payload.file_distribution:
+        logger.info("[prepare_playbook] 开始处理 Playbook ZIP 文件: file_count=%d", len(payload.files))
+        for file_item in payload.files:
+            bucket_name = str(file_item.get("bucket_name", "")).strip()
+            if not bucket_name:
+                raise ValueError("file item bucket_name is required")
+            logger.info(
+                "[prepare_playbook] 下载文件: name=%s file_key=%s bucket=%s",
+                file_item.get("name"),
+                file_item.get("file_key"),
+                bucket_name,
+            )
+            local_path = await download_object_to_workspace(config, workspace, bucket_name, file_item)
+            logger.info("[prepare_playbook] 文件已下载: local_path=%s", local_path)
+            if local_path.endswith(".zip"):
+                with zipfile.ZipFile(local_path, "r") as zf:
+                    namelist = zf.namelist()
+                    logger.info("[prepare_playbook] ZIP 内容 (%d 个文件): %s", len(namelist), namelist)
+                    zf.extractall(workspace)
+                logger.info("[prepare_playbook] ZIP 已解压到: %s", workspace)
+                # 列出解压后的 workspace 内容
+                all_files = [str(p.relative_to(workspace)) for p in workspace.rglob("*") if p.is_file()]
+                logger.info("[prepare_playbook] workspace 文件列表: %s", all_files)
+                # 在解压后的内容中查找 playbook.yml 入口文件
+                playbook_entry = payload.playbook_path or "playbook.yml"
+                # 支持 ZIP 内有顶层目录的情况（如 playbook-template/playbook.yml）
+                candidates = list(workspace.rglob(Path(playbook_entry).name))
+                logger.info("[prepare_playbook] 查找入口文件 '%s', 候选: %s", playbook_entry, candidates)
+                if candidates:
+                    playbook_path = str(candidates[0])
+                    logger.info("[prepare_playbook] 使用 playbook_path=%s", playbook_path)
+                else:
+                    raise ValueError(f"ZIP 解压后未找到入口文件: {playbook_entry}")
+                # 已通过 ZIP 提供 playbook，清除 playbook_content 避免被覆盖
+                playbook_content = None
+
     if payload.file_distribution:
         bucket_name = str(payload.file_distribution.get("bucket_name", "")).strip()
         target_path = str(payload.file_distribution.get("target_path", "")).strip()
@@ -556,6 +724,9 @@ async def prepare_playbook_execution(
         downloaded_files: list[dict[str, Any]] = []
         for file_item in payload.files or []:
             local_path = await download_object_to_workspace(config, workspace, bucket_name, file_item)
+            if local_path.endswith(".zip"):
+                with zipfile.ZipFile(local_path, "r") as zip_file:
+                    _safe_extract_zip(zip_file, workspace)
             downloaded_files.append({**file_item, "local_path": local_path})
         playbook_content = _build_windows_file_distribution_playbook(downloaded_files, target_path, overwrite)
 
@@ -563,6 +734,7 @@ async def prepare_playbook_execution(
         playbook_file = workspace / "playbook.yml"
         playbook_file.write_text(playbook_content, encoding="utf-8")
         playbook_path = str(playbook_file)
+        logger.info("[prepare_playbook] playbook_content 已写入: %s", playbook_file)
 
     inventory_value = payload.inventory
     if payload.inventory_content or payload.host_credentials:
@@ -571,9 +743,11 @@ async def prepare_playbook_execution(
         if payload.inventory_content:
             parts.append(payload.inventory_content.rstrip("\n"))
         if payload.host_credentials:
+            logger.info("[prepare_playbook] 构建 host_credentials inventory: %d 个主机", len(payload.host_credentials))
             parts.append(_build_host_credentials_inventory(workspace, payload.host_credentials).rstrip("\n"))
         inventory_file.write_text("\n".join([p for p in parts if p]) + "\n", encoding="utf-8")
         inventory_value = str(inventory_file)
+        logger.info("[prepare_playbook] inventory 已写入: %s", inventory_file)
 
     prepared_payload = PlaybookRequest(
         playbook_path=playbook_path,
@@ -591,6 +765,13 @@ async def prepare_playbook_execution(
         file_distribution=None,
     )
     cmd = build_playbook_command(prepared_payload)
+    logger.info("[prepare_playbook] 最终命令: %s", " ".join(cmd))
+    logger.info(
+        "[prepare_playbook] 最终参数: playbook_path=%s inventory=%s extra_vars_keys=%s",
+        prepared_payload.playbook_path,
+        prepared_payload.inventory,
+        list(extra_vars.keys()),
+    )
     return cmd, workspace, prepared_payload
 
 
@@ -679,16 +860,28 @@ def build_playbook_winrm_preflight_command(payload: PlaybookRequest) -> list[str
 
 
 async def run_command(cmd: list[str], timeout: int) -> tuple[int, str]:
+    process_kwargs: dict[str, Any] = {}
+    if os.name == "posix":
+        process_kwargs["start_new_session"] = True
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        **process_kwargs,
     )
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        if os.name == "posix":
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
         logger.error("command timed out: %s", " ".join(shlex.quote(part) for part in cmd))
         return 124, "command timed out"
     output, decode_strategy = decode_command_output(stdout)

@@ -633,7 +633,6 @@ const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
                 <WidgetWrapper
                   dashboardId={dashboardId}
                   widgetId={item.i}
-                  surface="dashboard"
                   key={`${dashboardId ?? 'dashboard'}:${item.i}`}
                   chartType={item.valueConfig?.chartType}
                   config={item.valueConfig}

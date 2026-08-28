@@ -14,10 +14,7 @@ import {
   isFiniteNumber,
   type ThresholdColorConfig,
 } from '@/app/ops-analysis/utils/thresholdUtils';
-import type {
-  NetworkStatusTopologyConfig,
-  SceneWidgetType,
-} from '@/app/ops-analysis/types/sceneWidget';
+import type { NetworkStatusTopologyConfig } from '@/app/ops-analysis/types/sceneWidget';
 import {
   normalizeCardListAccentStyle,
   type CardListAccentStyle,
@@ -29,7 +26,7 @@ export interface WidgetConfigFormValues {
   name: string;
   description?: string;
   chartType: string;
-  sceneWidgetType?: SceneWidgetType;
+  sceneWidgetType?: 'networkStatusTopology';
   networkStatusTopology?: NetworkStatusTopologyConfig;
   chartThemeMode?: OpsChartThemeMode;
   dataSource?: string | number;
@@ -119,15 +116,6 @@ const buildWidgetConfigBase = (
 const buildSceneWidgetConfig = (
   values: WidgetConfigFormValues,
 ): WidgetConfig => {
-  if (values.sceneWidgetType === 'application3D') {
-    return {
-      name: values.name,
-      description: values.description,
-      chartType: 'application3D',
-      sceneWidgetType: 'application3D',
-      appearance: values.appearance || { frame: 'bare' },
-    };
-  }
   const topologyConfig = values.networkStatusTopology;
   return {
     name: values.name,
@@ -441,7 +429,7 @@ export const buildWidgetSubmitConfig = ({
   filterFields,
   actions,
 }: BuildWidgetSubmitConfigInput): BuildWidgetSubmitConfigResult => {
-  if (values.sceneWidgetType) {
+  if (values.sceneWidgetType === 'networkStatusTopology') {
     return { config: buildSceneWidgetConfig(values) };
   }
 

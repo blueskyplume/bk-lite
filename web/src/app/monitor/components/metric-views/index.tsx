@@ -33,7 +33,8 @@ import {
   useMetricSelectOptions,
 } from '@/app/monitor/components/metricSelectOptions';
 import { buildSearchTimeQueryParams } from '@/app/monitor/utils/searchTimeQuery';
-import { buildHostProcessLabelPairs,
+import {
+  buildHostProcessLabelPairs,
   isHostMonitorObject,
   isHostProcessMetricsTab,
   resolveHostProcessMetricsTarget,
@@ -101,25 +102,6 @@ const normalizeMysqlDisplayName = (name = '') => name
   .replace(/\s+/g, ' ')
   .trim();
 
-const findPluginTabByCollectType = (
-  responseData: IntegrationItem[],
-  preferredCollectType?: 'snmp' | 'netflow' | 'sflow' | null,
-): string | undefined => {
-  if (!preferredCollectType) return undefined;
-  if (preferredCollectType === 'snmp') {
-    const snmpPlugin = responseData.find((item) => {
-      const collectType = String(item.collect_type || '').trim().toLowerCase();
-      const name = String(item.name || '').trim().toUpperCase();
-      return collectType.startsWith('snmp') || name.includes('SNMP');
-    });
-    return snmpPlugin?.id != null ? String(snmpPlugin.id) : undefined;
-  }
-  const matched = responseData.find(
-    (item) => String(item.collect_type || '').trim() === preferredCollectType,
-  );
-  return matched?.id != null ? String(matched.id) : undefined;
-};
-
 const MetricViews: React.FC<ViewDetailProps> = ({
   monitorObjectId,
   monitorObjectName,
@@ -133,8 +115,7 @@ const MetricViews: React.FC<ViewDetailProps> = ({
   externalRefreshSignal,
   collectionInterval,
   hideTimeSelector = false,
-  onExternalXRangeChange,
-  preferredCollectType,
+  onExternalXRangeChange
 }) => {
   const { isLoading } = useApiClient();
   const {
@@ -292,7 +273,7 @@ const MetricViews: React.FC<ViewDetailProps> = ({
       return;
     }
     initPage();
-  }, [isLoading, monitorObjectId, instanceId, preferredCollectType]);
+  }, [isLoading, monitorObjectId, instanceId]);
 
   useEffect(() => {
     clearTimer();
@@ -362,7 +343,6 @@ const MetricViews: React.FC<ViewDetailProps> = ({
       }
 
       let _plugins: { label: string; value: string }[] = responseData
-        .filter((item: IntegrationItem) => item.id != null && String(item.id) !== 'undefined')
         .sort((a: IntegrationItem, b: IntegrationItem) => {
           const order = (item: IntegrationItem) =>
             item.is_pre ? 0 : !item.is_custom ? 1 : 2;
@@ -394,10 +374,7 @@ const MetricViews: React.FC<ViewDetailProps> = ({
       setProcessPluginId(nextProcessPluginId);
 
       setPlugins(_plugins);
-      const preferredTab = findPluginTabByCollectType(responseData, preferredCollectType);
-      const _activeTab = (preferredTab && _plugins.some((item) => item.value === preferredTab))
-        ? preferredTab
-        : (_plugins[0]?.value || '');
+      const _activeTab = _plugins[0]?.value || '';
       setActiveTab(_activeTab);
       if (!_activeTab) {
         setMetricData([]);

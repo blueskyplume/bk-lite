@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Empty, Segmented, Spin } from 'antd';
+import { Segmented } from 'antd';
 import { useSearchParams } from 'next/navigation';
 import useApiClient from '@/utils/request';
 import useMonitorApi from '@/app/monitor/api';
@@ -33,15 +33,10 @@ const Integration = () => {
   const [displayType, setDisplayType] = useState<string>('list');
   const tableOptions = useTableOptions();
 
-  const activeObject = useMemo(
-    () => findByMonitorId(objects, objectId),
-    [objects, objectId]
-  );
-
   const showTab = useMemo(() => {
-    const objectName = activeObject?.name || '';
+    const objectName = findByMonitorId(objects, objectId)?.name || '';
     return ['Pod', 'Node'].includes(objectName);
-  }, [activeObject]);
+  }, [objects, objectId]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -82,23 +77,7 @@ const Integration = () => {
     });
     setObjectId(selectedId);
     setDefaultSelectObj(selectedId);
-    if (selectedId) {
-      syncObjectId(selectedId);
-    }
-  }, [objects, searchParams, syncObjectId]);
-
-  useEffect(() => {
-    if (!objects.length || !objectId || activeObject) return;
-    const fallbackId = resolveMonitorObjectQueryId({
-      searchParams,
-      objects,
-      fallback: objects[0]?.id
-    });
-    if (!fallbackId || String(fallbackId) === String(objectId)) return;
-    setObjectId(fallbackId);
-    setDefaultSelectObj(fallbackId);
-    syncObjectId(fallbackId);
-  }, [activeObject, objectId, objects, searchParams, syncObjectId]);
+  }, [objects, searchParams]);
 
   const getTreeData = (data: ObjectItem[]): TreeItem[] => {
     const groupedData = data.reduce((acc, item) => {
@@ -152,15 +131,7 @@ const Integration = () => {
             onChange={onDisplayTypeChange}
           />
         )}
-        {treeLoading ? (
-          <div className="flex h-full min-h-[240px] items-center justify-center">
-            <Spin />
-          </div>
-        ) : !objects.length ? (
-          <Empty description="暂无监控对象" className="mt-[80px]" />
-        ) : !activeObject ? (
-          <Empty description="请选择左侧监控对象" className="mt-[80px]" />
-        ) : displayType === 'list' ? (
+        {displayType === 'list' ? (
           <ViewList
             key={objectId}
             objects={objects}

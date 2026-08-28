@@ -1,5 +1,4 @@
 import React from 'react';
-import type { OpsAnalysisWidgetSurface } from '@/app/ops-analysis/utils/chartTypeSurface';
 import type { DatasourceItem } from '@/app/ops-analysis/types/dataSource';
 import type {
   ScreenRenderContext,
@@ -33,7 +32,6 @@ interface WidgetRendererProps {
   runtimeActive?: boolean;
   runtimePriority?: RuntimeRequestPriority;
   fallback?: React.ReactNode;
-  surface?: OpsAnalysisWidgetSurface;
 }
 
 const WidgetRenderer: React.FC<WidgetRendererProps> = ({
@@ -57,9 +55,8 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({
   runtimeActive,
   runtimePriority,
   fallback = null,
-  surface = 'dashboard',
 }) => {
-  const Component = getWidgetComponent(chartType, surface);
+  const Component = getWidgetComponent(chartType);
   if (!Component) {
     return <>{fallback}</>;
   }
@@ -78,7 +75,6 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({
       onError={onError}
       onQueryChange={onQueryChange}
       layoutEditable={layoutEditable}
-      editMode={layoutEditable}
       onTopologyLayoutChange={onTopologyLayoutChange}
       runtimeOwnerId={runtimeOwnerId}
       runtimeActive={runtimeActive}

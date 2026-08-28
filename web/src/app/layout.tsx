@@ -27,7 +27,6 @@ import {
   PORTAL_TAB_TITLE_BOOTSTRAP_SCRIPT,
   resolvePortalTabTitle,
 } from '@/utils/portalTabTitle'
-import { resolveAppDisplayName } from '@/utils/appDisplayName';
 import { isSessionExpiredState } from '@/utils/sessionExpiry'
 import { useUserInfoContext } from '@/context/userInfo';
 import { RouteScopedLayout } from '@/app/routeScopedLayout';
@@ -108,10 +107,7 @@ const PortalTabTitle = () => {
   });
 
   useLayoutEffect(() => {
-    const apps = (appConfigList.length > 0 ? appConfigList : clientData).map((app) => ({
-      ...app,
-      display_name: resolveAppDisplayName(app, t),
-    }));
+    const apps = appConfigList.length > 0 ? appConfigList : clientData;
     const nextTitle = resolvePortalTabTitle({
       pathname,
       portalName: portalName || portalBrandingDefaults.portalName,

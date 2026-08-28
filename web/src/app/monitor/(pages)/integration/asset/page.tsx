@@ -52,7 +52,7 @@ import EllipsisWithTooltip from '@/components/ellipsis-with-tooltip';
 import type { TableProps, MenuProps } from 'antd';
 import { cloneDeep } from 'lodash';
 import ResizableSidebar from '@/app/monitor/components/resizableSidebar';
-import { resolveDashboardUrl } from '@/app/monitor/dashboards/registry';
+import { getProfessionalDashboardUrl } from '@/app/monitor/dashboards/registry';
 import { buildAssetViewUrl } from './viewRoute';
 import PluginTooltipContent, { PluginTooltipTrigger } from './pluginTooltip';
 
@@ -443,13 +443,7 @@ const Asset = () => {
       objectId: objectId || '',
       monitorItem,
       row,
-      resolveProfessionalDashboardUrl: (objectName, objectDisplayName, queryString) =>
-        resolveDashboardUrl({
-          monitorObjectName: objectName,
-          monitorObjectDisplayName: objectDisplayName,
-          instancePlugins: Array.isArray(row.plugins) ? row.plugins : undefined,
-          queryString,
-        }),
+      resolveProfessionalDashboardUrl: getProfessionalDashboardUrl
     });
     router.push(url);
   };

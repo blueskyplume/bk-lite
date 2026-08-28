@@ -20,7 +20,6 @@ import {
   resolveOrganizationCell
 } from './excelImportUtils';
 import type { OrganizationOption } from './excelImportUtils';
-import { findInstallIpUniquenessError } from './ipUniqueness';
 
 interface ExcelImportModalProps {
   onSuccess: (data: any[]) => void;
@@ -30,8 +29,6 @@ interface ModalConfig {
   title: string;
   columns: any[];
   groupList?: any[];
-  existingIps?: string[];
-  occupiedIps?: string[];
 }
 
 export interface ExcelImportModalRef {
@@ -47,8 +44,6 @@ const ExcelImportModal = forwardRef<ExcelImportModalRef, ExcelImportModalProps>(
     const [parsedData, setParsedData] = useState<any[]>([]);
     const [columns, setColumns] = useState<any[]>([]);
     const [groupListProp, setGroupListProp] = useState<any[]>([]);
-    const [existingIps, setExistingIps] = useState<string[]>([]);
-    const [occupiedIps, setOccupiedIps] = useState<string[]>([]);
     const { t } = useTranslation();
     const { Dragger } = Upload;
     const userContext = useUserInfoContext();
@@ -64,21 +59,13 @@ const ExcelImportModal = forwardRef<ExcelImportModalRef, ExcelImportModalProps>(
       groupListProp.length > 0 ? groupListProp : defaultGroupList;
 
     useImperativeHandle(ref, () => ({
-      showModal: ({
-        title,
-        columns,
-        groupList = [],
-        existingIps = [],
-        occupiedIps = [],
-      }) => {
+      showModal: ({ title, columns, groupList = [] }) => {
         setVisible(true);
         setTitle(title);
         setFileList([]);
         setParsedData([]);
         setColumns(columns);
         setGroupListProp(groupList);
-        setExistingIps(existingIps);
-        setOccupiedIps(occupiedIps);
       },
     }));
 
@@ -101,10 +88,9 @@ const ExcelImportModal = forwardRef<ExcelImportModalRef, ExcelImportModalProps>(
       const uniqueCheckResult = validateUniqueness(parsedData);
       if (!uniqueCheckResult.isValid) {
         message.error(
-          uniqueCheckResult.errorMsg ||
-            `${uniqueCheckResult.field || ''}: ${
-              uniqueCheckResult.value || ''
-            } ${t('common.duplicate')}`
+          `${uniqueCheckResult.field || ''}: ${
+            uniqueCheckResult.value || ''
+          } ${t('common.duplicate')}`
         );
         return;
       }
@@ -300,26 +286,7 @@ const ExcelImportModal = forwardRef<ExcelImportModalRef, ExcelImportModalProps>(
     // 校验唯一性
     const validateUniqueness = (
       data: any[]
-    ): { isValid: boolean; field?: string; value?: string; errorMsg?: string } => {
-      const ipUniquenessError = findInstallIpUniquenessError(
-        data,
-        existingIps,
-        occupiedIps
-      );
-      if (ipUniquenessError) {
-        return {
-          isValid: false,
-          field: 'ip',
-          value: ipUniquenessError.ip,
-          errorMsg: t(
-            ipUniquenessError.kind === 'exists'
-              ? 'node-manager.cloudregion.node.ipExistsInCloudRegion'
-              : 'node-manager.cloudregion.node.duplicateIp',
-            '',
-            { ip: ipUniquenessError.ip }
-          ),
-        };
-      }
+    ): { isValid: boolean; field?: string; value?: string } => {
       // 查找所有需要校验唯一性的字段
       const uniqueFields = columns.filter((col) => col.is_only === true);
       for (const field of uniqueFields) {

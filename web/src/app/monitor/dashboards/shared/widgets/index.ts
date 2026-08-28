@@ -46,9 +46,6 @@ export type { InstanceSelectorProps, InstanceSelectorStyles, InstanceSelectorOpt
 export { DashboardPageHeader } from './dashboard-page-header';
 export type { DashboardPageHeaderProps, DashboardPageHeaderStyles } from './dashboard-page-header';
 
-export { CollectProtocolBar, FlowViewSwitch } from './flow-view-switch';
-export type { CollectProtocolBarProps, FlowViewSwitchProps } from './flow-view-switch';
-
 export { DashboardInstanceCard } from './dashboard-instance-card';
 export type { DashboardInstanceCardProps, DashboardInstanceCardStyles } from './dashboard-instance-card';
 

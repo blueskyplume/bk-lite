@@ -1,15 +1,9 @@
 from rest_framework import serializers
 
-from apps.core.exceptions.base_app_exception import BaseAppException, ValidationAppException
+from apps.core.exceptions.base_app_exception import BaseAppException
 from apps.core.utils.current_team_scope import _normalize_organization_ids
 from apps.node_mgmt.constants.node import NodeConstants
 from apps.node_mgmt.services.installer import InstallerService
-from apps.node_mgmt.services.node_identity import (
-    assert_cloud_ip_available,
-    assert_cloud_ips_available,
-    duplicate_ip_in_batch_message,
-    first_duplicate_ip,
-)
 from apps.node_mgmt.utils.winrm import default_winrm_port, winrm_profile_error
 
 
@@ -65,7 +59,9 @@ class ControllerInstallRequestSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        node_operating_systems = {node.get("os") or NodeConstants.LINUX_OS for node in attrs["nodes"]}
+        node_operating_systems = {
+            node.get("os") or NodeConstants.LINUX_OS for node in attrs["nodes"]
+        }
         if len(node_operating_systems) != 1:
             raise serializers.ValidationError({"nodes": "A controller installation batch must use one operating system"})
         target_os = node_operating_systems.pop()
@@ -75,9 +71,6 @@ class ControllerInstallRequestSerializer(serializers.Serializer):
             attrs["cpu_architecture"],
         )
         attrs["cpu_architecture"] = normalized_arch
-        duplicate_ip = first_duplicate_ip(node.get("ip") for node in attrs["nodes"])
-        if duplicate_ip:
-            raise serializers.ValidationError({"nodes": duplicate_ip_in_batch_message(duplicate_ip)})
         normalized_nodes = []
         for node in attrs["nodes"]:
             node_os = node.get("os") or NodeConstants.LINUX_OS
@@ -105,10 +98,6 @@ class ControllerInstallRequestSerializer(serializers.Serializer):
                 node.get("cpu_architecture") or normalized_arch,
             )
             normalized_nodes.append(node)
-        try:
-            assert_cloud_ips_available(attrs["cloud_region_id"], normalized_nodes)
-        except ValidationAppException as exc:
-            raise serializers.ValidationError({"nodes": exc.message}) from exc
         attrs["nodes"] = normalized_nodes
         return attrs
 
@@ -207,13 +196,6 @@ class ControllerManualInstallRequestSerializer(serializers.Serializer):
             attrs["os"],
             attrs["cpu_architecture"],
         )
-        duplicate_ip = first_duplicate_ip(node.get("ip") for node in attrs["nodes"])
-        if duplicate_ip:
-            raise serializers.ValidationError({"nodes": duplicate_ip_in_batch_message(duplicate_ip)})
-        try:
-            assert_cloud_ips_available(attrs["cloud_region_id"], attrs["nodes"])
-        except ValidationAppException as exc:
-            raise serializers.ValidationError({"nodes": exc.message}) from exc
         return attrs
 
 
@@ -236,10 +218,6 @@ class InstallCommandRequestSerializer(serializers.Serializer):
             attrs["os"],
             attrs["cpu_architecture"],
         )
-        try:
-            assert_cloud_ip_available(attrs["cloud_region_id"], attrs["ip"])
-        except ValidationAppException as exc:
-            raise serializers.ValidationError({"ip": exc.message}) from exc
         return attrs
 
 

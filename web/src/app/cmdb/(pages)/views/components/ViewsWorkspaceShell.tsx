@@ -10,7 +10,7 @@ import { useCommon } from '@/app/cmdb/context/common';
 import { useUserInfoContext } from '@/context/userInfo';
 import type { ModelItem } from '@/app/cmdb/types/assetManage';
 import type { RackRoomMode, ViewFocus, ViewType } from '../viewTypes';
-import { eligibleModelIdsForView, resolveRackRoomMode, viewAllowsMultiSelect } from '../viewEligibility';
+import { eligibleModelIdsForView, resolveRackRoomMode } from '../viewEligibility';
 import {
   filterNetworkModelIdsByCatalog,
   networkModelIdsFromInterfaceAssociations,
@@ -23,10 +23,9 @@ import {
 import {
   clearViewFocus,
   pushViewRecent,
-  readViewFocuses,
-  readViewFocusesForMode,
+  readViewFocus,
+  readViewFocusForMode,
   writeViewFocus,
-  writeViewFocuses,
 } from '../viewMemory';
 import ViewInstancePicker from './ViewInstancePicker';
 import ViewCanvasHost from './ViewCanvasHost';
@@ -44,9 +43,6 @@ export interface ViewsWorkspaceShellProps {
 const focusKey = (focus: ViewFocus | null): string =>
   focus ? `${focus.model_id}:${focus.inst_uuid}:${focus.mode ?? ''}` : '';
 
-const focusesKey = (focuses: ViewFocus[]): string =>
-  focuses.map((item) => focusKey(item)).join('|');
-
 const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
   viewType,
   children,
@@ -59,8 +55,7 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
   const { getModelAssociations } = useModelApi();
   const modelList: ModelItem[] = common?.modelList ?? [];
 
-  const [focuses, setFocuses] = useState<ViewFocus[]>([]);
-  const focus = focuses[0] ?? null;
+  const [focus, setFocus] = useState<ViewFocus | null>(null);
   const [mode, setMode] = useState<RackRoomMode>('room');
   const [ready, setReady] = useState(false);
   const [networkModelIds, setNetworkModelIds] = useState<string[]>([]);
@@ -114,29 +109,23 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     [modelList, viewType]
   );
 
-  const focusesFromParsed = useCallback(
-    (parsed: ReturnType<typeof parseViewsSearch>): ViewFocus[] => {
-      if (!parsed.model_id || !parsed.inst_uuids.length) return [];
-      const parsedMode =
-        viewType === 'rack-room'
-          ? resolveRackRoomMode(parsed.model_id, parsed.mode) ?? parsed.mode ?? 'room'
-          : parsed.mode;
-      const uuids = viewAllowsMultiSelect(viewType, parsedMode)
-        ? parsed.inst_uuids
-        : parsed.inst_uuids.slice(0, 1);
-      return uuids.map((uuid, index) => {
-        const next = enrichFocus({
-          model_id: parsed.model_id!,
-          inst_uuid: uuid,
-          inst_name: index === 0 ? parsed.inst_name : undefined,
-          model_name: parsed.model_name,
-          icn: parsed.icn,
-          mode: parsedMode,
-        });
-        return viewType === 'rack-room' && parsedMode
-          ? { ...next, mode: parsedMode }
-          : next;
+  const focusFromParsed = useCallback(
+    (parsed: ReturnType<typeof parseViewsSearch>): ViewFocus | null => {
+      if (!parsed.model_id || !parsed.inst_uuid) return null;
+      let next = enrichFocus({
+        model_id: parsed.model_id,
+        inst_uuid: parsed.inst_uuid,
+        inst_name: parsed.inst_name,
+        model_name: parsed.model_name,
+        icn: parsed.icn,
+        mode: parsed.mode,
       });
+      if (viewType === 'rack-room') {
+        const nextMode =
+          resolveRackRoomMode(next.model_id, next.mode) ?? parsed.mode ?? 'room';
+        next = { ...next, mode: nextMode };
+      }
+      return next;
     },
     [enrichFocus, viewType]
   );
@@ -148,31 +137,32 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     if (!userId) return;
 
     const parsed = parseViewsSearch(searchParams);
-    let next: ViewFocus[] = [];
+    let next: ViewFocus | null = null;
 
-    if (parsed.model_id && parsed.inst_uuids.length) {
-      next = focusesFromParsed(parsed);
+    if (parsed.model_id && parsed.inst_uuid) {
+      next = focusFromParsed(parsed);
     } else {
-      const remembered = readViewFocuses(window.localStorage, userId, viewType);
-      next = remembered.map((item) => {
-        const enriched = enrichFocus(item);
-        if (viewType !== 'rack-room') return enriched;
-        const nextMode = resolveRackRoomMode(enriched.model_id, enriched.mode) ?? 'room';
-        return { ...enriched, mode: nextMode };
-      });
+      const remembered = readViewFocus(window.localStorage, userId, viewType);
+      if (remembered) {
+        next = enrichFocus(remembered);
+        if (viewType === 'rack-room') {
+          const nextMode =
+            resolveRackRoomMode(next.model_id, next.mode) ?? 'room';
+          next = { ...next, mode: nextMode };
+        }
+      }
     }
 
-    const nextMode = next[0]?.mode;
-    if (viewType === 'rack-room' && nextMode) {
-      setMode(nextMode);
+    if (next && viewType === 'rack-room' && next.mode) {
+      setMode(next.mode);
     } else if (viewType === 'rack-room' && parsed.mode) {
       setMode(parsed.mode);
     }
 
-    setFocuses(next);
+    setFocus(next);
     hydratedRef.current = true;
     setReady(true);
-  }, [userId, viewType, searchParams, enrichFocus, focusesFromParsed]);
+  }, [userId, viewType, searchParams, enrichFocus, focusFromParsed]);
 
   // Discover network-capable models via one interface association query
   // (same rule as NetworkTopo / backend is_network_device_model). Avoid N× topo_themes.
@@ -238,13 +228,13 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
 
   // I1: after eligible models are ready, drop focus that is no longer valid.
   useEffect(() => {
-    if (!ready || !modelsReady || !focuses.length) return;
-    if (focuses.some((item) => !eligibleModelIds.includes(item.model_id))) {
+    if (!ready || !modelsReady || !focus) return;
+    if (!eligibleModelIds.includes(focus.model_id)) {
       setRoomReturn(null);
       setHighlightRackId(null);
-      setFocuses([]);
+      setFocus(null);
     }
-  }, [ready, modelsReady, eligibleModelIds, focuses]);
+  }, [ready, modelsReady, eligibleModelIds, focus]);
 
   // I2: after hydrate, follow external URL changes (back/forward / shared links).
   // Seed once without applying so memory hydrate is not wiped by an empty URL.
@@ -259,8 +249,7 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     lastSeenQueryRef.current = query;
 
     const parsed = parseViewsSearch(searchParams);
-    const urlFocuses = focusesFromParsed(parsed);
-    const urlFocus = urlFocuses[0] ?? null;
+    const urlFocus = focusFromParsed(parsed);
 
     if (viewType === 'rack-room') {
       if (urlFocus?.mode) {
@@ -274,25 +263,23 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     setRoomReturn(null);
     setHighlightRackId(null);
 
-    setFocuses((prev) => {
-      if (viewType === 'network' && prev[0]?.inst_uuid !== urlFocus?.inst_uuid) {
+    setFocus((prev) => {
+      if (viewType === 'network' && prev?.inst_uuid !== urlFocus?.inst_uuid) {
         setNetworkHop(NETWORK_TOPO_DEFAULT_CENTER_HOP);
       }
-      return focusesKey(prev) === focusesKey(urlFocuses) ? prev : urlFocuses;
+      return focusKey(prev) === focusKey(urlFocus) ? prev : urlFocus;
     });
-  }, [ready, searchParams, focusesFromParsed, viewType]);
+  }, [ready, searchParams, focusFromParsed, viewType]);
 
   const persistAndSync = useCallback(
-    (next: ViewFocus[]) => {
+    (next: ViewFocus | null) => {
       if (!userId) return;
       const currentParams = searchParamsRef.current;
-      const key = focusesKey(next);
-      if (next.length) {
-        writeViewFocuses(window.localStorage, userId, viewType, next);
+      const key = focusKey(next);
+      if (next) {
+        writeViewFocus(window.localStorage, userId, viewType, next);
         if (key !== lastSyncedKeyRef.current) {
-          next.forEach((item) => {
-            pushViewRecent(window.localStorage, userId, viewType, item);
-          });
+          pushViewRecent(window.localStorage, userId, viewType, next);
         }
         const targetPath = buildViewsPathPreserving(viewType, next, currentParams);
         const targetQuery = targetPath.includes('?')
@@ -333,62 +320,61 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
 
   useEffect(() => {
     if (!ready) return;
-    persistAndSync(focuses);
-  }, [focuses, ready, persistAndSync]);
+    persistAndSync(focus);
+  }, [focus, ready, persistAndSync]);
 
-  const applyFocuses = useCallback((next: ViewFocus[]) => {
-    const enriched = next.map((item) => enrichFocus(item));
-    if (!enriched.length) {
+  const handleFocusChange = useCallback((next: ViewFocus | null) => {
+    if (!next) {
       setRoomReturn(null);
       setHighlightRackId(null);
-      setFocuses([]);
+      setFocus(null);
       setNetworkHop(NETWORK_TOPO_DEFAULT_CENTER_HOP);
       return;
     }
-    const primary = enriched[0];
+    const enriched = enrichFocus(next);
+    // Leaving the room→rack drill path (picker / other focus) clears Back.
     if (
       roomReturn
       && !(
-        primary.mode === 'rack'
-        && primary.model_id === 'rack'
+        enriched.mode === 'rack'
+        && enriched.model_id === 'rack'
       )
-      && focusKey(primary) !== focusKey(roomReturn.focus)
+      && focusKey(enriched) !== focusKey(roomReturn.focus)
     ) {
       setRoomReturn(null);
     }
-    if (viewType === 'rack-room' && primary.mode) {
-      setMode(primary.mode);
+    // Keep Segmented `mode` in sync with focus.mode so rack-room eligibility
+    // (I1) does not clear a rack focus that arrived while mode was still `room`.
+    if (viewType === 'rack-room' && enriched.mode) {
+      setMode(enriched.mode);
     }
-    setFocuses((prev) => {
-      if (viewType === 'network' && prev[0]?.inst_uuid !== primary.inst_uuid) {
+    setFocus((prev) => {
+      if (viewType === 'network' && prev?.inst_uuid !== enriched.inst_uuid) {
         setNetworkHop(NETWORK_TOPO_DEFAULT_CENTER_HOP);
       }
-      if (focusesKey(prev) === focusesKey(enriched)) {
-        const merged = enriched.map((item, index) => ({
-          ...item,
-          inst_name: item.inst_name || prev[index]?.inst_name,
-          model_name: item.model_name || prev[index]?.model_name,
-          icn: item.icn || prev[index]?.icn,
-        }));
-        const unchanged = merged.every((item, index) => (
-          prev[index]
-          && prev[index].inst_name === item.inst_name
-          && prev[index].model_name === item.model_name
-          && prev[index].icn === item.icn
-        ));
-        return unchanged ? prev : merged;
+      if (focusKey(prev) === focusKey(enriched)) {
+        // Same identity — avoid a new object so persist/URL effects do not re-fire.
+        const mergedName = enriched.inst_name || prev?.inst_name;
+        const mergedModelName = enriched.model_name || prev?.model_name;
+        const mergedIcn = enriched.icn || prev?.icn;
+        if (
+          prev
+          && prev.inst_name === mergedName
+          && prev.model_name === mergedModelName
+          && prev.icn === mergedIcn
+        ) {
+          return prev;
+        }
+        return {
+          ...enriched,
+          inst_name: mergedName,
+          model_name: mergedModelName,
+          icn: mergedIcn,
+        };
       }
       return enriched;
     });
   }, [enrichFocus, viewType, roomReturn]);
-
-  const handleFocusChange = useCallback((next: ViewFocus | null) => {
-    applyFocuses(next ? [next] : []);
-  }, [applyFocuses]);
-
-  const handleFocusesChange = useCallback((next: ViewFocus[]) => {
-    applyFocuses(next);
-  }, [applyFocuses]);
 
   const handleRoomRackDrill = useCallback(
     (payload: {
@@ -416,7 +402,7 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     const rackId = roomReturn.rackId;
     setRoomReturn(null);
     setMode('room');
-    setFocuses([target]);
+    setFocus(target);
     // Clear first so returning to the same rack can re-trigger highlight.
     setHighlightRackId(null);
     window.setTimeout(() => {
@@ -437,13 +423,11 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     }
 
     // Park the current mode's instance before switching (do not wipe storage).
-    if (userId && focuses.length) {
-      writeViewFocuses(
-        window.localStorage,
-        userId,
-        'rack-room',
-        focuses.map((item) => ({ ...item, mode }))
-      );
+    if (userId && focus) {
+      writeViewFocus(window.localStorage, userId, 'rack-room', {
+        ...focus,
+        mode,
+      });
     }
 
     setRoomReturn(null);
@@ -451,18 +435,20 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
     setMode(nextMode);
 
     const remembered = userId
-      ? readViewFocusesForMode(
+      ? readViewFocusForMode(
         window.localStorage,
         userId,
         'rack-room',
         nextMode
       )
-      : [];
+      : null;
     const allowed = eligibleModelIdsForView('rack-room', nextMode);
-    const restored = remembered
-      .filter((item) => allowed.includes(item.model_id))
-      .map((item) => enrichFocus({ ...item, mode: nextMode }));
-    setFocuses(restored);
+    if (remembered && allowed.includes(remembered.model_id)) {
+      setFocus(enrichFocus({ ...remembered, mode: nextMode }));
+      return;
+    }
+    // Empty for this mode — other mode's memory stays in focusByMode.
+    setFocus(null);
   };
 
   const handleViewDetail = () => {
@@ -501,9 +487,7 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
           mode={viewType === 'rack-room' ? mode : undefined}
           eligibleModelIds={eligibleModelIds}
           focus={focus}
-          focuses={focuses}
           onFocusChange={handleFocusChange}
-          onFocusesChange={handleFocusesChange}
         />
         {networkDiscovering && viewType === 'network' && (
           <Spin size="small" />
@@ -512,7 +496,7 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
           <HopDepthControl value={networkHop} onChange={setNetworkHop} />
         )}
         <div className="ml-auto shrink-0">
-          {focus && focuses.length === 1 && (
+          {focus && (
             <Button type="default" onClick={handleViewDetail}>
               {t('ViewsHub.viewDetail')}
             </Button>
@@ -529,7 +513,6 @@ const ViewsWorkspaceShell: React.FC<ViewsWorkspaceShellProps> = ({
           <ViewCanvasHost
             viewType={viewType}
             focus={focus}
-            focuses={focuses}
             onFocusChange={handleFocusChange}
             onRoomRackDrill={
               viewType === 'rack-room' ? handleRoomRackDrill : undefined

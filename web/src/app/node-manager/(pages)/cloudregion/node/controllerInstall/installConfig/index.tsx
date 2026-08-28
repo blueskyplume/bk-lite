@@ -41,10 +41,6 @@ import {
   DEFAULT_WINRM_CERTIFICATE_VALIDATION
 } from './utils';
 import { buildOrganizationOptions } from './excelImportUtils';
-import {
-  collectIpsFromRows,
-  findInstallIpUniquenessError
-} from './ipUniqueness';
 import WinrmCertificateValidationField from '@/app/node-manager/components/winrm-certificate-validation-field';
 import WinrmSchemeField from '@/app/node-manager/components/winrm-scheme-field';
 import {
@@ -68,7 +64,7 @@ interface ControllerPlatformOption {
 const InstallConfig: React.FC<InstallConfigProps> = ({ onNext, cancel }) => {
   const { t } = useTranslation();
   const { isLoading } = useApiClient();
-  const { installController, getNodeList } = useNodeManagerApi();
+  const { installController } = useNodeManagerApi();
   const { manualInstallController, getControllerList } = useControllerApi();
   const commonContext = useUserInfoContext();
   const { clientData } = useClientData();
@@ -430,27 +426,11 @@ const InstallConfig: React.FC<InstallConfigProps> = ({ onNext, cancel }) => {
     });
   };
 
-  const loadExistingNodeIps = useCallback(async (): Promise<string[]> => {
-    try {
-      const res = await getNodeList({
-        cloud_region_id: cloudId,
-        page: 1,
-        page_size: 500
-      });
-      return collectIpsFromRows(res?.items || []);
-    } catch {
-      return [];
-    }
-  }, [cloudId, getNodeList]);
-
-  const handleImport = async () => {
-    const nodeIps = await loadExistingNodeIps();
+  const handleImport = () => {
     excelImportModalRef.current?.showModal({
       title: t('node-manager.cloudregion.integrations.importData'),
       columns: tableConfig,
-      groupList: excelGroupList,
-      existingIps: nodeIps,
-      occupiedIps: collectIpsFromRows(tableData)
+      groupList: excelGroupList
     });
   };
 
@@ -484,7 +464,7 @@ const InstallConfig: React.FC<InstallConfigProps> = ({ onNext, cancel }) => {
     }
   };
 
-  const validateTableData = (existingIps: string[] = []): boolean => {
+  const validateTableData = (): boolean => {
     if (!tableConfig) return true;
     let hasError = false;
     const newData = [...tableData];
@@ -552,27 +532,6 @@ const InstallConfig: React.FC<InstallConfigProps> = ({ onNext, cancel }) => {
         }
       });
     });
-    const ipUniquenessError = findInstallIpUniquenessError(newData, existingIps);
-    if (ipUniquenessError) {
-      hasError = true;
-      const errorMsg =
-        ipUniquenessError.kind === 'exists'
-          ? t('node-manager.cloudregion.node.ipExistsInCloudRegion', '', {
-            ip: ipUniquenessError.ip
-          })
-          : t('node-manager.cloudregion.node.duplicateIp', '', {
-            ip: ipUniquenessError.ip
-          });
-      newData.forEach((row, index) => {
-        if (String(row.ip || '').trim() === ipUniquenessError.ip) {
-          newData[index] = {
-            ...newData[index],
-            ip_error: errorMsg
-          };
-        }
-      });
-      message.error(errorMsg);
-    }
     // 更新数据源以显示错误状态
     setTableData(newData);
     if (hasError) {
@@ -635,8 +594,7 @@ const InstallConfig: React.FC<InstallConfigProps> = ({ onNext, cancel }) => {
     setConfirmLoading(true);
     try {
       const values = await form.validateFields();
-      const existingIps = await loadExistingNodeIps();
-      if (!validateTableData(existingIps)) {
+      if (!validateTableData()) {
         setConfirmLoading(false);
         return;
       }

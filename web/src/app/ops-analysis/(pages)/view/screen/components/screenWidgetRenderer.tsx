@@ -96,7 +96,6 @@ const ScreenWidgetRenderer: React.FC<ScreenWidgetRendererProps> = ({
         <WidgetWrapper
           dashboardId={screenId}
           widgetId={item.id}
-          surface="screen"
           chartType={item.chartType}
           config={widgetConfig}
           dataSource={dataSource}

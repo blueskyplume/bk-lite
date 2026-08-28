@@ -16,10 +16,3 @@ export {
 } from './metadata';
 
 export { loadDashboardComponent, DASHBOARD_COMPONENT_LOADERS } from './component-loaders';
-
-export {
-  getFlowDashboardUrl,
-  isFlowCollectType,
-  resolveDashboardUrl,
-  resolveFlowCollectType,
-} from './shared/utils/flow-dashboard-route';

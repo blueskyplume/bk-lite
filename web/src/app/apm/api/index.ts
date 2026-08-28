@@ -214,7 +214,6 @@ const useApmApi = () => {
       span_name?: string;
       min_duration_ms?: number;
       include_inferred?: boolean;
-      include_user_request?: boolean;
     }) => get<ApmTopologyGraph>('/apm/topology/', { params }),
     [get]
   );

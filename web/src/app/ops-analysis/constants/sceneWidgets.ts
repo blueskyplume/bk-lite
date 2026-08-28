@@ -20,13 +20,4 @@ export const SCENE_WIDGETS: SceneWidgetDefinition[] = [
     defaultWidth: 4,
     defaultHeight: 3,
   },
-  {
-    type: 'application3D',
-    nameKey: 'dashboard.application3D',
-    descriptionKey: 'dashboard.application3DDesc',
-    category: 'cmdb',
-    categoryNameKey: 'dashboard.sceneCategoryCmdb',
-    defaultWidth: 4,
-    defaultHeight: 3,
-  },
 ];

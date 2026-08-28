@@ -337,27 +337,11 @@ def test_activity_and_dependencies_are_mapped_from_bounded_vt_endpoints():
 
 def test_sample_traces_uses_templated_logsql_and_fetches_trace_details():
     now = timezone.now()
-    start_ns = str(int(now.timestamp() * 1_000_000_000))
-    id_row = json.dumps({"trace_id": "a" * 32, "matched_at": start_ns})
-    span_row = json.dumps({
-        "trace_id": "a" * 32,
-        "span_id": "1" * 16,
-        "parent_span_id": "0" * 16,
-        "name": "POST /checkout",
-        "kind": "2",
-        "status_code": "2",
-        "duration": "120000000",
-        "start_time_unix_nano": start_ns,
-        "resource_attr:service.name": "checkout",
-        "resource_attr:service.namespace": "shop",
-        "resource_attr:deployment.environment": "prod",
-        "span_attr:http.route": "/checkout",
-        "span_attr:db.system": "mysql",
-    })
+    row = json.dumps({"trace_id": "a" * 32, "matched_at": str(int(now.timestamp() * 1_000_000_000))})
     session = Mock()
     session.get.side_effect = [
-        _response({}, raw=id_row.encode()),
-        _response({}, raw=span_row.encode()),
+        _response({}, raw=row.encode()),
+        _response({"data": [_jaeger_trace(now)]}),
     ]
     store = VictoriaTracesTelemetryStore(endpoint="http://traces.test", session=session)
 
@@ -375,19 +359,14 @@ def test_sample_traces_uses_templated_logsql_and_fetches_trace_details():
 
     assert len(sample.traces) == 1
     assert sample.traces[0].trace_id == "a" * 32
-    assert sample.traces[0].spans[0].kind == "server"
-    assert sample.traces[0].spans[0].parent_span_id is None
-    assert sample.traces[0].spans[0].attributes["span_attr:db.system"] == "mysql"
     assert sample.truncated is False
     query = session.get.call_args_list[0].kwargs["params"]["query"]
     assert '`resource_attr:service.name`:in("gateway","pay\\"ment")' in query
     assert '`resource_attr:deployment.environment`:="prod"' in query
     assert 'name:="POST /checkout"' in query
     assert 'status_code:="2"' in query
-    span_query = session.get.call_args_list[1].kwargs["params"]["query"]
-    assert span_query.startswith('trace_id:in("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")')
-    assert session.get.call_args_list[1].args[0].endswith("/select/logsql/query")
-    assert "/select/jaeger/api/traces/" not in session.get.call_args_list[1].args[0]
+    assert session.get.call_args_list[1].args[0].endswith("/select/jaeger/api/traces/" + "a" * 32)
+    assert 'pay\\"ment' not in session.get.call_args_list[1].args[0]
 
 
 def test_all_stats_queries_are_time_bounded_to_vt_retention_contract():

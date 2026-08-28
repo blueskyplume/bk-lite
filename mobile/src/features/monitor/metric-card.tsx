@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RedoOutline } from 'antd-mobile-icons';
 import { buildSeriesPath, buildSeriesSinglePoint } from './metric-chart-utils';
 import { buildMetricQuery, metricSeriesPoints, type MonitorMetric } from './model';
 import { getMonitorUnitList, queryMetricRange } from './adapter';
@@ -116,17 +115,16 @@ export default function MetricCard({ metric, idValues, rangeMinutes, interval, o
           <span className={styles.metricBodySkeleton} aria-hidden="true" />
         ) : status === 'error' ? (
           <div className={styles.metricEmpty}>
+            <span>{t('monitor.metricLoadFailed')}</span>
             <button
               type="button"
-              className={styles.metricRetryIcon}
-              aria-label={t('monitor.metricLoadFailed')}
-              title={t('common.retry')}
+              className={styles.metricRetry}
               onClick={(event) => {
                 event.stopPropagation();
                 setRetryToken((value) => value + 1);
               }}
             >
-              <RedoOutline aria-hidden="true" />
+              {t('common.retry')}
             </button>
           </div>
         ) : !showChart ? (

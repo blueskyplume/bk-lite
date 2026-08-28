@@ -12,7 +12,6 @@ export default function ProfessionalDashboardPage() {
   const params = useParams<{ objectKey: string }>();
   const objectKey = normalizeDashboardKey(params?.objectKey);
   const [DashboardComponent, setDashboardComponent] = useState<ComponentType | null>(null);
-  const [loadedObjectKey, setLoadedObjectKey] = useState<string>('');
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'missing'>('loading');
 
   useResolveObjectId(params?.objectKey || '');
@@ -20,25 +19,20 @@ export default function ProfessionalDashboardPage() {
   useEffect(() => {
     let active = true;
     setLoadState('loading');
+    setDashboardComponent(null);
 
     loadDashboardComponent(objectKey)
       .then((component) => {
         if (!active) return;
         if (component) {
           setDashboardComponent(() => component);
-          setLoadedObjectKey(objectKey);
           setLoadState('ready');
         } else {
-          setDashboardComponent(null);
-          setLoadedObjectKey('');
           setLoadState('missing');
         }
       })
       .catch(() => {
-        if (!active) return;
-        setDashboardComponent(null);
-        setLoadedObjectKey('');
-        setLoadState('missing');
+        if (active) setLoadState('missing');
       });
 
     return () => {
@@ -46,16 +40,16 @@ export default function ProfessionalDashboardPage() {
     };
   }, [objectKey]);
 
-  if (DashboardComponent && loadedObjectKey === objectKey) {
-    return <DashboardComponent key={loadedObjectKey} />;
-  }
-
   if (loadState === 'loading') {
     return (
       <div className="flex justify-center items-center" style={{ minHeight: 240 }}>
         <Spin />
       </div>
     );
+  }
+
+  if (DashboardComponent) {
+    return <DashboardComponent />;
   }
 
   return <Empty description="未找到对应的专业仪表盘" style={{ margin: '120px auto' }} />;

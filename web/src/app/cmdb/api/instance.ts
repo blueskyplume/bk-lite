@@ -209,12 +209,6 @@ export const useInstanceApi = () => {
     search?: string;
   }) => get('/cmdb/api/instance/rack_room_layout_candidates/', { params });
 
-  const getRacksGroupedByRoom = (params: {
-    search?: string;
-    page?: number;
-    page_size?: number;
-  }) => get('/cmdb/api/instance/racks_grouped_by_room/', { params });
-
   return {
     searchInstances,
     fulltextSearchInstances,
@@ -254,6 +248,5 @@ export const useInstanceApi = () => {
     saveIpamIp,
     saveRackRoomLayout,
     getRackRoomLayoutCandidates,
-    getRacksGroupedByRoom,
   };
 };

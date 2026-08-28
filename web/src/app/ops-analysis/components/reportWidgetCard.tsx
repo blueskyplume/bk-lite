@@ -174,7 +174,6 @@ const ReportWidgetCard: React.FC<ReportWidgetCardProps> = ({
               <WidgetDataRenderer
                 dashboardId={reportId}
                 widgetId={section.id}
-                surface="report"
                 chartType={section.valueConfig.chartType}
                 config={section.valueConfig}
                 dataSource={dataSource}

@@ -8,7 +8,6 @@ import { Studio } from '@/app/opspilot/types/studio';
 import { message, Modal } from 'antd';
 import { useTranslation } from '@/utils/i18n';
 import { useStudioApi } from '@/app/opspilot/api/studio';
-import { notifyWebchatAppsChanged } from '@/app/(core)/components/global-webchat/apps-changed';
 
 type StudioModifyModalProps = Omit<
   React.ComponentProps<typeof GenericModifyModal>,
@@ -32,7 +31,6 @@ const StudioPage: React.FC = () => {
         await deleteStudio(studio.id);
         deleteCallback();
         message.success(t('common.delSuccess'));
-        notifyWebchatAppsChanged();
       } catch {
         message.error(t('common.delFailed'));
       }

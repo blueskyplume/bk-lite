@@ -100,8 +100,6 @@ import {
   NETWORK_STATUS_TOPOLOGY_MAX_NODE_LIMIT,
   networkStatusTopologySelectionExceedsLimit,
 } from '@/app/ops-analysis/utils/networkStatusTopologyLayout';
-import { isSceneWidgetType } from '@/app/ops-analysis/types/sceneWidgetCapability';
-import type { SceneWidgetType } from '@/app/ops-analysis/types/sceneWidget';
 
 interface ViewConfigPropsWithManager extends ViewConfigProps {
   dataSourceManager: ReturnType<typeof useDataSourceManager>;
@@ -119,22 +117,14 @@ interface SelectorLike {
 }
 
 const isSceneWidgetSelection = (item?: SelectorLike | null): boolean => {
-  return Boolean(getSceneWidgetSelectionType(item));
-};
+  if (!item) return false;
 
-function getSceneWidgetSelectionType(
-  item?: SelectorLike | null,
-): SceneWidgetType | undefined {
-  if (!item) return undefined;
-  for (const value of [item.sceneWidgetType, item.chartType]) {
-    if (typeof value === 'string' && isSceneWidgetType(value)) return value;
-  }
-  if (typeof item.id === 'string' && item.id.startsWith('scene:')) {
-    const value = item.id.slice('scene:'.length);
-    if (isSceneWidgetType(value)) return value;
-  }
-  return undefined;
-}
+  return (
+    item.sceneWidgetType === NETWORK_STATUS_TOPOLOGY ||
+    item.chartType === NETWORK_STATUS_TOPOLOGY ||
+    item.id === `scene:${NETWORK_STATUS_TOPOLOGY}`
+  );
+};
 
 const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
   open,
@@ -276,9 +266,6 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
   const isNetworkStatusTopology =
     chartType === 'networkStatusTopology' ||
     form.getFieldValue('sceneWidgetType') === 'networkStatusTopology';
-  const isSceneWidget =
-    isSceneWidgetType(chartType) ||
-    isSceneWidgetType(form.getFieldValue('sceneWidgetType'));
   const networkTopologyConfig = useNetworkStatusTopologyConfig({
     open,
     enabled: isNetworkStatusTopology,
@@ -315,9 +302,7 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
       setDataSourceSelectorVisible(false);
 
       if (isSceneWidgetSelection(item)) {
-        const sceneWidgetType =
-          getSceneWidgetSelectionType(item) || NETWORK_STATUS_TOPOLOGY;
-        setChartType(sceneWidgetType);
+        setChartType(NETWORK_STATUS_TOPOLOGY);
         setSelectedDataSource(undefined);
         setFilterBindings({});
         setActions([]);
@@ -326,11 +311,11 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
         singleValueConfig.resetSingleValueConfig();
 
         form.setFieldsValue({
-          chartType: sceneWidgetType,
-          sceneWidgetType,
+          chartType: NETWORK_STATUS_TOPOLOGY,
+          sceneWidgetType: NETWORK_STATUS_TOPOLOGY,
           appearance:
             surface === 'screen'
-              ? getDefaultScreenWidgetAppearance(sceneWidgetType)
+              ? getDefaultScreenWidgetAppearance(NETWORK_STATUS_TOPOLOGY)
               : undefined,
           dataSource: undefined,
           networkStatusTopology: {
@@ -614,12 +599,9 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
     }
 
     const { valueConfig } = widgetItem;
-    const sceneWidgetType = isSceneWidgetType(valueConfig?.sceneWidgetType)
-      ? valueConfig.sceneWidgetType
-      : isSceneWidgetType(valueConfig?.chartType)
-        ? valueConfig.chartType
-        : undefined;
-    const isSceneWidget = Boolean(sceneWidgetType);
+    const isSceneWidget =
+      valueConfig?.sceneWidgetType === 'networkStatusTopology' ||
+      valueConfig?.chartType === 'networkStatusTopology';
     const formValues: WidgetConfigFormValues = {
       name: widgetItem?.name || '',
       description: widgetItem.description || '',
@@ -656,8 +638,8 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
       singleValueConfig.resetSingleValueConfig();
       form.setFieldsValue({
         ...formValues,
-        chartType: sceneWidgetType,
-        sceneWidgetType,
+        chartType: 'networkStatusTopology',
+        sceneWidgetType: 'networkStatusTopology',
         dataSource: undefined,
         networkStatusTopology: {
           ...networkStatusTopology,
@@ -1040,7 +1022,10 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
     try {
       const values: WidgetConfigFormValues = await form.validateFields();
 
-      if (!isSceneWidgetType(values.sceneWidgetType) && effectiveDataSource?.params?.length) {
+      if (
+        values.sceneWidgetType !== 'networkStatusTopology' &&
+        effectiveDataSource?.params?.length
+      ) {
         const formParams = values.params || form.getFieldValue('params') || {};
         const reconciledFormParams = { ...formParams };
         effectiveDataSource?.params.forEach((param) => {
@@ -1280,7 +1265,7 @@ const ViewConfig: React.FC<ViewConfigPropsWithManager> = ({
                 />
               </Form.Item>
             </>
-          ) : isSceneWidget ? null : (
+          ) : (
             <>
               <Form.Item
                 label={t('dashboard.dataSource')}

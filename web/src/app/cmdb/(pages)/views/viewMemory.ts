@@ -10,9 +10,8 @@ interface StorageLike {
 
 interface StoredViewMemory {
   focus?: ViewFocus;
-  focuses?: ViewFocus[];
-  /** rack-room: last instance(s) per mode (independent of current Segmented tab). */
-  focusByMode?: Partial<Record<RackRoomMode, ViewFocus | ViewFocus[]>>;
+  /** rack-room: last instance per mode (independent of current Segmented tab). */
+  focusByMode?: Partial<Record<RackRoomMode, ViewFocus>>;
   recent?: ViewRecentItem[];
 }
 
@@ -59,11 +58,6 @@ const isValidFocus = (value: unknown): value is ViewFocus => {
     && typeof focus.inst_uuid === 'string';
 };
 
-const asFocusList = (value: unknown): ViewFocus[] => {
-  if (Array.isArray(value)) return value.filter(isValidFocus);
-  return isValidFocus(value) ? [value] : [];
-};
-
 const normalizeRecent = (value: unknown): ViewRecentItem[] => {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is ViewRecentItem => {
@@ -85,17 +79,9 @@ export const readViewFocus = (
   storage: Pick<StorageLike, 'getItem'> | null,
   userId: string | number,
   viewType: ViewType
-): ViewFocus | null => readViewFocuses(storage, userId, viewType)[0] ?? null;
-
-export const readViewFocuses = (
-  storage: Pick<StorageLike, 'getItem'> | null,
-  userId: string | number,
-  viewType: ViewType
-): ViewFocus[] => {
-  const memory = readStoredMemory(storage, userId, viewType);
-  const fromList = asFocusList(memory.focuses);
-  if (fromList.length) return fromList;
-  return asFocusList(memory.focus);
+): ViewFocus | null => {
+  const { focus } = readStoredMemory(storage, userId, viewType);
+  return focus && isValidFocus(focus) ? focus : null;
 };
 
 /**
@@ -107,30 +93,19 @@ export const readViewFocusForMode = (
   userId: string | number,
   viewType: ViewType,
   mode: RackRoomMode
-): ViewFocus | null => readViewFocusesForMode(storage, userId, viewType, mode)[0] ?? null;
-
-/**
- * Read remembered instance list for a rack-room mode.
- * Accepts legacy single-object slots.
- */
-export const readViewFocusesForMode = (
-  storage: Pick<StorageLike, 'getItem'> | null,
-  userId: string | number,
-  viewType: ViewType,
-  mode: RackRoomMode
-): ViewFocus[] => {
+): ViewFocus | null => {
   if (viewType !== 'rack-room') {
-    return readViewFocuses(storage, userId, viewType);
+    return readViewFocus(storage, userId, viewType);
   }
   const memory = readStoredMemory(storage, userId, viewType);
-  const byMode = asFocusList(memory.focusByMode?.[mode]).map((item) =>
-    normalizeModeFocus(item, mode)
-  );
-  if (byMode.length) return byMode;
-  const top = asFocusList(memory.focuses?.length ? memory.focuses : memory.focus)
-    .filter((item) => item.mode === mode)
-    .map((item) => normalizeModeFocus(item, mode));
-  return top;
+  const byMode = memory.focusByMode?.[mode];
+  if (byMode && isValidFocus(byMode)) {
+    return normalizeModeFocus(byMode, mode);
+  }
+  if (memory.focus && isValidFocus(memory.focus) && memory.focus.mode === mode) {
+    return normalizeModeFocus(memory.focus, mode);
+  }
+  return null;
 };
 
 export const writeViewFocus = (
@@ -138,32 +113,13 @@ export const writeViewFocus = (
   userId: string | number,
   viewType: ViewType,
   focus: ViewFocus
-): boolean => writeViewFocuses(storage, userId, viewType, [focus]);
-
-export const writeViewFocuses = (
-  storage: Pick<StorageLike, 'setItem' | 'getItem'> | null,
-  userId: string | number,
-  viewType: ViewType,
-  focuses: ViewFocus[]
 ): boolean => {
   const memory = readStoredMemory(storage, userId, viewType);
-  const valid = asFocusList(focuses);
-  if (!valid.length) {
-    return writeStoredMemory(storage, userId, viewType, {
-      recent: memory.recent,
-      focusByMode: memory.focusByMode,
-    });
-  }
-  const primary = valid[0];
-  const next: StoredViewMemory = {
-    ...memory,
-    focus: primary,
-    focuses: valid,
-  };
-  if (viewType === 'rack-room' && primary.mode) {
+  const next: StoredViewMemory = { ...memory, focus };
+  if (viewType === 'rack-room' && focus.mode) {
     next.focusByMode = {
       ...memory.focusByMode,
-      [primary.mode]: valid.map((item) => normalizeModeFocus(item, primary.mode!)),
+      [focus.mode]: normalizeModeFocus(focus, focus.mode),
     };
   }
   return writeStoredMemory(storage, userId, viewType, next);
@@ -197,13 +153,10 @@ export const clearViewFocus = (
   const focusByMode = { ...memory.focusByMode };
   delete focusByMode[mode];
   const topMatchesMode = memory.focus?.mode === mode;
-  const keptFocus = topMatchesMode || !memory.focus ? undefined : memory.focus;
-  const keptFocuses = asFocusList(memory.focuses).filter((item) => item.mode !== mode);
   return writeStoredMemory(storage, userId, viewType, {
     recent: memory.recent,
     focusByMode,
-    ...(keptFocus ? { focus: keptFocus } : {}),
-    ...(keptFocuses.length ? { focuses: keptFocuses } : {}),
+    ...(topMatchesMode || !memory.focus ? {} : { focus: memory.focus }),
   });
 };
 

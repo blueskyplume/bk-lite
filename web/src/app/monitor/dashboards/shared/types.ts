@@ -63,7 +63,6 @@ export type MetricUnit =
   | 'h'
   | 'd'
   | 'cps'
-  | 'pps'
   | 'hertz'
   | 'kilohertz'
   | 'megahertz'

@@ -1,6 +1,8 @@
 import json
 import logging
 import uuid
+from datetime import timedelta
+from time import monotonic, sleep
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -390,6 +392,98 @@ def test_schedule_trigger_skips_when_run_is_already_running(channel):
     result = create_account_association_sync_run(channel.account_association_id, trigger_mode="schedule")
 
     assert result["result"] is False
+
+
+@pytest.mark.django_db
+def test_create_account_association_sync_run_releases_stale_running_run(monkeypatch, channel):
+    monkeypatch.setenv("IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS", "1800")
+    association = channel.account_association
+    original_status = association.status
+    stale_run = IMNotificationSyncRun.objects.create(
+        account_association=association,
+        status="running",
+        summary="started",
+    )
+    stale_timestamp = timezone.now() - timedelta(hours=1)
+    IMNotificationSyncRun.objects.filter(pk=stale_run.pk).update(
+        started_at=stale_timestamp,
+        updated_at=stale_timestamp,
+    )
+
+    result = create_account_association_sync_run(association.id)
+
+    assert result["result"] is True, result
+    stale_run.refresh_from_db()
+    association.refresh_from_db()
+    replacement = IMNotificationSyncRun.objects.exclude(pk=stale_run.pk).get(account_association=association)
+    assert result["data"]["run_id"] == replacement.id
+    assert stale_run.status == "failed"
+    assert stale_run.finished_at is not None
+    assert "timed out" in stale_run.summary
+    assert stale_run.running_guard is None
+    assert association.status == original_status
+
+
+@pytest.mark.django_db
+def test_create_account_association_sync_run_keeps_fresh_running_run(monkeypatch, channel):
+    monkeypatch.setenv("IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS", "1800")
+    association = channel.account_association
+    fresh_run = IMNotificationSyncRun.objects.create(
+        account_association=association,
+        status="running",
+        summary="started",
+    )
+    IMNotificationSyncRun.objects.filter(pk=fresh_run.pk).update(updated_at=timezone.now())
+
+    result = create_account_association_sync_run(association.id)
+
+    fresh_run.refresh_from_db()
+    assert result == {"result": False, "message": "IM account association update is already running"}
+    assert fresh_run.status == "running"
+    assert IMNotificationSyncRun.objects.filter(account_association=association).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_execute_im_notification_sync_run_refreshes_lease_during_list_external_users(monkeypatch, channel):
+    monkeypatch.setenv("IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS", "1800")
+    association = channel.account_association
+    run = IMNotificationSyncRun.objects.create(
+        account_association=association,
+        status="running",
+        summary="started",
+        locked_config_snapshot={
+            "integration_instance_id": channel.integration_instance_id,
+            "provider_key": channel.integration_instance.provider_key,
+            "platform_match_field": "email",
+            "external_match_field": "email",
+            "external_receive_field": "user_id",
+        },
+    )
+    pre_call_updated_at = run.updated_at
+    payload = CapabilityExecutionResult.success_result("ok", payload={"external_users": []})
+
+    def list_external_users(**_kwargs):
+        deadline = monotonic() + 5
+        while monotonic() < deadline:
+            run.refresh_from_db(fields=["updated_at"])
+            if run.updated_at > pre_call_updated_at:
+                return payload
+            sleep(0.02)
+        pytest.fail("list_external_users did not move the sync run lease")
+
+    with (
+        patch(
+            "apps.system_mgmt.services.im_notification_service._get_im_account_association_sync_heartbeat_interval_seconds",
+            return_value=0.05,
+        ),
+        patch(
+            "apps.system_mgmt.services.im_notification_service.RuntimeApplicationService.execute",
+            side_effect=list_external_users,
+        ),
+    ):
+        result = execute_im_notification_sync_run(run.id)
+
+    assert result["result"] is True
 
 
 @pytest.mark.django_db

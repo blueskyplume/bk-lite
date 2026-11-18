@@ -1,7 +1,11 @@
+import os
 import re
 from collections import defaultdict
+from datetime import timedelta
+from threading import Event, Thread
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, close_old_connections, connection, transaction
+from django.db.utils import OperationalError
 from django.utils import timezone
 
 from apps.core.logger import system_mgmt_logger as logger
@@ -61,6 +65,166 @@ IDENTITY_FIELDS_BY_PROVIDER = {
 }
 MAX_DIAGNOSTIC_ISSUES = 50
 SENSITIVE_FIELD_TOKENS = ("password", "secret", "token", "credential", "private")
+DEFAULT_IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS = 6 * 60 * 60
+MAX_IM_ACCOUNT_ASSOCIATION_SYNC_HEARTBEAT_INTERVAL_SECONDS = 60
+STALE_IM_ACCOUNT_ASSOCIATION_SYNC_SUMMARY = "IM account association update timed out and was released automatically"
+
+
+class _IMAccountAssociationSyncRunExpired(RuntimeError):
+    pass
+
+
+def _get_im_account_association_sync_stale_timeout_seconds() -> int:
+    raw_value = os.getenv(
+        "IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS",
+        str(DEFAULT_IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS),
+    )
+    try:
+        timeout_seconds = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS=%r; using default %s",
+            raw_value,
+            DEFAULT_IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_IM_ACCOUNT_ASSOCIATION_SYNC_STALE_TIMEOUT_SECONDS
+    return max(timeout_seconds, 60)
+
+
+def _supports_im_sync_row_locks() -> bool:
+    return connection.features.has_select_for_update
+
+
+def _supports_im_sync_skip_locked() -> bool:
+    return connection.features.has_select_for_update_skip_locked
+
+
+def _release_stale_im_account_association_sync_runs(association: IMAccountAssociation) -> int:
+    if not _supports_im_sync_row_locks():
+        now = timezone.now()
+        stale_before = now - timedelta(seconds=_get_im_account_association_sync_stale_timeout_seconds())
+        try:
+            # create 已持有外层事务。database locked 只回滚这个 savepoint，外层事务仍能走 exists() 拒绝再建。
+            with transaction.atomic():
+                return IMNotificationSyncRun.objects.filter(
+                    account_association=association,
+                    status=SYNC_RUN_STATUS_RUNNING,
+                    updated_at__lt=stale_before,
+                ).update(
+                    status=SYNC_RUN_STATUS_FAILED,
+                    summary=STALE_IM_ACCOUNT_ASSOCIATION_SYNC_SUMMARY,
+                    finished_at=now,
+                    updated_at=now,
+                )
+        except OperationalError as error:
+            if "locked" in str(error).lower() or "busy" in str(error).lower():
+                logger.warning(
+                    "Skipped stale IM account association sync release because the database is busy: association_id=%s",
+                    association.id,
+                )
+                return 0
+            raise
+
+    with transaction.atomic():
+        select_for_update_kwargs = {}
+        if _supports_im_sync_skip_locked():
+            select_for_update_kwargs["skip_locked"] = True
+        locked_association = IMAccountAssociation.objects.select_for_update(**select_for_update_kwargs).filter(pk=association.pk).first()
+        if locked_association is None:
+            return 0
+        now = timezone.now()
+        stale_before = now - timedelta(seconds=_get_im_account_association_sync_stale_timeout_seconds())
+        stale_run_ids = list(
+            IMNotificationSyncRun.objects.select_for_update()
+            .filter(
+                account_association=association,
+                status=SYNC_RUN_STATUS_RUNNING,
+                updated_at__lt=stale_before,
+            )
+            .values_list("id", flat=True)
+        )
+        if not stale_run_ids:
+            return 0
+        return IMNotificationSyncRun.objects.filter(
+            id__in=stale_run_ids,
+            status=SYNC_RUN_STATUS_RUNNING,
+            updated_at__lt=stale_before,
+        ).update(
+            status=SYNC_RUN_STATUS_FAILED,
+            summary=STALE_IM_ACCOUNT_ASSOCIATION_SYNC_SUMMARY,
+            finished_at=now,
+            updated_at=now,
+        )
+
+
+def _lock_running_im_account_association_sync_run(run_id: int) -> IMNotificationSyncRun:
+    if not _supports_im_sync_row_locks():
+        updated_count = IMNotificationSyncRun.objects.filter(
+            pk=run_id,
+            status=SYNC_RUN_STATUS_RUNNING,
+        ).update(updated_at=timezone.now())
+        if not updated_count:
+            raise _IMAccountAssociationSyncRunExpired("IM account association sync run is no longer running")
+        return IMNotificationSyncRun.objects.get(pk=run_id)
+
+    run = IMNotificationSyncRun.objects.select_for_update().get(pk=run_id)
+    if run.status != SYNC_RUN_STATUS_RUNNING:
+        raise _IMAccountAssociationSyncRunExpired("IM account association sync run is no longer running")
+    return run
+
+
+def _touch_running_im_account_association_sync_run(run_id: int) -> IMNotificationSyncRun:
+    run = _lock_running_im_account_association_sync_run(run_id)
+    run.updated_at = timezone.now()
+    run.save(update_fields=["updated_at"])
+    return run
+
+
+def _get_im_account_association_sync_heartbeat_interval_seconds() -> float:
+    timeout_seconds = _get_im_account_association_sync_stale_timeout_seconds()
+    return max(min(timeout_seconds / 3, MAX_IM_ACCOUNT_ASSOCIATION_SYNC_HEARTBEAT_INTERVAL_SECONDS), 1)
+
+
+def _heartbeat_im_account_association_sync_run(run_id: int, stop_event: Event, interval_seconds: float) -> None:
+    # 只写 run 行。create 先锁 association 再锁 run，心跳再锁 association 会成环。
+    close_old_connections()
+    try:
+        while not stop_event.wait(interval_seconds):
+            try:
+                with transaction.atomic():
+                    _touch_running_im_account_association_sync_run(run_id)
+            except _IMAccountAssociationSyncRunExpired:
+                return
+            except Exception as error:
+                logger.warning(
+                    "Failed to refresh IM account association sync heartbeat: run_id=%s, error_type=%s",
+                    run_id,
+                    type(error).__name__,
+                )
+    finally:
+        close_old_connections()
+
+
+def _start_im_account_association_sync_run_heartbeat(run_id: int) -> tuple[Event, Thread]:
+    stop_event = Event()
+    thread = Thread(
+        target=_heartbeat_im_account_association_sync_run,
+        args=(run_id, stop_event, _get_im_account_association_sync_heartbeat_interval_seconds()),
+        name=f"im-account-association-sync-heartbeat-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event, thread
+
+
+def _stop_im_account_association_sync_run_heartbeat(stop_event: Event, thread: Thread) -> None:
+    stop_event.set()
+    thread.join(timeout=5)
+    if thread.is_alive():
+        logger.warning(
+            "IM account association sync heartbeat thread did not stop promptly: thread=%s",
+            thread.name,
+        )
 
 
 def create_account_association_sync_run(association_id: int, trigger_mode: str = IMNotificationTriggerModeChoices.MANUAL):
@@ -84,6 +248,8 @@ def create_account_association_sync_run(association_id: int, trigger_mode: str =
                     trigger_mode,
                 )
                 return {"result": False, "message": "IM notification capability is not ready"}
+
+            _release_stale_im_account_association_sync_runs(association)
 
             if IMNotificationSyncRun.objects.filter(account_association=association, status=SYNC_RUN_STATUS_RUNNING).exists():
                 logger.warning(
@@ -145,14 +311,18 @@ def execute_im_notification_sync_run(run_id: int):
         return _fail_sync_run(run, "IM notification channel is not ready")
 
     runtime_service = RuntimeApplicationService()
-    result = runtime_service.execute(
-        provider_key=config_snapshot.get("provider_key") or instance.provider_key,
-        capability_key="im_notification",
-        operation="list_external_users",
-        config=instance.get_runtime_config(),
-        account_association=run.account_association,
-        run=run,
-    )
+    heartbeat_stop, heartbeat_thread = _start_im_account_association_sync_run_heartbeat(run.id)
+    try:
+        result = runtime_service.execute(
+            provider_key=config_snapshot.get("provider_key") or instance.provider_key,
+            capability_key="im_notification",
+            operation="list_external_users",
+            config=instance.get_runtime_config(),
+            account_association=run.account_association,
+            run=run,
+        )
+    finally:
+        _stop_im_account_association_sync_run_heartbeat(heartbeat_stop, heartbeat_thread)
     if not result.success:
         logger.error(
             EXTERNAL_CALL_FAILED,
